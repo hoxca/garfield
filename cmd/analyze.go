@@ -13,18 +13,20 @@ import (
 	"garfield/internal/mrs"
 	"garfield/internal/readfits"
 	"garfield/internal/starsmetrics"
+
 	"github.com/spf13/cobra"
 )
 
 type analyzeOptions struct {
-	dir         string
-	workers     int
-	convWorkers int
-	minSNR      float64
-	maxFWHM     float64
-	maxEcc      float64
-	minScore    float64
-	targetStars int
+	dir                string
+	workers            int
+	convWorkers        int
+	minSNR             float64
+	maxFWHM            float64
+	maxEcc             float64
+	minScore           float64
+	minStars           int
+	limitComputedStars int
 }
 
 var analyzeOpts = analyzeOptions{}
@@ -38,7 +40,7 @@ et calcule FWHM, excentricité, SNR et score pour chacun.
 
 Exemple :
   garfield analyze images/
-  garfield analyze --dir images/ --min-snr 12 --max-fwhm 4.5`,
+  garfield analyze --dir images/ --limit-computed-stars 500`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := analyzeOpts.dir
@@ -57,7 +59,8 @@ func init() {
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.maxFWHM, "max-fwhm", 5.0, "FWHM maximale pour APPROUVÉE")
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.maxEcc, "max-ecc", 0.50, "excentricité maximale pour APPROUVÉE")
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.minScore, "min-score", 2.0, "score minimal pour APPROUVÉE")
-	analyzeCmd.Flags().IntVar(&analyzeOpts.targetStars, "target-stars", 500, "nombre d'étoiles brillantes analysées")
+	analyzeCmd.Flags().IntVar(&analyzeOpts.minStars, "min-stars", 680, "nombre d'étoiles détectée")
+	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "nombre d'étoiles brillantes analysées")
 }
 
 // ImageResult holds the quality metrics for one FITS file.
@@ -118,16 +121,40 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 		}
 	}
 
-	targetCount := opts.targetStars
+	targetCount := opts.limitComputedStars
 	if len(fieldStars) < targetCount {
 		targetCount = len(fieldStars)
+	}
+
+	// Fixed skip of the brightest stars (saturated / non-representative).
+	// Skip expensive per-star metrics (eccentricity) when the usable pool
+	// is already under minUsableStars, and guard sparse fields from
+	// degenerate 0/Inf metrics.
+	const brightSkip = 20
+	const minUsableStars = 80
+
+	if targetCount-brightSkip < minUsableStars {
+		return ImageResult{
+			Filename:        name,
+			Filter:          filter,
+			Date:            date,
+			DetectedStars:   len(fieldStars),
+			StarCount:       0,
+			AvgFWHM:         0,
+			AvgSignal:       0,
+			AvgEccentricity: 0,
+			SNR:             mrsResult.ImageSNR,
+			Score:           0,
+			Decision:        "REJETÉE MANQUE ÉTOILES",
+		}
 	}
 
 	var sumFlux, sumWeight float64
 	var weightedFWHM, weightedEcc float64
 	var filteredCount int
 	var totalPeakSignal float64
-	for i := 20; i < targetCount; i++ {
+
+	for i := brightSkip; i < targetCount; i++ {
 		if fieldStars[i].Signal < 50.0*skyNoise {
 			continue
 		}
@@ -144,12 +171,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 		sumWeight += w
 		filteredCount++
 	}
-	if sumWeight == 0 {
-		sumWeight = 1
-	}
-	if filteredCount == 0 {
-		filteredCount = 1
-	}
+
 	avgFWHM := weightedFWHM / sumWeight
 	avgEcc := weightedEcc / sumWeight
 	avgPeakSignal := totalPeakSignal / float64(filteredCount)
@@ -158,7 +180,9 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 	finalScore := (snrLinear / avgFWHM) * (1.0 - avgEcc)
 
 	decision := "APPROUVÉE"
-	if avgEcc > opts.maxEcc {
+	if len(fieldStars) < opts.minStars {
+		decision = "REJETÉE MANQUE ÉTOILES"
+	} else if avgEcc > opts.maxEcc {
 		decision = "REJETÉE EXCENTRICITY"
 	} else if avgFWHM > opts.maxFWHM {
 		decision = "REJETÉE FWHM"
