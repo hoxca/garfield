@@ -1,3 +1,4 @@
+// Package mrs compute snr with multiscale resolution support //
 package mrs
 
 import (
