@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"encoding/csv"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -27,6 +29,9 @@ type analyzeOptions struct {
 	minScore           float64
 	minStars           int
 	limitComputedStars int
+	format             string
+	output             string
+	quiet              bool
 }
 
 var analyzeOpts = analyzeOptions{}
@@ -40,7 +45,9 @@ et calcule FWHM, excentricité, SNR et score pour chacun.
 
 Exemple :
   garfield analyze images/
-  garfield analyze --dir images/ --limit-computed-stars 500`,
+  garfield analyze --dir images/ --limit-computed-stars 500
+  garfield analyze --dir images/ --format csv --output resultats.csv
+  garfield analyze --dir images/ --format both --output resultats.csv --quiet`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := analyzeOpts.dir
@@ -59,8 +66,11 @@ func init() {
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.maxFWHM, "max-fwhm", 5.0, "FWHM maximale pour APPROUVÉE")
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.maxEcc, "max-ecc", 0.50, "excentricité maximale pour APPROUVÉE")
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.minScore, "min-score", 2.0, "score minimal pour APPROUVÉE")
-	analyzeCmd.Flags().IntVar(&analyzeOpts.minStars, "min-stars", 680, "nombre d'étoiles détectée")
-	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "nombre d'étoiles brillantes analysées")
+	analyzeCmd.Flags().IntVar(&analyzeOpts.minStars, "min-stars", 680, "nombre mminimum d'étoiles détectée pour APPROUVÉE")
+	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "limite le nombre d'étoiles brillantes analysées")
+	analyzeCmd.Flags().StringVar(&analyzeOpts.format, "format", "console", "format de sortie : console, csv ou both")
+	analyzeCmd.Flags().StringVarP(&analyzeOpts.output, "output", "o", "", "fichier CSV de sortie (requis pour csv/both vers fichier)")
+	analyzeCmd.Flags().BoolVar(&analyzeOpts.quiet, "quiet", false, "évite la sortie console")
 }
 
 // ImageResult holds the quality metrics for one FITS file.
@@ -179,17 +189,17 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 	snrLinear := mrsResult.ImageSNR
 	finalScore := (snrLinear / avgFWHM) * (1.0 - avgEcc)
 
-	decision := "APPROUVÉE"
+	decision := "APPROUVEE"
 	if len(fieldStars) < opts.minStars {
-		decision = "REJETÉE MANQUE ÉTOILES"
+		decision = "REJETEE MANQUE ETOILES"
 	} else if avgEcc > opts.maxEcc {
-		decision = "REJETÉE EXCENTRICITY"
+		decision = "REJETEE EXCENTRICITY"
 	} else if avgFWHM > opts.maxFWHM {
-		decision = "REJETÉE FWHM"
+		decision = "REJETEE FWHM"
 	} else if snrLinear < opts.minSNR {
-		decision = "REJETÉE SNR"
+		decision = "REJETEE SNR"
 	} else if finalScore < opts.minScore {
-		decision = "REJETÉE SCORING"
+		decision = "REJETEE SCORING"
 	}
 
 	return ImageResult{
@@ -207,7 +217,48 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 	}
 }
 
+func writeResultsCSV(results []ImageResult, w *csv.Writer) error {
+	header := []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error"}
+	if err := w.Write(header); err != nil {
+		return err
+	}
+	for _, r := range results {
+		errStr := ""
+		if r.Error != nil {
+			errStr = r.Error.Error()
+		}
+		row := []string{
+			r.Filename,
+			r.Filter,
+			r.Date,
+			strconv.Itoa(r.DetectedStars),
+			strconv.Itoa(r.StarCount),
+			strconv.FormatFloat(r.AvgFWHM, 'f', 4, 64),
+			strconv.FormatFloat(r.AvgSignal, 'f', 4, 64),
+			strconv.FormatFloat(r.AvgEccentricity, 'f', 4, 64),
+			strconv.FormatFloat(r.SNR, 'f', 4, 64),
+			strconv.FormatFloat(r.Score, 'f', 4, 64),
+			r.Decision,
+			errStr,
+		}
+		if err := w.Write(row); err != nil {
+			return err
+		}
+	}
+	w.Flush()
+	return w.Error()
+}
+
 func runAnalyze(dir string, opts analyzeOptions) error {
+	switch opts.format {
+	case "console", "csv", "both":
+	default:
+		return fmt.Errorf("format invalide %q : attendu console, csv ou both", opts.format)
+	}
+	if opts.format == "both" && opts.output == "" {
+		return fmt.Errorf("--output est requis avec --format both")
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("impossible de lire le dossier %q : %w", dir, err)
@@ -253,7 +304,11 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	}
 	mrs.ConvWorkers = convWorkers
 
-	fmt.Printf("\nTraitement de %d fichier(s) FITS dans %q (%d workers, conv=%d)...\n\n", len(fitsFiles), dir, outerWorkers, convWorkers)
+	showConsole := opts.format == "console" || opts.format == "both"
+	csvToStdout := opts.format == "csv" && opts.output == ""
+	if !opts.quiet && showConsole {
+		fmt.Printf("\nTraitement de %d fichier(s) FITS dans %q (%d workers, conv=%d)...\n\n", len(fitsFiles), dir, outerWorkers, convWorkers)
+	}
 
 	results := make([]ImageResult, len(fitsFiles))
 	jobs := make(chan int)
@@ -271,11 +326,13 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 				results[idx] = r
 				printMu.Lock()
 				done++
-				if r.Error != nil {
-					fmt.Printf("  [%d/%d] %s ... ERREUR: %v\n", done, len(fitsFiles), r.Filename, r.Error)
-				} else {
-					fmt.Printf("  [%d/%d] %s ... OK (%d/%d étoiles, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, %s)\n",
-						done, len(fitsFiles), r.Filename, r.StarCount, r.DetectedStars, r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Decision)
+				if !opts.quiet && showConsole {
+					if r.Error != nil {
+						fmt.Printf("  [%d/%d] %s ... ERREUR: %v\n", done, len(fitsFiles), r.Filename, r.Error)
+					} else {
+						fmt.Printf("  [%d/%d] %s ... OK (%d/%d étoiles, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, %s)\n",
+							done, len(fitsFiles), r.Filename, r.StarCount, r.DetectedStars, r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Decision)
+					}
 				}
 				printMu.Unlock()
 			}
@@ -287,6 +344,34 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	close(jobs)
 	wg.Wait()
 
-	fmt.Printf("\nTerminé : %d fichier(s) traité(s).\n", len(results))
+	if opts.format == "csv" || opts.format == "both" {
+		if csvToStdout {
+			w := csv.NewWriter(os.Stdout)
+			if err := writeResultsCSV(results, w); err != nil {
+				return fmt.Errorf("écriture CSV : %w", err)
+			}
+		} else {
+			f, err := os.Create(opts.output)
+			if err != nil {
+				return fmt.Errorf("impossible de créer le fichier CSV %q : %w", opts.output, err)
+			}
+			w := csv.NewWriter(f)
+			writeErr := writeResultsCSV(results, w)
+			closeErr := f.Close()
+			if writeErr != nil {
+				return fmt.Errorf("écriture CSV : %w", writeErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("fermeture CSV : %w", closeErr)
+			}
+			if !opts.quiet {
+				fmt.Printf("Résultats CSV écrits dans %q (%d lignes).\n", opts.output, len(results))
+			}
+		}
+	}
+
+	if !opts.quiet && showConsole {
+		fmt.Printf("\nTerminé : %d fichier(s) traité(s).\n", len(results))
+	}
 	return nil
 }
