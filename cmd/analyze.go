@@ -297,6 +297,10 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		}
 	}
 
+	// os.ReadDir already returns entries sorted by filename, so this only has
+	// to restore that ordering over the filtered subset. It is what makes CSV
+	// rows come out alphabetically rather than in completion order, which is
+	// otherwise nondeterministic across runs.
 	sort.Strings(fitsFiles)
 
 	if len(fitsFiles) == 0 {
