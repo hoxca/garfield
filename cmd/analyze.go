@@ -89,6 +89,15 @@ type ImageResult struct {
 	Error           error
 }
 
+const (
+	decisionApproved = "APPROUVEE"
+	decisionNoStars  = "REJETEE MANQUE ETOILES"
+	decisionEcc      = "REJETEE EXCENTRICITY"
+	decisionFWHM     = "REJETEE FWHM"
+	decisionSNR      = "REJETEE SNR"
+	decisionScoring  = "REJETEE SCORING"
+)
+
 func parseFilename(name string) (filter string, date string) {
 	base := strings.TrimSuffix(name, filepath.Ext(name))
 	parts := strings.Split(base, "_")
@@ -138,8 +147,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 
 	// Fixed skip of the brightest stars (saturated / non-representative).
 	// Skip expensive per-star metrics (eccentricity) when the usable pool
-	// is already under minUsableStars, and guard sparse fields from
-	// degenerate 0/Inf metrics.
+	// is already under minUsableStars, and guard sparse fields from degenerate 0/Inf metrics.
 	const brightSkip = 20
 	const minUsableStars = 80
 
@@ -155,11 +163,11 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 			AvgEccentricity: 0,
 			SNR:             mrsResult.ImageSNR,
 			Score:           0,
-			Decision:        "REJETÉE MANQUE ÉTOILES",
+			Decision:        decisionNoStars,
 		}
 	}
 
-	var sumFlux, sumWeight float64
+	var sumWeight float64
 	var weightedFWHM, weightedEcc float64
 	var filteredCount int
 	var totalPeakSignal float64
@@ -177,9 +185,23 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 		weightedFWHM += fwhm * w
 		weightedEcc += ecc * w
 		totalPeakSignal += fieldStars[i].Signal
-		sumFlux += fieldStars[i].TotalFlux
 		sumWeight += w
 		filteredCount++
+	}
+
+	// Every star failed the per-star filters (peak signal below the noise
+	// floor, or degenerate eccentricity). The metric averages below would divide 0/0 and produce NaN, and since all NaN comparisons are false
+	// that NaN would silently bypass the FWHM/eccentricity/scoring gates and mark the frame APPROUVEE. Reject before computing any metric.
+	if filteredCount == 0 || sumWeight <= 0 {
+		return ImageResult{
+			Filename:      name,
+			Filter:        filter,
+			Date:          date,
+			DetectedStars: len(fieldStars),
+			StarCount:     0,
+			SNR:           mrsResult.ImageSNR,
+			Decision:      decisionNoStars,
+		}
 	}
 
 	avgFWHM := weightedFWHM / sumWeight
@@ -189,17 +211,17 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 	snrLinear := mrsResult.ImageSNR
 	finalScore := (snrLinear / avgFWHM) * (1.0 - avgEcc)
 
-	decision := "APPROUVEE"
+	decision := decisionApproved
 	if len(fieldStars) < opts.minStars {
-		decision = "REJETEE MANQUE ETOILES"
+		decision = decisionNoStars
 	} else if avgEcc > opts.maxEcc {
-		decision = "REJETEE EXCENTRICITY"
+		decision = decisionEcc
 	} else if avgFWHM > opts.maxFWHM {
-		decision = "REJETEE FWHM"
+		decision = decisionFWHM
 	} else if snrLinear < opts.minSNR {
-		decision = "REJETEE SNR"
+		decision = decisionSNR
 	} else if finalScore < opts.minScore {
-		decision = "REJETEE SCORING"
+		decision = decisionScoring
 	}
 
 	return ImageResult{
