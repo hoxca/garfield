@@ -1,0 +1,32 @@
+# Configuration de garfield.
+#
+# Ce fichier est optionnel : sans lui, les valeurs par défaut compilées dans
+# l'exécutable s'appliquent. 
+# Chaque clé correspond prends la forme <section>.<nom-du-drapeau>.
+#
+# Un drapeau passé sur la ligne de commande l'emporte toujours sur ce fichier.
+
+# Critères de qualité d'une image, appliqués par analyze ET par prepare.
+# Toute modification est une décision : c'est ce qui détermine quelles images
+# sont jetées.
+thresholds:
+  min-snr: 11.0
+  max-fwhm: 5.0
+  max-ecc: 0.34
+  min-score: 2.0
+  min-stars: 680
+
+# Parallélisme, lu par analyze ET par prepare.
+# 0 = automatique (NumCPU/2 pour workers, nombre de cœurs pour conv-workers).
+concurrency:
+  workers: 0
+  conv-workers: 0
+
+# Répertoires par défaut de prepare.
+prepare:
+  input: /Volumes/Dyno/Kosmodrom
+  output: /Volumes/T7/Workspace
+
+# Répertoire par défaut de analyze.
+analyze:
+  dir: images
