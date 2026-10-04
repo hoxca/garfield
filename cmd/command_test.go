@@ -349,13 +349,34 @@ func TestRootCommandWiring(t *testing.T) {
 	for _, c := range rootCmd.Commands() {
 		names[c.Name()] = true
 	}
-	for _, want := range []string{"analyze", "version"} {
+	for _, want := range []string{"analyze", "prepare", "version"} {
 		if !names[want] {
 			t.Errorf("rootCmd is missing the %q subcommand (has %v)", want, names)
 		}
 	}
 	if rootCmd.Version != Version {
 		t.Errorf("rootCmd.Version = %q, want %q", rootCmd.Version, Version)
+	}
+}
+
+// TestPrepareCommandWiring checks prepare is registered and rejects positional
+// arguments, so a mistyped invocation fails loudly instead of silently using
+// the wrong directory.
+func TestPrepareCommandWiring(t *testing.T) {
+	var found *cobra.Command
+	for _, c := range rootCmd.Commands() {
+		if c.Name() == "prepare" {
+			found = c
+		}
+	}
+	if found == nil {
+		t.Fatal("prepare is not registered on rootCmd")
+	}
+	if err := found.Args(found, []string{"extra"}); err == nil {
+		t.Error("prepare accepted a positional argument, want a rejection")
+	}
+	if err := found.Args(found, nil); err != nil {
+		t.Errorf("prepare rejected an empty argument list: %v", err)
 	}
 }
 
