@@ -84,6 +84,10 @@ var frameDateRe = regexp.MustCompile(`_(\d{8})_\d{6}_\d+_PA`)
 var fitsExts = map[string]bool{".FIT": true, ".FITS": true, ".FTS": true}
 
 type prepareOptions struct {
+	// Quality thresholds are shared with analyze, so a light frame is approved
+	// here on exactly the criteria analyze would apply.
+	qualityThresholds
+
 	target       string
 	input        string
 	output       string
@@ -91,36 +95,10 @@ type prepareOptions struct {
 	skipExisting bool
 	quiet        bool
 
-	// Quality thresholds, mirroring analyze so the two commands cannot drift
-	// apart. A light frame is copied to lights/ only when it is approved.
-	minSNR   float64
-	maxFWHM  float64
-	maxEcc   float64
-	minScore float64
-	minStars int
-
 	// workers and convWorkers control the quality pass; they mirror analyze's
 	// flags and the mrs.ConvWorkers global.
 	workers     int
 	convWorkers int
-}
-
-// analyzeOptions builds the equivalent options for processImage, so prepare
-// applies exactly the same verdict as analyze.
-//
-// limitComputedStars is included even though prepare exposes no flag for it:
-// it caps how many of the brightest stars are measured, and leaving it at zero
-// would push the usable pool under processImage's minimum, so every frame
-// would be rejected with MANQUE ETOILES regardless of its actual quality.
-func (o prepareOptions) analyzeOptions() analyzeOptions {
-	return analyzeOptions{
-		minSNR:             o.minSNR,
-		maxFWHM:            o.maxFWHM,
-		maxEcc:             o.maxEcc,
-		minScore:           o.minScore,
-		minStars:           o.minStars,
-		limitComputedStars: analyzeDefaultLimitComputedStars,
-	}
 }
 
 var prepareOpts = prepareOptions{}
@@ -163,15 +141,9 @@ func init() {
 	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "ne remplace pas les fichiers existants")
 	prepareCmd.Flags().BoolVar(&prepareOpts.quiet, "quiet", false, "évite la sortie console")
 
-	// Quality thresholds, deliberately identical to analyze's defaults.
-	prepareCmd.Flags().Float64Var(&prepareOpts.minSNR, "min-snr", 11.0, "SNR minimal pour APPROUVÉE")
-	prepareCmd.Flags().Float64Var(&prepareOpts.maxFWHM, "max-fwhm", 5.0, "FWHM maximale pour APPROUVÉE")
-	prepareCmd.Flags().Float64Var(&prepareOpts.maxEcc, "max-ecc", 0.54, "excentricité maximale pour APPROUVÉE")
-	prepareCmd.Flags().Float64Var(&prepareOpts.minScore, "min-score", 2.0, "score minimal pour APPROUVÉE")
-	prepareCmd.Flags().IntVar(&prepareOpts.minStars, "min-stars", 680, "nombre minimum d'étoiles détectées pour APPROUVÉE")
+	registerQualityFlags(prepareCmd.Flags(), &prepareOpts.qualityThresholds)
 
-	prepareCmd.Flags().IntVarP(&prepareOpts.workers, "workers", "w", 0, "workers d'analyse (0 = auto : NumCPU/2)")
-	prepareCmd.Flags().IntVar(&prepareOpts.convWorkers, "conv-workers", 0, "workers de convolution internes (0 = auto)")
+	registerWorkerFlags(prepareCmd.Flags(), &prepareOpts.workers, &prepareOpts.convWorkers)
 }
 
 // sessionPlan is one observing night to prepare.
@@ -463,7 +435,7 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 	}
 	mrs.ConvWorkers = convWorkers
 
-	aopts := opts.analyzeOptions()
+	aopts := opts.qualityThresholds.analyze()
 
 	index := make(chan int)
 	var wg sync.WaitGroup

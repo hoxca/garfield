@@ -21,14 +21,11 @@ import (
 )
 
 type analyzeOptions struct {
+	qualityThresholds
+
 	dir                string
 	workers            int
 	convWorkers        int
-	minSNR             float64
-	maxFWHM            float64
-	maxEcc             float64
-	minScore           float64
-	minStars           int
 	limitComputedStars int
 	format             string
 	output             string
@@ -61,13 +58,8 @@ Exemple :
 
 func init() {
 	analyzeCmd.Flags().StringVarP(&analyzeOpts.dir, "dir", "d", "images", "dossier contenant les FITS")
-	analyzeCmd.Flags().IntVarP(&analyzeOpts.workers, "workers", "w", 0, "workers externes (0 = auto : NumCPU/2)")
-	analyzeCmd.Flags().IntVar(&analyzeOpts.convWorkers, "conv-workers", 0, "workers de convolution internes (0 = auto)")
-	analyzeCmd.Flags().Float64Var(&analyzeOpts.minSNR, "min-snr", 11.0, "SNR minimal pour APPROUVÉE")
-	analyzeCmd.Flags().Float64Var(&analyzeOpts.maxFWHM, "max-fwhm", 5.0, "FWHM maximale pour APPROUVÉE")
-	analyzeCmd.Flags().Float64Var(&analyzeOpts.maxEcc, "max-ecc", 0.54, "excentricité maximale pour APPROUVÉE")
-	analyzeCmd.Flags().Float64Var(&analyzeOpts.minScore, "min-score", 2.0, "score minimal pour APPROUVÉE")
-	analyzeCmd.Flags().IntVar(&analyzeOpts.minStars, "min-stars", 680, "nombre mminimum d'étoiles détectée pour APPROUVÉE")
+	registerWorkerFlags(analyzeCmd.Flags(), &analyzeOpts.workers, &analyzeOpts.convWorkers)
+	registerQualityFlags(analyzeCmd.Flags(), &analyzeOpts.qualityThresholds)
 	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "limite le nombre d'étoiles brillantes analysées")
 	analyzeCmd.Flags().StringVar(&analyzeOpts.format, "format", "console", "format de sortie : console, csv ou both")
 	analyzeCmd.Flags().StringVarP(&analyzeOpts.output, "output", "o", "", "fichier CSV de sortie (requis pour csv/both vers fichier)")

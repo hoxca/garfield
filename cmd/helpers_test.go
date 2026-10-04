@@ -83,14 +83,11 @@ func frameName(filter string, n int) string {
 		string(rune('0'+n%10)) + ".FIT"
 }
 
-// defaultOpts mirrors the flag defaults registered in analyze.go's init().
+// defaultOpts mirrors the flag defaults registered in analyze.go's init(),
+// sourcing the thresholds from the same place the commands do.
 func defaultOpts() analyzeOptions {
 	return analyzeOptions{
-		minSNR:             11.0,
-		maxFWHM:            5.0,
-		maxEcc:             0.54,
-		minScore:           2.0,
-		minStars:           680,
+		qualityThresholds:  defaultThresholds,
 		limitComputedStars: 500,
 		format:             "console",
 	}
