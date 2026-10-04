@@ -1650,8 +1650,7 @@ func TestPrepareThresholdsMatchAnalyze(t *testing.T) {
 }
 
 // TestDefaultThresholdsAreRegistered checks every threshold reaches both
-// commands with the configured value. This is the guard that would have caught
-// --max-ecc drifting from 0.50 to 0.54 in one command only.
+// commands with the configured value.
 func TestDefaultThresholdsAreRegistered(t *testing.T) {
 	tests := []struct {
 		flag  string
