@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/csv"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -239,6 +240,27 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 	}
 }
 
+// csvSeparator matches the convention used by the reference tool's report
+// (data/LBN527_result.csv), so garfield output can be read alongside it
+// directly.
+const csvSeparator = ';'
+
+// newCSVWriter returns a CSV writer using garfield's separator. Every writer in
+// the tool goes through here so the convention cannot drift between commands.
+func newCSVWriter(w io.Writer) *csv.Writer {
+	cw := csv.NewWriter(w)
+	cw.Comma = csvSeparator
+	return cw
+}
+
+// newCSVReader returns a CSV reader for garfield's output. Kept beside
+// newCSVWriter so the two stay in step.
+func newCSVReader(r io.Reader) *csv.Reader {
+	cr := csv.NewReader(r)
+	cr.Comma = csvSeparator
+	return cr
+}
+
 func writeResultsCSV(results []ImageResult, w *csv.Writer) error {
 	header := []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error"}
 	if err := w.Write(header); err != nil {
@@ -372,7 +394,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 
 	if opts.format == "csv" || opts.format == "both" {
 		if csvToStdout {
-			w := csv.NewWriter(os.Stdout)
+			w := newCSVWriter(os.Stdout)
 			if err := writeResultsCSV(results, w); err != nil {
 				return fmt.Errorf("écriture CSV : %w", err)
 			}
@@ -381,7 +403,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 			if err != nil {
 				return fmt.Errorf("impossible de créer le fichier CSV %q : %w", opts.output, err)
 			}
-			w := csv.NewWriter(f)
+			w := newCSVWriter(f)
 			writeErr := writeResultsCSV(results, w)
 			closeErr := f.Close()
 			if writeErr != nil {

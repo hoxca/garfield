@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/csv"
 	"math"
 	"os"
 	"path/filepath"
@@ -181,11 +180,11 @@ func TestWriteResultsCSVHeader(t *testing.T) {
 	}
 
 	var sb strings.Builder
-	if err := writeResultsCSV(nil, csv.NewWriter(&sb)); err != nil {
+	if err := writeResultsCSV(nil, newCSVWriter(&sb)); err != nil {
 		t.Fatalf("writeResultsCSV: %v", err)
 	}
 
-	recs, err := csv.NewReader(strings.NewReader(sb.String())).ReadAll()
+	recs, err := newCSVReader(strings.NewReader(sb.String())).ReadAll()
 	if err != nil {
 		t.Fatalf("header does not parse: %v", err)
 	}
@@ -215,8 +214,15 @@ func TestWriteResultsCSVFormatting(t *testing.T) {
 			Error:    errFake{},
 		},
 		{
-			// A comma in the filename must be quoted.
-			Filename: "c,d.FIT", Decision: decisionApproved,
+			// A semicolon in the filename must be quoted, since that is the
+			// separator.
+			Filename: "c;semi.FIT", Decision: decisionApproved,
+		},
+		{
+			// A comma is no longer special and must be written bare. This is
+			// the inverse of the pre-semicolon behaviour, where the comma was
+			// the separator and this field would have needed quotes.
+			Filename: "d,comma.FIT", Decision: decisionApproved,
 		},
 		{
 			Filename: "nan.FIT", AvgFWHM: math.NaN(), Decision: decisionApproved,
@@ -224,11 +230,11 @@ func TestWriteResultsCSVFormatting(t *testing.T) {
 	}
 
 	var sb strings.Builder
-	if err := writeResultsCSV(results, csv.NewWriter(&sb)); err != nil {
+	if err := writeResultsCSV(results, newCSVWriter(&sb)); err != nil {
 		t.Fatalf("writeResultsCSV: %v", err)
 	}
 
-	recs, err := csv.NewReader(strings.NewReader(sb.String())).ReadAll()
+	recs, err := newCSVReader(strings.NewReader(sb.String())).ReadAll()
 	if err != nil {
 		t.Fatalf("CSV does not parse: %v\n%s", err, sb.String())
 	}
@@ -259,13 +265,56 @@ func TestWriteResultsCSVFormatting(t *testing.T) {
 	if recs[2][11] != "fake failure" {
 		t.Errorf("error column = %q, want %q", recs[2][11], "fake failure")
 	}
-	if recs[4][5] != "NaN" {
-		t.Errorf("NaN formatted as %q, want %q", recs[4][5], "NaN")
+	if recs[5][5] != "NaN" {
+		t.Errorf("NaN formatted as %q, want %q", recs[5][5], "NaN")
 	}
 
-	// The comma-bearing filename survives a round trip.
-	if recs[3][0] != "c,d.FIT" {
-		t.Errorf("quoted filename round-tripped as %q, want %q", recs[3][0], "c,d.FIT")
+	// Both unusual filenames survive a round trip.
+	if recs[3][0] != "c;semi.FIT" {
+		t.Errorf("semicolon filename round-tripped as %q, want %q", recs[3][0], "c;semi.FIT")
+	}
+	if recs[4][0] != "d,comma.FIT" {
+		t.Errorf("comma filename round-tripped as %q, want %q", recs[4][0], "d,comma.FIT")
+	}
+
+	// The semicolon is the only character needing quotes, so the comma must be
+	// emitted bare rather than quoted.
+	// The bare field starts a row and is followed by empty filter/date columns.
+	if !strings.Contains(sb.String(), "\nd,comma.FIT;") {
+		t.Errorf("comma-bearing field was quoted:\n%s", sb.String())
+	}
+	if !strings.Contains(sb.String(), `"c;semi.FIT"`) {
+		t.Errorf("semicolon-bearing field was not quoted:\n%s", sb.String())
+	}
+}
+
+// TestCSVSeparator pins the separator so a regression to the Go default is
+// caught with a clear message rather than as a confusing parse error.
+func TestCSVSeparator(t *testing.T) {
+	if csvSeparator != ';' {
+		t.Fatalf("csvSeparator = %q, want %q (must match the reference tool's report)", csvSeparator, ';')
+	}
+
+	var sb strings.Builder
+	if err := writeResultsCSV([]ImageResult{{Filename: "a.FIT", Decision: decisionApproved}},
+		newCSVWriter(&sb)); err != nil {
+		t.Fatalf("writeResultsCSV: %v", err)
+	}
+
+	if !strings.HasPrefix(sb.String(), "filename;filter;") {
+		t.Errorf("header is not semicolon-separated: %q", strings.SplitN(sb.String(), "\n", 2)[0])
+	}
+	if strings.Contains(strings.SplitN(sb.String(), "\n", 2)[0], ",") {
+		t.Errorf("header still contains commas: %q", strings.SplitN(sb.String(), "\n", 2)[0])
+	}
+
+	// The reader must agree, or every consumer silently sees one giant field.
+	recs, err := newCSVReader(strings.NewReader(sb.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("output does not parse with the matching reader: %v", err)
+	}
+	if len(recs) != 2 || len(recs[0]) != 12 {
+		t.Errorf("got %d records, first with %d fields; want 2 records of 12", len(recs), len(recs[0]))
 	}
 }
 
@@ -281,11 +330,11 @@ func TestWriteResultsCSVNonFiniteValues(t *testing.T) {
 	}}
 
 	var sb strings.Builder
-	if err := writeResultsCSV(results, csv.NewWriter(&sb)); err != nil {
+	if err := writeResultsCSV(results, newCSVWriter(&sb)); err != nil {
 		t.Fatalf("writeResultsCSV: %v", err)
 	}
 
-	recs, err := csv.NewReader(strings.NewReader(sb.String())).ReadAll()
+	recs, err := newCSVReader(strings.NewReader(sb.String())).ReadAll()
 	if err != nil {
 		t.Fatalf("CSV with non-finite values does not parse: %v\n%s", err, sb.String())
 	}
@@ -529,7 +578,7 @@ func TestRunAnalyzeFormats(t *testing.T) {
 			}
 		})
 
-		recs, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+		recs, err := newCSVReader(strings.NewReader(out)).ReadAll()
 		if err != nil {
 			t.Fatalf("stdout CSV does not parse: %v\n%q", err, out)
 		}
@@ -556,8 +605,12 @@ func TestRunAnalyzeFormats(t *testing.T) {
 				t.Errorf("console output missing %q:\n%s", want, out)
 			}
 		}
-		if strings.Contains(out, "filename,filter") {
-			t.Errorf("console format emitted CSV:\n%s", out)
+		// Console output must not contain a CSV header row, whatever the
+		// separator happens to be.
+		for _, header := range []string{"filename;filter", "filename,filter"} {
+			if strings.Contains(out, header) {
+				t.Errorf("console format emitted a CSV header (%q):\n%s", header, out)
+			}
 		}
 	})
 
@@ -760,7 +813,7 @@ func readCSVFile(t *testing.T, path string) [][]string {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	recs, err := csv.NewReader(strings.NewReader(string(b))).ReadAll()
+	recs, err := newCSVReader(strings.NewReader(string(b))).ReadAll()
 	if err != nil {
 		t.Fatalf("parse %s: %v\n%s", path, err, b)
 	}
