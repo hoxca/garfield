@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/astrogo/fitsio"
+	"github.com/spf13/cobra"
 )
 
 // prepareFixture describes a synthetic acquisition tree.
@@ -163,13 +164,13 @@ func simpleFixture(target string) prepareFixture {
 	}
 }
 
-// prepareOptionsForTest returns options carrying analyze's default thresholds,
-// so the synthetic frames in these fixtures are approved unless a test
-// deliberately moves them.
+// prepareOptionsForTest returns options carrying the shared default
+// thresholds, so the synthetic frames in these fixtures are approved unless a
+// test deliberately moves them.
 func prepareOptionsForTest(target, root, out string) prepareOptions {
 	return prepareOptions{
 		target: target, input: root, output: out, quiet: true,
-		minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680,
+		qualityThresholds: defaultThresholds,
 	}
 }
 
@@ -1619,6 +1620,8 @@ func TestSessionPlanApproved(t *testing.T) {
 // analyze is the reference for what an acceptable frame is, so prepare must
 // register identical defaults.
 func TestPrepareThresholdsMatchAnalyze(t *testing.T) {
+	// workers is not a quality threshold but is shared by both commands, so it
+	// is checked here too.
 	pairs := [][2]string{
 		{"min-snr", "min-snr"},
 		{"max-fwhm", "max-fwhm"},
@@ -1638,6 +1641,78 @@ func TestPrepareThresholdsMatchAnalyze(t *testing.T) {
 			t.Errorf("prepare --%s default %q differs from analyze --%s default %q",
 				p[0], pf.DefValue, p[1], af.DefValue)
 		}
+		// The help text is shared too, so a divergence there is the same bug.
+		if pf.Usage != af.Usage {
+			t.Errorf("prepare --%s help %q differs from analyze --%s help %q",
+				p[0], pf.Usage, p[1], af.Usage)
+		}
+	}
+}
+
+// TestDefaultThresholdsAreRegistered checks every threshold reaches both
+// commands with the configured value. This is the guard that would have caught
+// --max-ecc drifting from 0.50 to 0.54 in one command only.
+func TestDefaultThresholdsAreRegistered(t *testing.T) {
+	tests := []struct {
+		flag  string
+		want  string
+		isInt bool
+	}{
+		{flag: "min-snr", want: strconv.FormatFloat(defaultThresholds.minSNR, 'g', -1, 64)},
+		{flag: "max-fwhm", want: strconv.FormatFloat(defaultThresholds.maxFWHM, 'g', -1, 64)},
+		{flag: "max-ecc", want: strconv.FormatFloat(defaultThresholds.maxEcc, 'g', -1, 64)},
+		{flag: "min-score", want: strconv.FormatFloat(defaultThresholds.minScore, 'g', -1, 64)},
+		{flag: "min-stars", want: strconv.Itoa(defaultThresholds.minStars), isInt: true},
+	}
+
+	for _, tc := range tests {
+		for _, c := range []*cobra.Command{analyzeCmd, prepareCmd} {
+			f := c.Flags().Lookup(tc.flag)
+			if f == nil {
+				t.Errorf("%s: flag --%s is not registered", c.Name(), tc.flag)
+				continue
+			}
+			if f.DefValue != tc.want {
+				t.Errorf("%s: --%s default = %q, want %q (from defaultThresholds)",
+					c.Name(), tc.flag, f.DefValue, tc.want)
+			}
+			// The declared type must match the field it binds, or a flag would
+			// silently fail to update the thresholds.
+			if tc.isInt && f.Value.Type() != "int" {
+				t.Errorf("%s: --%s type = %q, want int", c.Name(), tc.flag, f.Value.Type())
+			}
+			if !tc.isInt && f.Value.Type() != "float64" {
+				t.Errorf("%s: --%s type = %q, want float64", c.Name(), tc.flag, f.Value.Type())
+			}
+			// User-facing text must survive the consolidation. The exact wording
+			// is not pinned, but an empty description would be a regression.
+			if strings.TrimSpace(f.Usage) == "" {
+				t.Errorf("%s: --%s has no help text", c.Name(), tc.flag)
+			}
+		}
+	}
+}
+
+// TestQualityThresholdsAnalyzeConversion checks the conversion prepare hands to
+// processImage carries the thresholds through unchanged, and sets the star limit
+// processImage requires.
+func TestQualityThresholdsAnalyzeConversion(t *testing.T) {
+	q := qualityThresholds{
+		minSNR:   1.5,
+		maxFWHM:  2.5,
+		maxEcc:   0.25,
+		minScore: 3.5,
+		minStars: 123,
+	}
+	got := q.analyze()
+
+	if got.minSNR != q.minSNR || got.maxFWHM != q.maxFWHM || got.maxEcc != q.maxEcc ||
+		got.minScore != q.minScore || got.minStars != q.minStars {
+		t.Errorf("thresholds lost in conversion: got %+v, want %+v", got.qualityThresholds, q)
+	}
+	if got.limitComputedStars != analyzeDefaultLimitComputedStars {
+		t.Errorf("limitComputedStars = %d, want %d; processImage rejects every frame without it",
+			got.limitComputedStars, analyzeDefaultLimitComputedStars)
 	}
 }
 
