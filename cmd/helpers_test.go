@@ -88,7 +88,7 @@ func defaultOpts() analyzeOptions {
 	return analyzeOptions{
 		minSNR:             11.0,
 		maxFWHM:            5.0,
-		maxEcc:             0.50,
+		maxEcc:             0.54,
 		minScore:           2.0,
 		minStars:           680,
 		limitComputedStars: 500,
