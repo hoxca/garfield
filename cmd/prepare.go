@@ -40,10 +40,14 @@ const (
 	sessionFlatsDir  = "flats"
 )
 
-// rejectedDir sits beside the session directories rather than inside them, so
-// a session tree holds only usable data and everything discarded is
+// rejectedDir sits beside the Sessions directory rather than inside a session,
+// so a session tree holds only usable data and everything discarded is
 // quarantined in one place.
 const rejectedDir = "rejected"
+
+// sessionsDir groups the prepared sessions, so the target root holds only
+// Sessions/, rejected/ and metrics/.
+const sessionsDir = "Sessions"
 
 // metricsDir holds the CSV reports beside the session directories, keeping the
 // target root to data directories only.
@@ -58,6 +62,13 @@ const sessionsCSVName = "sessions.csv"
 // metricsPath returns the location of a report inside a prepared target.
 func metricsPath(targetOut, name string) string {
 	return filepath.Join(targetOut, metricsDir, name)
+}
+
+// sessionOutDir returns where a prepared session's data lives. The CSV reports
+// record the bare session name; only the filesystem layout carries this
+// wrapper, so consumers join on the session column rather than on a path.
+func sessionOutDir(targetOut, sessionDir string) string {
+	return filepath.Join(targetOut, sessionsDir, sessionDir)
 }
 
 // analyzeDefaultLimitComputedStars mirrors the analyze --limit-computed-stars
@@ -704,10 +715,11 @@ func listFITS(dir string) ([]string, error) {
 func prepareSession(s sessionPlan, targetOut string, opts prepareOptions) (int, int, error) {
 	lights, flats := 0, 0
 
-	sessionOut := filepath.Join(targetOut, s.sessionDir())
+	sessionOut := sessionOutDir(targetOut, s.sessionDir())
 
-	// Approved frames land inside the session; rejected ones are hoisted to a
-	// sibling rejected/ tree so a session directory holds only usable data.
+	// Approved frames land inside the session under Sessions/; rejected ones are
+	// hoisted to a rejected/ tree at the target root so a session directory
+	// holds only usable data.
 	for _, filter := range s.filterNames() {
 		srcDir := filepath.Join(opts.input, lightsDir, opts.target, s.date, filter)
 
