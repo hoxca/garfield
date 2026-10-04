@@ -121,9 +121,9 @@ var prepareCmd = &cobra.Command{
 depuis l'arborescence d'acquisition vers une arborescence de
 travail :
 
-  <sortie>/<cible>/Session-NN/lights/<filtre>/*.FIT
-  <sortie>/<cible>/Session-NN/flats/<filtre>/*.FIT
-  <sortie>/<cible>/rejected/Session-NN/<filtre>/*.FIT
+  <sortie>/<cible>/Sessions/Session_NN/lights/<filtre>/*.FIT
+  <sortie>/<cible>/Sessions/Session_NN/flats/<filtre>/*.FIT
+  <sortie>/<cible>/rejected/Session_NN/<filtre>/*.FIT
 
 Une session correspond à un dossier de date dans Lights/<cible>.
 Les numéros de session suivent l'ordre chronologique des dates.
@@ -159,7 +159,7 @@ func init() {
 
 // sessionPlan is one observing night to prepare.
 type sessionPlan struct {
-	number int    // 1-based, drives the Session-NN directory name
+	number int    // 1-based, drives the Session_NN directory name
 	date   string // YYYY-MM-DD, the Lights source directory name
 	pa     string // position angle shared by the session, digits only
 	// filters holds the light filenames per filter, keyed by the Lights
@@ -197,9 +197,10 @@ func (s sessionPlan) approved(name string) bool {
 	return r.Error == nil && r.Decision == decisionApproved
 }
 
-// sessionDir returns the output directory name for the session.
+// sessionDir returns the output directory name for the session. The underscore
+// separator keeps the name a single shell- and glob-friendly token.
 func (s sessionPlan) sessionDir() string {
-	return fmt.Sprintf("Session-%02d", s.number)
+	return fmt.Sprintf("Session_%02d", s.number)
 }
 
 // filterNames returns the session's filters in sorted order.
@@ -887,7 +888,7 @@ func writeFramesCSV(targetOut string, sessions []sessionPlan) error {
 	return nil
 }
 
-// writeSessionsCSV records the session index so the Session-NN numbering stays
+// writeSessionsCSV records the session index so the Session_NN numbering stays
 // traceable back to the source dates and angles.
 func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 	path := metricsPath(targetOut, sessionsCSVName)

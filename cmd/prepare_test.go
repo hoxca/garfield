@@ -218,7 +218,7 @@ func TestPrepareSessionsAndFilterDirs(t *testing.T) {
 
 	// Sessions are numbered in date order, zero-padded to two digits.
 	for i, date := range []string{"2026-09-10", "2026-09-11"} {
-		want := fmt.Sprintf("Session-%02d", i+1)
+		want := fmt.Sprintf("Session_%02d", i+1)
 		dir := filepath.Join(sessionOutDir(filepath.Join(out, target), want), sessionLightsDir, "H")
 		files, err := os.ReadDir(dir)
 		if err != nil {
@@ -231,21 +231,21 @@ func TestPrepareSessionsAndFilterDirs(t *testing.T) {
 
 	// Exactly one session directory per date, and nothing else but the metrics
 	// directory among the target's subdirectories.
-	if got := sessionDirNames(t, out, target); strings.Join(got, ",") != "Session-01,Session-02" {
-		t.Errorf("session dirs = %v, want [Session-01 Session-02]", got)
+	if got := sessionDirNames(t, out, target); strings.Join(got, ",") != "Session_01,Session_02" {
+		t.Errorf("session dirs = %v, want [Session_01 Session_02]", got)
 	}
 
 	// No session directory may sit directly in the target root.
 	for _, e := range dirEntries(t, filepath.Join(out, target)) {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "Session-") {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "Session_") {
 			t.Errorf("%s/%s sits in the target root, want it under %s/", target, e.Name(), sessionsDir)
 		}
 	}
 }
 
 // TestPrepareSessionsLiveUnderSessionsDir pins the target layout. Approved data
-// sits under <target>/Sessions/Session-NN/ while rejects stay at the target
-// root under <target>/rejected/Session-NN/, so no session directory may appear
+// sits under <target>/Sessions/Session_NN/ while rejects stay at the target
+// root under <target>/rejected/Session_NN/, so no session directory may appear
 // directly in the target root. The other layout tests only assert that session
 // directories exist, not where, so this is the guard against the wrapper
 // silently disappearing again.
@@ -275,19 +275,19 @@ func TestPrepareSessionsLiveUnderSessionsDir(t *testing.T) {
 	}
 
 	// Approved frames live under the wrapper...
-	lights := filepath.Join(sessionOutDir(rootDir, "Session-01"), sessionLightsDir, "H")
+	lights := filepath.Join(sessionOutDir(rootDir, "Session_01"), sessionLightsDir, "H")
 	if _, err := os.Stat(lights); err != nil {
-		t.Errorf("%s missing: %v", filepath.Join(sessionsDir, "Session-01", sessionLightsDir, "H"), err)
+		t.Errorf("%s missing: %v", filepath.Join(sessionsDir, "Session_01", sessionLightsDir, "H"), err)
 	}
-	flats := filepath.Join(sessionOutDir(rootDir, "Session-01"), sessionFlatsDir, "H")
+	flats := filepath.Join(sessionOutDir(rootDir, "Session_01"), sessionFlatsDir, "H")
 	if _, err := os.Stat(flats); err != nil {
-		t.Errorf("%s missing: %v", filepath.Join(sessionsDir, "Session-01", sessionFlatsDir, "H"), err)
+		t.Errorf("%s missing: %v", filepath.Join(sessionsDir, "Session_01", sessionFlatsDir, "H"), err)
 	}
 
 	// ...and the rejected frame stays at the target root, not under Sessions/.
-	rej := filepath.Join(rootDir, rejectedDir, "Session-01", "H", rejected)
+	rej := filepath.Join(rootDir, rejectedDir, "Session_01", "H", rejected)
 	if _, err := os.Stat(rej); err != nil {
-		t.Errorf("%s missing: %v", filepath.Join(rejectedDir, "Session-01", "H", rejected), err)
+		t.Errorf("%s missing: %v", filepath.Join(rejectedDir, "Session_01", "H", rejected), err)
 	}
 	if _, err := os.Stat(filepath.Join(sessionsDir, rejectedDir)); err == nil {
 		t.Errorf("%s/%s exists, want the rejected tree at the target root only", sessionsDir, rejectedDir)
@@ -313,7 +313,7 @@ func TestPrepareSessionsLiveUnderSessionsDir(t *testing.T) {
 		}
 		seen := 0
 		for _, rec := range recs[1:] {
-			if !strings.HasPrefix(rec[0], "Session-") {
+			if !strings.HasPrefix(rec[0], "Session_") {
 				t.Errorf("%s first column = %q, want a bare session name", name, rec[0])
 				continue
 			}
@@ -338,7 +338,7 @@ func TestPrepareCopiesFlatsIntoSession(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "flats", "H")
+	dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats", "H")
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read flats dir: %v", err)
@@ -398,7 +398,7 @@ func TestPrepareFiltersFlatsByAngle(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "flats", "O")
+	dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats", "O")
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read flats: %v", err)
@@ -410,7 +410,7 @@ func TestPrepareFiltersFlatsByAngle(t *testing.T) {
 		t.Errorf("flat = %q, want the PA240 frame", files[0].Name())
 	}
 	// The other filter's directory must not exist.
-	if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "flats", "H")); err == nil {
+	if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats", "H")); err == nil {
 		t.Error("flats/H was created but no H lights exist")
 	}
 }
@@ -442,7 +442,7 @@ func TestPrepareSkipsFlatsWithoutLights(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	base := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "flats")
+	base := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats")
 	for _, filter := range []string{"O", "S", "B"} {
 		if filter == "O" {
 			continue
@@ -492,7 +492,7 @@ func TestPrepareUsesSessionDateForFlats(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "flats", "L")
+	dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats", "L")
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read flats: %v", err)
@@ -541,7 +541,7 @@ func TestPrepareWarnsOnMissingFlats(t *testing.T) {
 
 	// Lights are still copied.
 	for _, filter := range []string{"H", "O"} {
-		dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "lights", filter)
+		dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "lights", filter)
 		files, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("lights for %s were not copied: %v", filter, err)
@@ -552,7 +552,7 @@ func TestPrepareWarnsOnMissingFlats(t *testing.T) {
 	}
 
 	// No flats directory is created at all.
-	if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "flats")); err == nil {
+	if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats")); err == nil {
 		t.Error("a flats directory was created despite having no flats")
 	}
 
@@ -642,7 +642,7 @@ func TestPrepareSkipExistingIsIdempotent(t *testing.T) {
 	}
 
 	// Mark a destination file so a re-run would be detectable.
-	victim := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "lights", "H")
+	victim := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "lights", "H")
 	entries, err := os.ReadDir(victim)
 	if err != nil {
 		t.Fatal(err)
@@ -705,7 +705,7 @@ func TestPrepareIgnoresDotFiles(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "lights", "H")
+	dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "lights", "H")
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -753,7 +753,7 @@ func TestPrepareOnlyAcceptsDateDirs(t *testing.T) {
 	// Session directories live under Sessions/, so the listing has to descend
 	// one level to see them.
 	dirs := sessionDirNames(t, out, target)
-	want := []string{"Session-01", "Session-02"}
+	want := []string{"Session_01", "Session_02"}
 	if strings.Join(dirs, ",") != strings.Join(want, ",") {
 		t.Errorf("session dirs = %v, want %v (only the padded YYYY-MM-DD ones)", dirs, want)
 	}
@@ -884,8 +884,8 @@ func TestPrepareSessionsCSV(t *testing.T) {
 
 	// Session 01 has one light and a matching flat.
 	row := recs[1]
-	if row[0] != "Session-01" || row[1] != "2026-09-10" {
-		t.Errorf("row = %v, want Session-01 / 2026-09-10", row[:2])
+	if row[0] != "Session_01" || row[1] != "2026-09-10" {
+		t.Errorf("row = %v, want Session_01 / 2026-09-10", row[:2])
 	}
 	if row[2] != "PA310" {
 		t.Errorf("pa = %q, want %q", row[2], "PA310")
@@ -943,10 +943,10 @@ func TestPrepareMultipleFiltersPerSession(t *testing.T) {
 	}
 
 	for _, filter := range []string{"B", "G", "R"} {
-		if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "lights", filter)); err != nil {
+		if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "lights", filter)); err != nil {
 			t.Errorf("lights/%s missing: %v", filter, err)
 		}
-		if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "flats", filter)); err != nil {
+		if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats", filter)); err != nil {
 			t.Errorf("flats/%s missing: %v", filter, err)
 		}
 	}
@@ -985,7 +985,7 @@ func TestPrepareMissingFlatsRoot(t *testing.T) {
 
 // TestPrepareSessionLayoutIsSymmetric pins the shape of a prepared session:
 // lights and flats live under sibling directories, and no filter directory
-// sits directly under Session-NN.
+// sits directly under Session_NN.
 func TestPrepareSessionLayoutIsSymmetric(t *testing.T) {
 	const target = "M87-2"
 	root := t.TempDir()
@@ -1012,7 +1012,7 @@ func TestPrepareSessionLayoutIsSymmetric(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	session := sessionOutDir(filepath.Join(out, target), "Session-01")
+	session := sessionOutDir(filepath.Join(out, target), "Session_01")
 
 	// The session holds exactly the two sibling directories.
 	entries, err := os.ReadDir(session)
@@ -1062,7 +1062,7 @@ func TestPrepareRoutesByDecision(t *testing.T) {
 	}
 
 	// The synthetic frames are good, so everything lands in lights/.
-	lights, err := os.ReadDir(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), sessionLightsDir, "H"))
+	lights, err := os.ReadDir(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), sessionLightsDir, "H"))
 	if err != nil {
 		t.Fatalf("lights missing: %v", err)
 	}
@@ -1091,7 +1091,7 @@ func TestPrepareRejectsUnusableFrames(t *testing.T) {
 	}
 
 	// No approved lights, and no lights directory content either.
-	lightsDirPath := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), sessionLightsDir)
+	lightsDirPath := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), sessionLightsDir)
 	if entries, err := os.ReadDir(lightsDirPath); err == nil {
 		for _, e := range entries {
 			files, _ := os.ReadDir(filepath.Join(lightsDirPath, e.Name()))
@@ -1102,7 +1102,7 @@ func TestPrepareRejectsUnusableFrames(t *testing.T) {
 	}
 
 	// Every frame is under rejected/, keyed by session then filter.
-	rejectedRoot := filepath.Join(out, target, rejectedDir, "Session-01", "H")
+	rejectedRoot := filepath.Join(out, target, rejectedDir, "Session_01", "H")
 	files, err := os.ReadDir(rejectedRoot)
 	if err != nil {
 		t.Fatalf("rejected tree missing: %v", err)
@@ -1197,10 +1197,10 @@ func TestPrepareUnreadableFrameIsRejected(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), sessionLightsDir, "H")); err == nil {
+	if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), sessionLightsDir, "H")); err == nil {
 		t.Error("an unreadable frame was placed in lights/")
 	}
-	files, err := os.ReadDir(filepath.Join(out, target, rejectedDir, "Session-01", "H"))
+	files, err := os.ReadDir(filepath.Join(out, target, rejectedDir, "Session_01", "H"))
 	if err != nil {
 		t.Fatalf("unreadable frame was not quarantined: %v", err)
 	}
@@ -1226,7 +1226,7 @@ func TestPrepareRejectedTreeIsTargetScoped(t *testing.T) {
 	// A session directory holds only lights and flats -- never rejected.
 	// lights/ is absent here because nothing was approved, mirroring how
 	// flats/ is only created when there are flats to put in it.
-	for _, s := range []string{"Session-01", "Session-02"} {
+	for _, s := range []string{"Session_01", "Session_02"} {
 		entries, err := os.ReadDir(sessionOutDir(filepath.Join(out, target), s))
 		if err != nil {
 			t.Fatal(err)
@@ -1250,7 +1250,7 @@ func TestPrepareRejectedTreeIsTargetScoped(t *testing.T) {
 	}
 
 	// Both sessions are represented under rejected/.
-	for _, s := range []string{"Session-01", "Session-02"} {
+	for _, s := range []string{"Session_01", "Session_02"} {
 		if _, err := os.Stat(filepath.Join(out, target, rejectedDir, s, "H")); err != nil {
 			t.Errorf("rejected/%s/H missing: %v", s, err)
 		}
@@ -1314,8 +1314,8 @@ func TestWriteFramesCSV(t *testing.T) {
 	}
 
 	// Rows are grouped by session, in session order.
-	if recs[1][0] != "Session-01" || recs[3][0] != "Session-02" {
-		t.Errorf("sessions in row order = %q, %q, %q; want Session-01, Session-01, Session-02",
+	if recs[1][0] != "Session_01" || recs[3][0] != "Session_02" {
+		t.Errorf("sessions in row order = %q, %q, %q; want Session_01, Session_01, Session_02",
 			recs[1][0], recs[2][0], recs[3][0])
 	}
 
@@ -1983,7 +1983,7 @@ func TestPrepareMixedAnglesWarns(t *testing.T) {
 	if recs[1][2] != "PA240" {
 		t.Errorf("pa = %q, want PA240 (lowest angle, deterministically)", recs[1][2])
 	}
-	files, err := os.ReadDir(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session-01"), "flats", "H"))
+	files, err := os.ReadDir(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats", "H"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2002,8 +2002,8 @@ func namesOf(entries []os.DirEntry) []string {
 }
 
 // TestPrepareSessionDirPadding checks the two-digit format holds past nine
-// sessions, which is where a naive %d would produce Session-10 correctly but
-// Session-1 for the first.
+// sessions, which is where a naive %d would produce Session_10 correctly but
+// Session_1 for the first.
 func TestPrepareSessionDirPadding(t *testing.T) {
 	const target = "BIG"
 	root := t.TempDir()
@@ -2037,7 +2037,7 @@ func TestPrepareSessionDirPadding(t *testing.T) {
 		t.Fatalf("got %d session dirs, want %d", len(dirs), len(dates))
 	}
 	for i, d := range dirs {
-		want := fmt.Sprintf("Session-%02d", i+1)
+		want := fmt.Sprintf("Session_%02d", i+1)
 		if d != want {
 			t.Errorf("session dir[%d] = %q, want %q", i, d, want)
 		}

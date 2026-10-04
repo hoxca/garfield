@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"io"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -391,6 +393,45 @@ func TestPrepareCommandWiring(t *testing.T) {
 	}
 	if err := found.Args(found, nil); err != nil {
 		t.Errorf("prepare rejected an empty argument list: %v", err)
+	}
+}
+
+// TestPrepareLongHelpDocumentsLayout pins the three paths shown in the prepare
+// help to the ones the command actually builds. The help text went stale once
+// already -- it still described sessions sitting in the target root after the
+// Sessions/ wrapper was added -- because nothing asserted it against the code.
+// The expected strings are built from the same constants and helpers the command
+// uses, so a layout change that is not documented fails here.
+func TestPrepareLongHelpDocumentsLayout(t *testing.T) {
+	const (
+		target = "<cible>"
+		out    = "<sortie>"
+		filter = "<filtre>"
+	)
+
+	// The help documents the shape with NN standing in for the number. Derive
+	// that placeholder from what sessionDir actually produces, so reverting to
+	// a dash or dropping the padding fails here rather than silently leaving
+	// the help describing a layout the command no longer builds.
+	session := sessionPlan{number: 1}.sessionDir()
+	placeholder := regexp.MustCompile(`\d+$`).ReplaceAllString(session, "NN")
+	if placeholder != "Session_NN" {
+		t.Fatalf("sessionDir produces %q, whose placeholder form is %q, want Session_NN", session, placeholder)
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{"lights", filepath.Join(out, target, sessionsDir, placeholder, sessionLightsDir, filter, "*.FIT")},
+		{"flats", filepath.Join(out, target, sessionsDir, placeholder, sessionFlatsDir, filter, "*.FIT")},
+		{"rejected", filepath.Join(out, target, rejectedDir, placeholder, filter, "*.FIT")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(prepareCmd.Long, tc.path) {
+				t.Errorf("prepare help does not document %q\nhelp:\n%s", tc.path, prepareCmd.Long)
+			}
+		})
 	}
 }
 
