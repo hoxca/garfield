@@ -35,7 +35,7 @@ func newAnalyzeCmd(opts *analyzeOptions, run func(dir string, o analyzeOptions) 
 	f.IntVar(&opts.convWorkers, "conv-workers", 0, "workers de convolution internes")
 	f.Float64Var(&opts.minSNR, "min-snr", 11.0, "")
 	f.Float64Var(&opts.maxFWHM, "max-fwhm", 5.0, "")
-	f.Float64Var(&opts.maxEcc, "max-ecc", 0.50, "")
+	f.Float64Var(&opts.maxEcc, "max-ecc", 0.54, "")
 	f.Float64Var(&opts.minScore, "min-score", 2.0, "")
 	f.IntVar(&opts.minStars, "min-stars", 680, "")
 	f.IntVar(&opts.limitComputedStars, "limit-computed-stars", 500, "")
@@ -85,7 +85,7 @@ func TestAnalyzeFlagDefaults(t *testing.T) {
 		"conv-workers":         "0",
 		"min-snr":              "11",
 		"max-fwhm":             "5",
-		"max-ecc":              "0.5",
+		"max-ecc":              "0.54",
 		"min-score":            "2",
 		"min-stars":            "680",
 		"limit-computed-stars": "500",
@@ -116,61 +116,61 @@ func TestAnalyzeFlagParsing(t *testing.T) {
 			name:    "no arguments uses the dir default",
 			args:    nil,
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.5, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
+			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
 		},
 		{
 			name:    "positional argument sets the directory",
 			args:    []string{"/data/frames"},
 			wantDir: "/data/frames",
-			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.5, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
+			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
 		},
 		{
 			name:    "positional argument overrides --dir",
 			args:    []string{"/positional", "--dir", "/flag"},
 			wantDir: "/positional",
-			want:    analyzeOptions{dir: "/flag", minSNR: 11, maxFWHM: 5, maxEcc: 0.5, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
+			want:    analyzeOptions{dir: "/flag", minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
 		},
 		{
 			name:    "long flags",
 			args:    []string{"--min-snr", "5.5", "--max-fwhm", "3.2", "--min-stars", "100"},
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", minSNR: 5.5, maxFWHM: 3.2, maxEcc: 0.5, minScore: 2, minStars: 100, limitComputedStars: 500, format: "console"},
+			want:    analyzeOptions{dir: "images", minSNR: 5.5, maxFWHM: 3.2, maxEcc: 0.54, minScore: 2, minStars: 100, limitComputedStars: 500, format: "console"},
 		},
 		{
 			name:    "short flags",
 			args:    []string{"-d", "/short", "-w", "3"},
 			wantDir: "/short",
-			want:    analyzeOptions{dir: "/short", workers: 3, minSNR: 11, maxFWHM: 5, maxEcc: 0.5, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
+			want:    analyzeOptions{dir: "/short", workers: 3, minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
 		},
 		{
 			name:    "output shorthand",
 			args:    []string{"-o", "results.csv", "--format", "csv"},
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.5, minScore: 2, minStars: 680, limitComputedStars: 500, format: "csv", output: "results.csv"},
+			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680, limitComputedStars: 500, format: "csv", output: "results.csv"},
 		},
 		{
 			name:    "boolean quiet",
 			args:    []string{"--quiet"},
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.5, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console", quiet: true},
+			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console", quiet: true},
 		},
 		{
 			name:    "float in exponent form",
 			args:    []string{"--min-score", "1e-3"},
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.5, minScore: 0.001, minStars: 680, limitComputedStars: 500, format: "console"},
+			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 0.001, minStars: 680, limitComputedStars: 500, format: "console"},
 		},
 		{
 			name:    "conv-workers",
 			args:    []string{"--conv-workers", "2"},
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", convWorkers: 2, minSNR: 11, maxFWHM: 5, maxEcc: 0.5, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
+			want:    analyzeOptions{dir: "images", convWorkers: 2, minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680, limitComputedStars: 500, format: "console"},
 		},
 		{
 			name:    "limit-computed-stars",
 			args:    []string{"--limit-computed-stars", "42"},
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.5, minScore: 2, minStars: 680, limitComputedStars: 42, format: "console"},
+			want:    analyzeOptions{dir: "images", minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680, limitComputedStars: 42, format: "console"},
 		},
 	}
 
