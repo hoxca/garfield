@@ -65,7 +65,7 @@ func init() {
 	analyzeCmd.Flags().IntVar(&analyzeOpts.convWorkers, "conv-workers", 0, "workers de convolution internes (0 = auto)")
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.minSNR, "min-snr", 11.0, "SNR minimal pour APPROUVÉE")
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.maxFWHM, "max-fwhm", 5.0, "FWHM maximale pour APPROUVÉE")
-	analyzeCmd.Flags().Float64Var(&analyzeOpts.maxEcc, "max-ecc", 0.50, "excentricité maximale pour APPROUVÉE")
+	analyzeCmd.Flags().Float64Var(&analyzeOpts.maxEcc, "max-ecc", 0.54, "excentricité maximale pour APPROUVÉE")
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.minScore, "min-score", 2.0, "score minimal pour APPROUVÉE")
 	analyzeCmd.Flags().IntVar(&analyzeOpts.minStars, "min-stars", 680, "nombre mminimum d'étoiles détectée pour APPROUVÉE")
 	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "limite le nombre d'étoiles brillantes analysées")
