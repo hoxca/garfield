@@ -45,9 +45,20 @@ const (
 // quarantined in one place.
 const rejectedDir = "rejected"
 
-// framesCSVName is the per-frame quality report written alongside the session
-// index.
+// metricsDir holds the CSV reports beside the session directories, keeping the
+// target root to data directories only.
+const metricsDir = "metrics"
+
+// framesCSVName is the per-frame quality report, written under metricsDir.
 const framesCSVName = "frames.csv"
+
+// sessionsCSVName is the session index, written under metricsDir.
+const sessionsCSVName = "sessions.csv"
+
+// metricsPath returns the location of a report inside a prepared target.
+func metricsPath(targetOut, name string) string {
+	return filepath.Join(targetOut, metricsDir, name)
+}
 
 // analyzeDefaultLimitComputedStars mirrors the analyze --limit-computed-stars
 // default. prepare reuses processImage, which requires this to be set, but does
@@ -270,6 +281,9 @@ func runPrepare(opts prepareOptions) error {
 		if err := os.MkdirAll(targetOut, 0o755); err != nil {
 			return fmt.Errorf("impossible de créer %q : %w", targetOut, err)
 		}
+		if err := os.MkdirAll(filepath.Join(targetOut, metricsDir), 0o755); err != nil {
+			return fmt.Errorf("impossible de créer %q : %w", filepath.Join(targetOut, metricsDir), err)
+		}
 	}
 
 	totalLights, totalFlats := 0, 0
@@ -321,8 +335,8 @@ func runPrepare(opts prepareOptions) error {
 			fmt.Printf("Images rejetées sous %q.\n", filepath.Join(targetOut, rejectedDir))
 		}
 		if !opts.dryRun {
-			fmt.Printf("Index écrit dans %q.\n", filepath.Join(targetOut, "sessions.csv"))
-			fmt.Printf("Métriques par image écrites dans %q.\n", filepath.Join(targetOut, framesCSVName))
+			fmt.Printf("Index écrit dans %q.\n", metricsPath(targetOut, sessionsCSVName))
+			fmt.Printf("Métriques par image écrites dans %q.\n", metricsPath(targetOut, framesCSVName))
 		}
 	}
 
@@ -830,7 +844,7 @@ var framesCSVHeader = []string{
 // analyze's CSV cannot disagree on formatting; the session columns are
 // prepended and the row's own filter/date are replaced by the source values.
 func writeFramesCSV(targetOut string, sessions []sessionPlan) error {
-	path := filepath.Join(targetOut, framesCSVName)
+	path := metricsPath(targetOut, framesCSVName)
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("impossible de créer %q : %w", path, err)
@@ -892,7 +906,7 @@ func writeFramesCSV(targetOut string, sessions []sessionPlan) error {
 // writeSessionsCSV records the session index so the Session-NN numbering stays
 // traceable back to the source dates and angles.
 func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
-	path := filepath.Join(targetOut, "sessions.csv")
+	path := metricsPath(targetOut, sessionsCSVName)
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("impossible de créer %q : %w", path, err)
