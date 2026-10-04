@@ -197,14 +197,15 @@ func TestPrepareSessionsAndFilterDirs(t *testing.T) {
 		}
 	}
 
-	// Exactly one session directory per date, and nothing extra.
+	// Exactly one session directory per date, and nothing else but the metrics
+	// directory among the target's subdirectories.
 	entries, err := os.ReadDir(filepath.Join(out, target))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var sessions []string
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && e.Name() != metricsDir {
 			sessions = append(sessions, e.Name())
 		}
 	}
@@ -389,7 +390,7 @@ func TestPrepareUsesSessionDateForFlats(t *testing.T) {
 	}
 
 	// The frame date range must be recorded, so the off-by-one stays visible.
-	recs := readSessionsCSV(t, filepath.Join(out, target, "sessions.csv"))
+	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
 	if len(recs) != 2 {
 		t.Fatalf("got %d CSV records, want 2", len(recs))
 	}
@@ -444,7 +445,7 @@ func TestPrepareWarnsOnMissingFlats(t *testing.T) {
 	}
 
 	// The gap is recorded in the index.
-	recs := readSessionsCSV(t, filepath.Join(out, target, "sessions.csv"))
+	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
 	row := recs[1]
 	if row[7] != "0" {
 		t.Errorf("flatCount = %q, want 0", row[7])
@@ -637,7 +638,7 @@ func TestPrepareOnlyAcceptsDateDirs(t *testing.T) {
 	}
 	var dirs []string
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && e.Name() != metricsDir {
 			dirs = append(dirs, e.Name())
 		}
 	}
@@ -752,7 +753,7 @@ func TestPrepareSessionsCSV(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	recs := readSessionsCSV(t, filepath.Join(out, target, "sessions.csv"))
+	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
 	if len(recs) != 3 {
 		t.Fatalf("got %d records, want 3 (header plus two sessions)", len(recs))
 	}
@@ -840,7 +841,7 @@ func TestPrepareMultipleFiltersPerSession(t *testing.T) {
 		}
 	}
 
-	recs := readSessionsCSV(t, filepath.Join(out, target, "sessions.csv"))
+	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
 	if recs[1][3] != "B G R" {
 		t.Errorf("filters = %q, want %q (sorted)", recs[1][3], "B G R")
 	}
@@ -866,7 +867,7 @@ func TestPrepareMissingFlatsRoot(t *testing.T) {
 	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
 		t.Fatalf("a missing Flats directory must not fail the run: %v", err)
 	}
-	recs := readSessionsCSV(t, filepath.Join(out, target, "sessions.csv"))
+	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
 	if recs[1][7] != "0" || recs[1][8] != "H" {
 		t.Errorf("row = %v, want flatCount 0 and missingFlats H", recs[1])
 	}
@@ -1001,7 +1002,7 @@ func TestPrepareRejectsUnusableFrames(t *testing.T) {
 	}
 
 	// The reject reason is recorded in sessions.csv.
-	recs := readSessionsCSV(t, filepath.Join(out, target, "sessions.csv"))
+	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
 	if recs[1][5] != "0" {
 		t.Errorf("approvedCount = %q, want 0", recs[1][5])
 	}
@@ -1040,7 +1041,7 @@ func TestPrepareThresholdsRouteFrames(t *testing.T) {
 				t.Fatalf("runPrepare: %v", err)
 			}
 
-			recs := readSessionsCSV(t, filepath.Join(out, target, "sessions.csv"))
+			recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
 			approved := recs[1][5] == "2"
 			rejected := recs[1][6] == "2"
 
@@ -1150,7 +1151,7 @@ func TestPrepareRejectedTreeIsTargetScoped(t *testing.T) {
 func readFramesCSV(t *testing.T, targetOut string) [][]string {
 	t.Helper()
 
-	b, err := os.ReadFile(filepath.Join(targetOut, framesCSVName))
+	b, err := os.ReadFile(metricsPath(targetOut, framesCSVName))
 	if err != nil {
 		t.Fatalf("read %s: %v", framesCSVName, err)
 	}
@@ -1423,10 +1424,97 @@ func TestPrepareDryRunWritesNoCSV(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	for _, name := range []string{"sessions.csv", framesCSVName} {
-		if _, err := os.Stat(filepath.Join(out, target, name)); err == nil {
+	for _, name := range []string{sessionsCSVName, framesCSVName} {
+		if _, err := os.Stat(metricsPath(filepath.Join(out, target), name)); err == nil {
 			t.Errorf("dry run wrote %s", name)
 		}
+	}
+}
+
+// TestPrepareReportsLiveInMetricsDir pins the target-root layout: the CSV
+// reports sit in metrics/ beside the session and rejected trees, not loose at
+// the root.
+func TestPrepareReportsLiveInMetricsDir(t *testing.T) {
+	const target = "IC434"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+	targetOut := filepath.Join(out, target)
+
+	// Both reports exist under metrics/.
+	for _, name := range []string{sessionsCSVName, framesCSVName} {
+		if _, err := os.Stat(metricsPath(targetOut, name)); err != nil {
+			t.Errorf("%s missing from %s: %v", name, metricsDir, err)
+		}
+	}
+
+	// And nowhere at the target root.
+	for _, name := range []string{sessionsCSVName, framesCSVName} {
+		if _, err := os.Stat(filepath.Join(targetOut, name)); err == nil {
+			t.Errorf("%s was written to the target root instead of %s/", name, metricsDir)
+		}
+	}
+
+	// metrics/ holds the reports and nothing else.
+	entries, err := os.ReadDir(filepath.Join(targetOut, metricsDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	want := []string{framesCSVName, sessionsCSVName}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("%s contains %v, want %v", metricsDir, names, want)
+	}
+
+	// The target root holds only data directories.
+	entries, err = os.ReadDir(targetOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	sort.Strings(dirs)
+	wantDirs := []string{"Session-01", "Session-02", metricsDir}
+	if strings.Join(dirs, ",") != strings.Join(wantDirs, ",") {
+		t.Errorf("target root holds %v, want %v", dirs, wantDirs)
+	}
+}
+
+// TestPrepareRejectsUnwritableMetricsDir checks the failure is reported rather
+// than silently skipped when the reports cannot be written.
+func TestPrepareRejectsUnwritableMetricsDir(t *testing.T) {
+	const target = "SH2-54"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+
+	// A regular file occupying the metrics path.
+	out := t.TempDir()
+	blocked := filepath.Join(out, target)
+	if err := os.MkdirAll(blocked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blocked, metricsDir), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runPrepare(prepareOptionsForTest(target, root, out))
+	if err == nil {
+		t.Fatal("expected a failure when metrics/ cannot be created")
+	}
+	if !strings.Contains(err.Error(), metricsDir) {
+		t.Errorf("error = %v, want it to mention %s", err, metricsDir)
 	}
 }
 
@@ -1673,7 +1761,7 @@ func TestPrepareRealTreeShape(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	recs := readSessionsCSV(t, filepath.Join(out, target, "sessions.csv"))
+	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
 	if len(recs) != 3 {
 		t.Fatalf("got %d records, want 3", len(recs))
 	}
@@ -1719,7 +1807,7 @@ func TestPrepareMixedAnglesWarns(t *testing.T) {
 	}
 
 	// The lowest angle wins deterministically and is what gets recorded.
-	recs := readSessionsCSV(t, filepath.Join(out, target, "sessions.csv"))
+	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
 	if recs[1][2] != "PA240" {
 		t.Errorf("pa = %q, want PA240 (lowest angle, deterministically)", recs[1][2])
 	}
@@ -1778,7 +1866,7 @@ func TestPrepareSessionDirPadding(t *testing.T) {
 	}
 	var dirs []string
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && e.Name() != metricsDir {
 			dirs = append(dirs, e.Name())
 		}
 	}
