@@ -45,6 +45,10 @@ const (
 // quarantined in one place.
 const rejectedDir = "rejected"
 
+// framesCSVName is the per-frame quality report written alongside the session
+// index.
+const framesCSVName = "frames.csv"
+
 // analyzeDefaultLimitComputedStars mirrors the analyze --limit-computed-stars
 // default. prepare reuses processImage, which requires this to be set, but does
 // not expose the flag itself.
@@ -318,13 +322,17 @@ func runPrepare(opts prepareOptions) error {
 		}
 		if !opts.dryRun {
 			fmt.Printf("Index écrit dans %q.\n", filepath.Join(targetOut, "sessions.csv"))
+			fmt.Printf("Métriques par image écrites dans %q.\n", filepath.Join(targetOut, framesCSVName))
 		}
 	}
 
 	if opts.dryRun {
 		return nil
 	}
-	return writeSessionsCSV(targetOut, sessions)
+	if err := writeSessionsCSV(targetOut, sessions); err != nil {
+		return err
+	}
+	return writeFramesCSV(targetOut, sessions)
 }
 
 func dryRunSuffix(dry bool) string {
@@ -801,6 +809,84 @@ func copyFITS(src, dst string, opts prepareOptions) (bool, error) {
 		return false, fmt.Errorf("fermeture de %q : %w", dst, err)
 	}
 	return true, nil
+}
+
+// framesCSVHeader describes one analysed light frame. It carries the session it
+// belongs to rather than only the date, because a session directory is named
+// for the evening it started while the frames themselves are usually stamped the
+// following day.
+var framesCSVHeader = []string{
+	"session", "sessionDate", "pa", "filter",
+	"filename", "detectedStars", "starCount",
+	"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
+	"decision", "error",
+}
+
+// writeFramesCSV records the per-frame quality metrics that decided the split
+// between lights/ and rejected/. Every analysed frame gets a row, approved or
+// not, so a rejection can be diagnosed from the numbers that caused it.
+//
+// The metric columns come from the shared imageResultRow, so this file and
+// analyze's CSV cannot disagree on formatting; the session columns are
+// prepended and the row's own filter/date are replaced by the source values.
+func writeFramesCSV(targetOut string, sessions []sessionPlan) error {
+	path := filepath.Join(targetOut, framesCSVName)
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("impossible de créer %q : %w", path, err)
+	}
+	defer f.Close()
+
+	w := newCSVWriter(f)
+	if err := w.Write(framesCSVHeader); err != nil {
+		return fmt.Errorf("écriture CSV : %w", err)
+	}
+
+	// imageResultRow is ordered as imageResultHeader: filename, filter, date,
+	// then the metrics. Only the filename and the metrics are wanted here;
+	// filter and date are replaced by the source subdirectory and session.
+	const (
+		colFilename = 0
+		colFirst    = 3 // detectedStars onward
+	)
+
+	for _, s := range sessions {
+		for _, filter := range s.filterNames() {
+			for _, name := range s.filters[filter] {
+				r, ok := s.verdicts[name]
+				if !ok {
+					// Should not happen: assessSessions records every planned
+					// frame. Skip rather than emit a misleading empty row.
+					continue
+				}
+				base := imageResultRow(r)
+
+				row := make([]string, 0, len(framesCSVHeader))
+				row = append(row,
+					s.sessionDir(),
+					s.date,
+					"PA"+s.pa,
+					filter,
+					base[colFilename],
+				)
+				row = append(row, base[colFirst:]...)
+
+				if len(row) != len(framesCSVHeader) {
+					return fmt.Errorf("frames.csv: built %d columns, header has %d",
+						len(row), len(framesCSVHeader))
+				}
+				if err := w.Write(row); err != nil {
+					return fmt.Errorf("écriture CSV : %w", err)
+				}
+			}
+		}
+	}
+
+	w.Flush()
+	if err := w.Error(); err != nil {
+		return fmt.Errorf("écriture CSV : %w", err)
+	}
+	return nil
 }
 
 // writeSessionsCSV records the session index so the Session-NN numbering stays

@@ -169,7 +169,7 @@ func simpleFixture(target string) prepareFixture {
 func prepareOptionsForTest(target, root, out string) prepareOptions {
 	return prepareOptions{
 		target: target, input: root, output: out, quiet: true,
-		minSNR: 11, maxFWHM: 5, maxEcc: 0.50, minScore: 2, minStars: 680,
+		minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 2, minStars: 680,
 	}
 }
 
@@ -1146,6 +1146,290 @@ func TestPrepareRejectedTreeIsTargetScoped(t *testing.T) {
 	}
 }
 
+// readFramesCSV parses the per-frame report.
+func readFramesCSV(t *testing.T, targetOut string) [][]string {
+	t.Helper()
+
+	b, err := os.ReadFile(filepath.Join(targetOut, framesCSVName))
+	if err != nil {
+		t.Fatalf("read %s: %v", framesCSVName, err)
+	}
+	recs, err := newCSVReader(strings.NewReader(string(b))).ReadAll()
+	if err != nil {
+		t.Fatalf("parse %s: %v\n%s", framesCSVName, err, b)
+	}
+	for _, r := range recs {
+		if len(r) != len(recs[0]) {
+			t.Errorf("ragged row %v, want %d fields", r, len(recs[0]))
+		}
+	}
+	return recs
+}
+
+// TestWriteFramesCSV covers the per-frame metrics report: one row per analysed
+// frame, approved and rejected alike.
+func TestWriteFramesCSV(t *testing.T) {
+	const target = "LBN527"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.maxFWHM = 0.5 // reject everything, so both outcomes appear
+	if err := runPrepare(opts); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+
+	recs := readFramesCSV(t, filepath.Join(out, target))
+
+	wantHeader := []string{
+		"session", "sessionDate", "pa", "filter",
+		"filename", "detectedStars", "starCount",
+		"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
+		"decision", "error",
+	}
+	if len(recs[0]) != len(wantHeader) {
+		t.Fatalf("header has %d columns, want %d: %v", len(recs[0]), len(wantHeader), recs[0])
+	}
+	for i := range wantHeader {
+		if recs[0][i] != wantHeader[i] {
+			t.Errorf("header[%d] = %q, want %q", i, recs[0][i], wantHeader[i])
+		}
+	}
+
+	// Every analysed frame appears, not just the approved ones.
+	if len(recs) != 4 { // header + 3 lights across two sessions
+		t.Fatalf("got %d records, want 4 (header plus three frames)", len(recs))
+	}
+
+	// Rows are grouped by session, in session order.
+	if recs[1][0] != "Session-01" || recs[3][0] != "Session-02" {
+		t.Errorf("sessions in row order = %q, %q, %q; want Session-01, Session-01, Session-02",
+			recs[1][0], recs[2][0], recs[3][0])
+	}
+
+	row := recs[1]
+	if row[1] != "2026-09-10" {
+		t.Errorf("sessionDate = %q, want %q", row[1], "2026-09-10")
+	}
+	if row[2] != "PA310" {
+		t.Errorf("pa = %q, want %q", row[2], "PA310")
+	}
+	if row[3] != "H" {
+		t.Errorf("filter = %q, want %q (the Lights subdirectory name)", row[3], "H")
+	}
+	if !strings.HasPrefix(row[4], "LBN527_LIGHT_H_") {
+		t.Errorf("filename = %q, want a light frame name", row[4])
+	}
+	// Metrics are populated for a frame that was analysed.
+	for _, col := range []int{5, 6} {
+		if row[col] == "" || row[col] == "0" {
+			t.Errorf("column %q = %q, want a populated metric", wantHeader[col], row[col])
+		}
+	}
+	for _, col := range []int{7, 8, 9, 10, 11} {
+		if !strings.Contains(row[col], ".") {
+			t.Errorf("column %q = %q, want four decimal places", wantHeader[col], row[col])
+		}
+	}
+	if row[12] != decisionFWHM {
+		t.Errorf("decision = %q, want %q", row[12], decisionFWHM)
+	}
+}
+
+// TestWriteFramesCSVIncludesApprovedAndRejected checks both outcomes are
+// recorded, since the point of the file is diagnosing rejections.
+func TestWriteFramesCSVIncludesApprovedAndRejected(t *testing.T) {
+	const target = "M51"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+
+	recs := readFramesCSV(t, filepath.Join(out, target))
+	counts := map[string]int{}
+	for _, r := range recs[1:] {
+		counts[r[12]]++
+	}
+	if counts[decisionApproved] != 3 {
+		t.Errorf("approved rows = %d, want 3 (%v)", counts[decisionApproved], counts)
+	}
+	if len(counts) != 1 {
+		t.Errorf("decisions present = %v, want only %q with default thresholds", counts, decisionApproved)
+	}
+}
+
+// TestFramesCSVUsesSessionDateNotFrameDate covers the midnight rollover: the
+// session column carries the directory date while the filename keeps its own.
+func TestFramesCSVUsesSessionDateNotFrameDate(t *testing.T) {
+	const target = "IC63"
+	root := t.TempDir()
+
+	prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				// Directory says 09-01, frames are stamped after midnight.
+				"2026-09-01": {"L": {
+					lightName(target, "L", "20260902", "014447", "431", "230"),
+					lightName(target, "L", "20260904", "031100", "000", "230"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-01": {flatName("L", "41.4", "20260901", "190000", "000", "230")},
+		},
+	}.build(t, root)
+
+	out := t.TempDir()
+	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+
+	recs := readFramesCSV(t, filepath.Join(out, target))
+	if len(recs) != 3 {
+		t.Fatalf("got %d records, want 3", len(recs))
+	}
+
+	// sessionDate is the parent directory date, for every row.
+	for _, r := range recs[1:] {
+		if r[1] != "2026-09-01" {
+			t.Errorf("sessionDate = %q, want %q (the Lights directory date)", r[1], "2026-09-01")
+		}
+	}
+	// The two frames carry different embedded dates, proving the rollover is
+	// preserved rather than flattened.
+	if !strings.Contains(recs[1][4], "20260902") || !strings.Contains(recs[2][4], "20260904") {
+		t.Errorf("filenames = %q, %q; want the embedded dates kept", recs[1][4], recs[2][4])
+	}
+}
+
+// TestFramesCSVRecordsUnreadableFrames checks a frame that failed to analyse
+// still gets a row, carrying the error rather than silent empty metrics.
+func TestFramesCSVRecordsUnreadableFrames(t *testing.T) {
+	const target = "WR134"
+	root := t.TempDir()
+
+	prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {"H": {
+					lightName(target, "H", "20260910", "220000", "000", "292"),
+				}},
+			},
+		},
+		flats: map[string][]string{},
+	}.build(t, root)
+
+	bad := filepath.Join(root, lightsDir, target, "2026-09-10", "H",
+		lightName(target, "H", "20260910", "220000", "000", "292"))
+	if err := os.WriteFile(bad, []byte("not a FITS file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := t.TempDir()
+	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+
+	recs := readFramesCSV(t, filepath.Join(out, target))
+	if len(recs) != 2 {
+		t.Fatalf("got %d records, want 2 (header plus the unreadable frame)", len(recs))
+	}
+	row := recs[1]
+	// The frame was never analysed, so every metric is a clean zero rather than
+	// a stale or invented value.
+	for _, col := range []int{5, 6} {
+		if row[col] != "0" {
+			t.Errorf("column %q = %q, want 0 for a frame that was never measured",
+				framesCSVHeader[col], row[col])
+		}
+	}
+	for _, col := range []int{7, 8, 9, 10, 11} {
+		if row[col] != "0.0000" {
+			t.Errorf("column %q = %q, want 0.0000 for a frame that was never measured",
+				framesCSVHeader[col], row[col])
+		}
+	}
+	// The decision stays empty and the reason is recorded in the error column.
+	if row[12] != "" {
+		t.Errorf("decision = %q, want empty alongside an error", row[12])
+	}
+	if row[13] == "" {
+		t.Error("error column is empty; an unreadable frame must be recorded as such")
+	}
+}
+
+// TestImageResultRowSharedByBothCommands is the cross-check that extracting the
+// row builder did not change either command's output.
+func TestImageResultRowSharedByBothCommands(t *testing.T) {
+	r := ImageResult{
+		Filename: "a.FIT", Filter: "B", Date: "2026-01-01",
+		DetectedStars: 100, StarCount: 50,
+		AvgFWHM: 3.14159, AvgSignal: 1234.5678, AvgEccentricity: 0.123456,
+		SNR: 12.5, Score: 3.7, Decision: decisionApproved,
+	}
+
+	row := imageResultRow(r)
+	if len(row) != len(imageResultHeader) {
+		t.Fatalf("row has %d columns, header has %d", len(row), len(imageResultHeader))
+	}
+	if row[0] != "a.FIT" || row[1] != "B" || row[2] != "2026-01-01" {
+		t.Errorf("identity columns = %v", row[:3])
+	}
+	if row[5] != "3.1416" {
+		t.Errorf("avgFWHM = %q, want %q (four decimal places)", row[5], "3.1416")
+	}
+
+	// analyze's CSV must match the shared columns exactly.
+	var sb strings.Builder
+	if err := writeResultsCSV([]ImageResult{r}, newCSVWriter(&sb)); err != nil {
+		t.Fatalf("writeResultsCSV: %v", err)
+	}
+	recs, err := newCSVReader(strings.NewReader(sb.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for i, h := range imageResultHeader {
+		if recs[0][i] != h {
+			t.Errorf("analyze header[%d] = %q, want %q", i, recs[0][i], h)
+		}
+	}
+	for i := range row {
+		if recs[1][i] != row[i] {
+			t.Errorf("analyze row[%d] = %q, imageResultRow gives %q", i, recs[1][i], row[i])
+		}
+	}
+
+	// The error column is populated when there is one.
+	errRow := imageResultRow(ImageResult{Filename: "b.FIT", Error: errFake{}})
+	if errRow[len(errRow)-1] != "fake failure" {
+		t.Errorf("error column = %q, want %q", errRow[len(errRow)-1], "fake failure")
+	}
+}
+
+// TestPrepareDryRunWritesNoCSV confirms the report is part of the real run only.
+func TestPrepareDryRunWritesNoCSV(t *testing.T) {
+	const target = "IC4090"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.dryRun = true
+	if err := runPrepare(opts); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+
+	for _, name := range []string{"sessions.csv", framesCSVName} {
+		if _, err := os.Stat(filepath.Join(out, target, name)); err == nil {
+			t.Errorf("dry run wrote %s", name)
+		}
+	}
+}
+
 func TestPrepareFlagDefaults(t *testing.T) {
 	want := map[string]string{
 		"target":        "",
@@ -1158,7 +1442,7 @@ func TestPrepareFlagDefaults(t *testing.T) {
 		// two commands would silently disagree on which frames are usable.
 		"min-snr":   "11",
 		"max-fwhm":  "5",
-		"max-ecc":   "0.5",
+		"max-ecc":   "0.54",
 		"min-score": "2",
 		"min-stars": "680",
 		"workers":   "0",

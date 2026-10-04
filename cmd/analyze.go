@@ -261,31 +261,40 @@ func newCSVReader(r io.Reader) *csv.Reader {
 	return cr
 }
 
+// imageResultHeader names the metric columns shared by analyze's CSV and
+// prepare's frames.csv.
+var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error"}
+
+// imageResultRow renders one result as imageResultHeader columns. Both
+// commands go through here so their metric columns and number formatting cannot
+// drift apart.
+func imageResultRow(r ImageResult) []string {
+	errStr := ""
+	if r.Error != nil {
+		errStr = r.Error.Error()
+	}
+	return []string{
+		r.Filename,
+		r.Filter,
+		r.Date,
+		strconv.Itoa(r.DetectedStars),
+		strconv.Itoa(r.StarCount),
+		strconv.FormatFloat(r.AvgFWHM, 'f', 4, 64),
+		strconv.FormatFloat(r.AvgSignal, 'f', 4, 64),
+		strconv.FormatFloat(r.AvgEccentricity, 'f', 4, 64),
+		strconv.FormatFloat(r.SNR, 'f', 4, 64),
+		strconv.FormatFloat(r.Score, 'f', 4, 64),
+		r.Decision,
+		errStr,
+	}
+}
+
 func writeResultsCSV(results []ImageResult, w *csv.Writer) error {
-	header := []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error"}
-	if err := w.Write(header); err != nil {
+	if err := w.Write(imageResultHeader); err != nil {
 		return err
 	}
 	for _, r := range results {
-		errStr := ""
-		if r.Error != nil {
-			errStr = r.Error.Error()
-		}
-		row := []string{
-			r.Filename,
-			r.Filter,
-			r.Date,
-			strconv.Itoa(r.DetectedStars),
-			strconv.Itoa(r.StarCount),
-			strconv.FormatFloat(r.AvgFWHM, 'f', 4, 64),
-			strconv.FormatFloat(r.AvgSignal, 'f', 4, 64),
-			strconv.FormatFloat(r.AvgEccentricity, 'f', 4, 64),
-			strconv.FormatFloat(r.SNR, 'f', 4, 64),
-			strconv.FormatFloat(r.Score, 'f', 4, 64),
-			r.Decision,
-			errStr,
-		}
-		if err := w.Write(row); err != nil {
+		if err := w.Write(imageResultRow(r)); err != nil {
 			return err
 		}
 	}
