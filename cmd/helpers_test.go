@@ -122,6 +122,35 @@ func captureStdout(t *testing.T, fn func()) string {
 	return out
 }
 
+// captureStderr redirects os.Stderr for the duration of fn and returns
+// everything written. warnUnknownKeys reports with a bare fmt.Fprintf, so there
+// is no writer to inject.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	orig := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+
+	_ = w.Close()
+	os.Stderr = orig
+	out := <-done
+	_ = r.Close()
+	return out
+}
+
 // Tests in this file must not call t.Parallel: processImage and runAnalyze read
 // and write the package-level mrs.ConvWorkers global, so parallel execution
 // would be a genuine data race under -race.
