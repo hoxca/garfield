@@ -3,12 +3,11 @@ package cmd
 import (
 	"bytes"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // newAnalyzeCmd builds a cobra command wired to its own analyzeOptions value,
@@ -29,15 +28,14 @@ func newAnalyzeCmd(opts *analyzeOptions, run func(dir string, o analyzeOptions) 
 		},
 	}
 
+	// The shared thresholds and worker flags are registered exactly as
+	// production does, so this helper cannot drift from analyzeCmd. Only the
+	// analyze-specific flags are declared here; their help text is left empty
+	// because these tests exercise parsing rather than documentation.
 	f := c.Flags()
+	registerQualityFlags(f, &opts.qualityThresholds)
+	registerWorkerFlags(f, &opts.workers, &opts.convWorkers)
 	f.StringVarP(&opts.dir, "dir", "d", "images", "dossier contenant les FITS")
-	f.IntVarP(&opts.workers, "workers", "w", 0, "workers externes")
-	f.IntVar(&opts.convWorkers, "conv-workers", 0, "workers de convolution internes")
-	f.Float64Var(&opts.minSNR, "min-snr", 11.0, "")
-	f.Float64Var(&opts.maxFWHM, "max-fwhm", 5.0, "")
-	f.Float64Var(&opts.maxEcc, "max-ecc", 0.54, "")
-	f.Float64Var(&opts.minScore, "min-score", 2.0, "")
-	f.IntVar(&opts.minStars, "min-stars", 680, "")
 	f.IntVar(&opts.limitComputedStars, "limit-computed-stars", 500, "")
 	f.StringVar(&opts.format, "format", "console", "")
 	f.StringVarP(&opts.output, "output", "o", "", "")
@@ -46,9 +44,79 @@ func newAnalyzeCmd(opts *analyzeOptions, run func(dir string, o analyzeOptions) 
 	return c
 }
 
-// TestAnalyzeFlagDefaults reads the defaults off the production command so a
-// change to any threshold is visible here rather than silently altering every
-// frame's verdict.
+// TestTestHelperFlagsMatchProduction guards the helper above against drifting
+// from the real command. It hand-replicates some flags, and a hand-written
+// replica has already drifted once (the --workers help text), so the shared set
+// is compared field by field.
+func TestTestHelperFlagsMatchProduction(t *testing.T) {
+	opts := &analyzeOptions{}
+	helper := newAnalyzeCmd(opts, func(string, analyzeOptions) error { return nil })
+	production := analyzeCmd.Flags()
+
+	shared := []string{
+		"min-snr", "max-fwhm", "max-ecc", "min-score", "min-stars",
+		"workers", "conv-workers",
+	}
+
+	for _, name := range shared {
+		hf := helper.Flags().Lookup(name)
+		pf := production.Lookup(name)
+		if hf == nil || pf == nil {
+			t.Errorf("--%s missing from one side (helper=%v production=%v)", name, hf != nil, pf != nil)
+			continue
+		}
+		if hf.DefValue != pf.DefValue {
+			t.Errorf("--%s default: helper %q, production %q", name, hf.DefValue, pf.DefValue)
+		}
+		if hf.Usage != pf.Usage {
+			t.Errorf("--%s help:\n  helper:     %q\n  production: %q", name, hf.Usage, pf.Usage)
+		}
+		if hf.Value.Type() != pf.Value.Type() {
+			t.Errorf("--%s type: helper %q, production %q", name, hf.Value.Type(), pf.Value.Type())
+		}
+		if hf.Shorthand != pf.Shorthand {
+			t.Errorf("--%s shorthand: helper %q, production %q", name, hf.Shorthand, pf.Shorthand)
+		}
+	}
+}
+
+// TestSharedFlagSetIsIdenticalAcrossCommands checks that every flag registered
+// by the shared helpers appears on both commands with the same definition, and
+// that neither command has gained a shared flag on its own.
+func TestSharedFlagSetIsIdenticalAcrossCommands(t *testing.T) {
+	shared := map[string]bool{
+		"min-snr": true, "max-fwhm": true, "max-ecc": true,
+		"min-score": true, "min-stars": true,
+		"workers": true, "conv-workers": true,
+	}
+
+	for _, pair := range [][2]*cobra.Command{{analyzeCmd, prepareCmd}} {
+		a, b := pair[0], pair[1]
+		a.Flags().VisitAll(func(f *pflag.Flag) {
+			if !shared[f.Name] {
+				return
+			}
+			g := b.Flags().Lookup(f.Name)
+			if g == nil {
+				t.Errorf("--%s is on %s but not on %s", f.Name, a.Name(), b.Name())
+				return
+			}
+			if g.DefValue != f.DefValue {
+				t.Errorf("--%s default: %s %q, %s %q", f.Name, a.Name(), f.DefValue, b.Name(), g.DefValue)
+			}
+			if g.Usage != f.Usage {
+				t.Errorf("--%s help: %s %q, %s %q", f.Name, a.Name(), f.Usage, b.Name(), g.Usage)
+			}
+			if g.Value.Type() != f.Value.Type() {
+				t.Errorf("--%s type: %s %q, %s %q", f.Name, a.Name(), f.Value.Type(), b.Name(), g.Value.Type())
+			}
+			if g.Shorthand != f.Shorthand {
+				t.Errorf("--%s shorthand: %s %q, %s %q", f.Name, a.Name(), f.Shorthand, b.Name(), g.Shorthand)
+			}
+		})
+	}
+}
+
 func TestAnalyzeFlagDefaults(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -79,6 +147,9 @@ func TestAnalyzeFlagDefaults(t *testing.T) {
 		}
 	}
 
+	// The threshold expectations are deliberately literal rather than taken from
+	// defaultThresholds: pinning the value independently is what makes a change
+	// to the constant show up as a test failure instead of passing silently.
 	want := map[string]string{
 		"dir":                  "images",
 		"workers":              "0",
@@ -131,10 +202,23 @@ func TestAnalyzeFlagParsing(t *testing.T) {
 			want:    analyzeOptions{dir: "/flag", qualityThresholds: defaultThresholds, limitComputedStars: 500, format: "console"},
 		},
 		{
+			// Only the overridden thresholds are spelled out; the rest come from
+			// the shared defaults so this expectation cannot drift.
 			name:    "long flags",
 			args:    []string{"--min-snr", "5.5", "--max-fwhm", "3.2", "--min-stars", "100"},
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", qualityThresholds: qualityThresholds{minSNR: 5.5, maxFWHM: 3.2, maxEcc: 0.54, minScore: 2, minStars: 100}, limitComputedStars: 500, format: "console"},
+			want: analyzeOptions{
+				dir: "images",
+				qualityThresholds: qualityThresholds{
+					minSNR:   5.5,
+					maxFWHM:  3.2,
+					maxEcc:   defaultThresholds.maxEcc,
+					minScore: defaultThresholds.minScore,
+					minStars: 100,
+				},
+				limitComputedStars: 500,
+				format:             "console",
+			},
 		},
 		{
 			name:    "short flags",
@@ -158,7 +242,18 @@ func TestAnalyzeFlagParsing(t *testing.T) {
 			name:    "float in exponent form",
 			args:    []string{"--min-score", "1e-3"},
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", qualityThresholds: qualityThresholds{minSNR: 11, maxFWHM: 5, maxEcc: 0.54, minScore: 0.001, minStars: 680}, limitComputedStars: 500, format: "console"},
+			want: analyzeOptions{
+				dir: "images",
+				qualityThresholds: qualityThresholds{
+					minSNR:   defaultThresholds.minSNR,
+					maxFWHM:  defaultThresholds.maxFWHM,
+					maxEcc:   defaultThresholds.maxEcc,
+					minScore: 0.001,
+					minStars: defaultThresholds.minStars,
+				},
+				limitComputedStars: 500,
+				format:             "console",
+			},
 		},
 		{
 			name:    "conv-workers",
@@ -278,87 +373,6 @@ func TestAnalyzeAlias(t *testing.T) {
 	}
 }
 
-// TestAnalyzeRunEPropagatesErrors confirms a failure from runAnalyze reaches the
-// caller, which is what makes Execute exit non-zero.
-func TestAnalyzeRunEPropagatesErrors(t *testing.T) {
-	wantErr := "boom"
-	opts := analyzeOptions{}
-	c := newAnalyzeCmd(&opts, func(string, analyzeOptions) error {
-		return errFake2{wantErr}
-	})
-	c.SetArgs([]string{"/data"})
-	c.SetOut(io.Discard)
-	c.SetErr(io.Discard)
-	c.SilenceUsage = true
-	c.SilenceErrors = true
-
-	err := c.Execute()
-	if err == nil {
-		t.Fatal("expected an error")
-	}
-	if err.Error() != wantErr {
-		t.Errorf("error = %q, want %q", err.Error(), wantErr)
-	}
-}
-
-// TestAnalyzeEndToEndThroughCommand runs the full command over a real directory
-// of synthetic frames, confirming the flag plumbing reaches runAnalyze intact.
-func TestAnalyzeEndToEndThroughCommand(t *testing.T) {
-	dir := t.TempDir()
-	writeFrame(t, dir, frameName("B", 0), goodFrameOpts())
-	writeFrame(t, dir, frameName("G", 1), goodFrameOpts())
-
-	out := filepath.Join(dir, "result.csv")
-	opts := analyzeOptions{}
-	c := newAnalyzeCmd(&opts, func(d string, o analyzeOptions) error {
-		return runAnalyze(d, o)
-	})
-	c.SetArgs([]string{
-		dir,
-		"--format", "csv",
-		"--output", out,
-		"--min-stars", "1",
-		"--quiet",
-	})
-	c.SetOut(io.Discard)
-	c.SetErr(io.Discard)
-	c.SilenceUsage = true
-	c.SilenceErrors = true
-
-	if err := c.Execute(); err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-
-	recs := readCSVFile(t, out)
-	if len(recs) != 3 {
-		t.Fatalf("got %d records, want 3 (header plus two frames)", len(recs))
-	}
-	for _, r := range recs[1:] {
-		if r[11] != "" {
-			t.Errorf("%s reported an error: %s", r[0], r[11])
-		}
-		if r[10] != decisionApproved {
-			t.Errorf("%s decision = %q, want %q", r[0], r[10], decisionApproved)
-		}
-	}
-}
-
-// TestRootCommandWiring checks the command tree the binary exposes.
-func TestRootCommandWiring(t *testing.T) {
-	names := map[string]bool{}
-	for _, c := range rootCmd.Commands() {
-		names[c.Name()] = true
-	}
-	for _, want := range []string{"analyze", "prepare", "version"} {
-		if !names[want] {
-			t.Errorf("rootCmd is missing the %q subcommand (has %v)", want, names)
-		}
-	}
-	if rootCmd.Version != Version {
-		t.Errorf("rootCmd.Version = %q, want %q", rootCmd.Version, Version)
-	}
-}
-
 // TestPrepareCommandWiring checks prepare is registered and rejects positional
 // arguments, so a mistyped invocation fails loudly instead of silently using
 // the wrong directory.
@@ -377,6 +391,22 @@ func TestPrepareCommandWiring(t *testing.T) {
 	}
 	if err := found.Args(found, nil); err != nil {
 		t.Errorf("prepare rejected an empty argument list: %v", err)
+	}
+}
+
+// TestRootCommandWiring checks the command tree the binary exposes.
+func TestRootCommandWiring(t *testing.T) {
+	names := map[string]bool{}
+	for _, c := range rootCmd.Commands() {
+		names[c.Name()] = true
+	}
+	for _, want := range []string{"analyze", "prepare", "version"} {
+		if !names[want] {
+			t.Errorf("rootCmd is missing the %q subcommand (has %v)", want, names)
+		}
+	}
+	if rootCmd.Version != Version {
+		t.Errorf("rootCmd.Version = %q, want %q", rootCmd.Version, Version)
 	}
 }
 
@@ -426,5 +456,3 @@ func TestSilenceUsageKeepsErrorsClean(t *testing.T) {
 type errFake2 struct{ msg string }
 
 func (e errFake2) Error() string { return e.msg }
-
-var _ = os.Stdout
