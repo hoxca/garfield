@@ -12,7 +12,7 @@
 thresholds:
   min-snr: 11.0
   max-fwhm: 5.0
-  max-ecc: 0.34
+  max-ecc: 0.54
   min-score: 2.0
   min-stars: 680
 
