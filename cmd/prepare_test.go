@@ -21,6 +21,9 @@ type prepareFixture struct {
 	lights map[string]map[string]map[string][]string
 	// flats maps date -> filenames.
 	flats map[string][]string
+	// biases maps gain token -> master filename. Empty means the fixture writes
+	// no Bias/Masters directory at all.
+	biases map[string]string
 }
 
 // build writes the fixture under root and returns it.
@@ -46,6 +49,15 @@ func (f prepareFixture) build(t *testing.T, root string) {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
 		for _, n := range names {
+			writeStub(t, filepath.Join(dir, n))
+		}
+	}
+	if len(f.biases) > 0 {
+		dir := filepath.Join(root, biasDir, biasMastersDir)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		for _, n := range f.biases {
 			writeStub(t, filepath.Join(dir, n))
 		}
 	}
@@ -131,10 +143,17 @@ func writeStarFrame(t *testing.T, path string, w, h int, level, noise, amp, sigm
 	}
 }
 
-// lightName builds a science frame filename in the acquisition convention.
+// lightName builds a science frame filename in the acquisition convention, at
+// the GA0 gain setting.
 func lightName(target, filter, date, time, ms, pa string) string {
-	return fmt.Sprintf("%s_LIGHT_%s_300s_BIN1_-10C_GA0_%s_%s_%s_PA%s_E.FIT",
-		target, filter, date, time, ms, pa)
+	return lightNameGain(target, filter, date, time, ms, pa, "GA0")
+}
+
+// lightNameGain builds a science frame filename at an explicit gain setting,
+// which is what lets a fixture mix filters taken at two different gains.
+func lightNameGain(target, filter, date, time, ms, pa, gain string) string {
+	return fmt.Sprintf("%s_LIGHT_%s_300s_BIN1_-10C_%s_%s_%s_%s_PA%s_E.FIT",
+		target, filter, gain, date, time, ms, pa)
 }
 
 // flatName builds a flat frame filename.
@@ -197,12 +216,38 @@ func subDirNames(t *testing.T, dir string) []string {
 	return names
 }
 
+// fileNames returns the sorted names of the files directly inside dir, skipping
+// the dotfiles macOS leaves behind on exFAT volumes.
+func fileNames(t *testing.T, dir string) []string {
+	t.Helper()
+	var names []string
+	for _, e := range dirEntries(t, dir) {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	return names
+}
+
 // sessionDirNames lists the prepared session directories of a target. It
 // descends into sessionsDir, which is what distinguishes the Sessions/ wrapper
 // from the older layout where sessions sat in the target root.
+//
+// The Session_ prefix filter matters now that bias/ shares the directory: a
+// plain listing would return the master bias directory alongside the sessions,
+// and any consumer doing the same -- globbing Sessions/*/ -- sees it too.
 func sessionDirNames(t *testing.T, out, target string) []string {
 	t.Helper()
-	return subDirNames(t, filepath.Join(out, target, sessionsDir))
+	var names []string
+	for _, e := range dirEntries(t, filepath.Join(out, target, sessionsDir)) {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "Session_") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func TestPrepareSessionsAndFilterDirs(t *testing.T) {
@@ -868,10 +913,12 @@ func TestPrepareSessionsCSV(t *testing.T) {
 		t.Fatalf("got %d records, want 3 (header plus two sessions)", len(recs))
 	}
 
+	// gains is appended last, so every pre-existing column keeps its position.
 	wantHeader := []string{
 		"session", "date", "pa", "filters", "lightCount",
 		"approvedCount", "rejectedCount", "flatCount",
 		"missingFlats", "frameDateMin", "frameDateMax",
+		"gains",
 	}
 	if len(recs[0]) != len(wantHeader) {
 		t.Fatalf("header has %d columns, want %d", len(recs[0]), len(wantHeader))
@@ -910,6 +957,10 @@ func TestPrepareSessionsCSV(t *testing.T) {
 	}
 	if row[8] != "B" {
 		t.Errorf("missingFlats = %q, want %q", row[8], "B")
+	}
+	// lightName writes the GA0 token, so both sessions record that gain.
+	if row[11] != "GA0" {
+		t.Errorf("gains = %q, want %q", row[11], "GA0")
 	}
 }
 

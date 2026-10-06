@@ -30,6 +30,7 @@ const (
 const (
 	lightsDir = "Lights"
 	flatsDir  = "Flats"
+	biasDir   = "Bias"
 )
 
 // sessionLightsDir and sessionFlatsDir are the subdirectories of a prepared
@@ -39,6 +40,17 @@ const (
 	sessionLightsDir = "lights"
 	sessionFlatsDir  = "flats"
 )
+
+// biasOutDir holds the master biases for a target. It sits beside the session
+// directories rather than inside one because a master bias is a property of the
+// sensor setting, not of an observing night: one file serves every session
+// taken at that gain. Nesting it per session would duplicate identical
+// hundreds-megabyte files once per night.
+const biasOutDir = "bias"
+
+// biasMastersDir is the acquisition-side directory holding the master biases,
+// flat, one file per gain.
+const biasMastersDir = "Masters"
 
 // rejectedDir sits beside the Sessions directory rather than inside a session,
 // so a session tree holds only usable data and everything discarded is
@@ -93,6 +105,17 @@ var frameDateRe = regexp.MustCompile(`_(\d{8})_\d{6}_\d+_PA`)
 
 // fitsExts are the filename extensions treated as FITS frames.
 var fitsExts = map[string]bool{".FIT": true, ".FITS": true, ".FTS": true}
+
+// masterExts are the extensions of the calibration masters. They are kept apart
+// from fitsExts because the masters are XISF: pixelinsight's serialisation of
+// a FITS image, with an XML header rather than 80-byte cards. readfits cannot
+// read one, so a master must never reach the quality pass that fitsExts gates.
+var masterExts = map[string]bool{".XISF": true}
+
+// gainRe extracts the gain setting token, "GA0" or "GA2750". Light frames and
+// master calibrations use the same spelling, so the two match on the token
+// directly: "..._-10C_GA0_20260914_..." against "masterBias_GA0_-10C_...".
+var gainRe = regexp.MustCompile(`_(GA\d+)_`)
 
 type prepareOptions struct {
 	// Quality thresholds are shared with analyze, so a light frame is approved
@@ -177,8 +200,12 @@ type sessionPlan struct {
 	frameDateMax string
 	// missingFlats lists filters that have lights but no matching flats.
 	missingFlats []string
-	lightCount   int
-	flatCount    int
+	// gains lists the camera gain settings the session's light frames were
+	// taken at, sorted. Filters pair to gains in the acquisition, so a night
+	// covering both a B/G/L/R set and an O/S set records two.
+	gains      []string
+	lightCount int
+	flatCount  int
 	// approvedCount and rejectedCount are filled in by the assessment pass.
 	approvedCount int
 	rejectedCount int
@@ -246,6 +273,20 @@ func runPrepare(opts prepareOptions) error {
 		return fmt.Errorf("aucune session (dossier YYYY-MM-DD) trouvée dans %q", lightsRoot)
 	}
 
+	// Indexed once for the whole target: the masters are shared by every
+	// session, so this is not per-session work. A missing directory is not an
+	// error -- the bias can be supplied during the reduction instead.
+	var masters map[string]biasMaster
+	biasRoot := filepath.Join(opts.input, biasDir, biasMastersDir)
+	if _, statErr := os.Stat(biasRoot); statErr == nil {
+		var biasWarnings []string
+		masters, biasWarnings, err = indexBiasMasters(biasRoot)
+		if err != nil {
+			return err
+		}
+		warnings = append(warnings, biasWarnings...)
+	}
+
 	if !opts.quiet {
 		fmt.Printf("\n%s de %q (%d session(s)) vers %q%s\n\n",
 			prepareVerb(opts.dryRun), opts.target, len(sessions), targetOut, dryRunSuffix(opts.dryRun))
@@ -270,7 +311,7 @@ func runPrepare(opts prepareOptions) error {
 		}
 	}
 
-	totalLights, totalFlats := 0, 0
+	totalLights, totalFlats, totalBias := 0, 0, 0
 	for _, s := range sessions {
 		copiedLights, copiedFlats, err := prepareSession(s, targetOut, opts)
 		if err != nil {
@@ -302,6 +343,15 @@ func runPrepare(opts prepareOptions) error {
 		}
 	}
 
+	// Copied once for the target, after the sessions, because the masters are
+	// shared: one file per gain serves every night taken at that setting.
+	biasCount, biasWarnings, err := prepareBias(targetOut, targetGains(sessions), masters, opts)
+	if err != nil {
+		return err
+	}
+	totalBias = biasCount
+	warnings = append(warnings, biasWarnings...)
+
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "  avertissement : %s\n", w)
 	}
@@ -313,10 +363,14 @@ func runPrepare(opts prepareOptions) error {
 	}
 
 	if !opts.quiet {
-		fmt.Printf("\n%s : %d session(s), %d image(s) approuvée(s), %d rejetée(s), %d flat(s).\n",
-			finishVerb(opts.dryRun), len(sessions), approved, rejected, totalFlats)
+		fmt.Printf("\n%s : %d session(s), %d image(s) approuvée(s), %d rejetée(s), %d flat(s), %d master bias.\n",
+			finishVerb(opts.dryRun), len(sessions), approved, rejected, totalFlats, totalBias)
 		if rejected > 0 && !opts.dryRun {
 			fmt.Printf("Images rejetées sous %q.\n", filepath.Join(targetOut, rejectedDir))
+		}
+		if totalBias > 0 {
+			fmt.Printf("Master bias sous %q.\n",
+				filepath.Join(sessionOutDir(targetOut, ""), biasOutDir))
 		}
 		if !opts.dryRun {
 			fmt.Printf("Index écrit dans %q.\n", metricsPath(targetOut, sessionsCSVName))
@@ -555,6 +609,7 @@ func planSession(sessionDir, flatDir string, number int, date string) (sessionPl
 
 	var warnings []string
 	paSeen := map[string]bool{}
+	gainSeen := map[string]bool{}
 
 	for _, filter := range filterDirs {
 		files, err := listFITS(filepath.Join(sessionDir, filter))
@@ -574,8 +629,18 @@ func planSession(sessionDir, flatDir string, number int, date string) (sessionPl
 			if m := paRe.FindStringSubmatch(f); m != nil {
 				paSeen[m[1]] = true
 			}
+			if m := gainRe.FindStringSubmatch(f); m != nil {
+				gainSeen[m[1]] = true
+			}
 		}
 	}
+
+	// Recorded in sorted order so the report and the console are stable.
+	s.gains = make([]string, 0, len(gainSeen))
+	for g := range gainSeen {
+		s.gains = append(s.gains, g)
+	}
+	sort.Strings(s.gains)
 
 	if len(paSeen) > 0 {
 		angles := make([]string, 0, len(paSeen))
@@ -775,6 +840,157 @@ func prepareSession(s sessionPlan, targetOut string, opts prepareOptions) (int, 
 // around 120 MB, so copying them whole would spike memory across sessions.
 const copyBufferSize = 1 << 20
 
+// biasMaster is one master bias file and the gain it was taken at.
+type biasMaster struct {
+	gain string // "GA0", "GA2750"
+	name string // masterBias_GA0_-10C_257f_20251117.xisf
+	src  string
+}
+
+// indexBiasMasters reads the master biases and keys them by gain. The
+// acquisition names each file after the gain it was taken at, which is the same
+// token the light frames carry, so a light frame's master is a lookup rather
+// than a pattern rewrite.
+//
+// Two files for one gain would leave the choice arbitrary -- the names carry a
+// date suffix, so a newer master can be added later -- so that is reported and
+// the first in sorted order wins, which keeps the outcome reproducible.
+func indexBiasMasters(dir string) (map[string]biasMaster, []string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("impossible de lire %q : %w", dir, err)
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		// Dotfiles are skipped here as everywhere else: the syncthing client
+		// leaves ".syncthing.masterBias_....tmp" partials here, and copying a
+		// half-transferred master would be worse than having none.
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if !masterExts[strings.ToUpper(filepath.Ext(e.Name()))] {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+
+	masters := map[string]biasMaster{}
+	var warnings []string
+
+	for _, name := range names {
+		m := gainRe.FindStringSubmatch(name)
+		if m == nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s : %q ignoré, aucun réglage de gain dans le nom", dir, name))
+			continue
+		}
+		gain := m[1]
+		if prev, dup := masters[gain]; dup {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s : deux masters pour le gain %s (%s et %s), %s retenu",
+				dir, gain, prev.name, name, prev.name))
+			continue
+		}
+		masters[gain] = biasMaster{gain: gain, name: name, src: filepath.Join(dir, name)}
+	}
+
+	return masters, warnings, nil
+}
+
+// targetGains returns the sorted union of the gains every session needs. A
+// session mixing filters at two settings needs both masters: the acquisition
+// pairs filters to gains, so a B/G/L/R night alongside an O/S night spans the
+// two.
+func targetGains(sessions []sessionPlan) []string {
+	seen := map[string]bool{}
+	for _, s := range sessions {
+		for _, g := range s.gains {
+			seen[g] = true
+		}
+	}
+
+	gains := make([]string, 0, len(seen))
+	for g := range seen {
+		gains = append(gains, g)
+	}
+	sort.Strings(gains)
+	return gains
+}
+
+// gainList renders a gain set for a message, or a placeholder when empty.
+func gainList(gains []string) string {
+	if len(gains) == 0 {
+		return "aucun"
+	}
+	return strings.Join(gains, " ")
+}
+
+// prepareBias copies the master biases the target's sessions need into a single
+// shared directory under Sessions/. It runs once per target rather than once
+// per session, so a target spanning two gains copies two files no matter how
+// many nights it holds.
+func prepareBias(targetOut string, gains []string, masters map[string]biasMaster, opts prepareOptions) (int, []string, error) {
+	if len(gains) == 0 {
+		return 0, nil, nil
+	}
+
+	var (
+		copied   int
+		warnings []string
+		dstRoot  = filepath.Join(sessionOutDir(targetOut, ""), biasOutDir)
+		present  = make([]string, 0, len(masters))
+	)
+	for g := range masters {
+		present = append(present, g)
+	}
+	sort.Strings(present)
+
+	var done []string
+	for _, gain := range gains {
+		master, ok := masters[gain]
+		if !ok {
+			// Same policy as a missing flat: reported, but the run continues,
+			// because a session without its master is still usable data and the
+			// reduction can supply the bias later.
+			warnings = append(warnings, fmt.Sprintf(
+				"aucun master bias pour le gain %s dans %q (disponibles : %s)",
+				gain, filepath.Join(opts.input, biasDir, biasMastersDir), gainList(present)))
+			continue
+		}
+
+		dst := filepath.Join(dstRoot, master.name)
+		if !opts.dryRun {
+			if err := os.MkdirAll(dstRoot, 0o755); err != nil {
+				return copied, warnings, fmt.Errorf("impossible de créer %q : %w", dstRoot, err)
+			}
+		}
+		n, err := copyFITS(master.src, dst, opts)
+		if err != nil {
+			return copied, warnings, err
+		}
+		if n {
+			copied++
+		}
+		done = append(done, gain)
+	}
+
+	if !opts.quiet && len(gains) > 0 {
+		verb := prepareVerb(opts.dryRun)
+		if copied == 0 {
+			fmt.Printf("  %s : aucun master bias (%s)\n", verb, gainList(gains))
+		} else {
+			fmt.Printf("  %s : %d master bias pour le gain %s\n", verb, copied, gainList(done))
+		}
+	}
+
+	return copied, warnings, nil
+}
+
 // copyFITS copies one file, reporting whether it actually wrote anything. In
 // dry-run mode nothing is touched, and with skip-existing an already-present
 // destination is left alone.
@@ -899,10 +1115,12 @@ func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 	defer f.Close()
 
 	w := newCSVWriter(f)
+	// gains is appended last so the position of every existing column is
+	// unchanged for anything already reading this file.
 	header := []string{
 		"session", "date", "pa", "filters", "lightCount",
 		"approvedCount", "rejectedCount", "flatCount", "missingFlats",
-		"frameDateMin", "frameDateMax",
+		"frameDateMin", "frameDateMax", "gains",
 	}
 	if err := w.Write(header); err != nil {
 		return fmt.Errorf("écriture CSV : %w", err)
@@ -923,6 +1141,7 @@ func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 			missing,
 			s.frameDateMin,
 			s.frameDateMax,
+			strings.Join(s.gains, " "),
 		}
 		if err := w.Write(row); err != nil {
 			return fmt.Errorf("écriture CSV : %w", err)
