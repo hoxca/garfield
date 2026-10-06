@@ -897,6 +897,7 @@ const copyBufferSize = 1 << 20
 // biasMaster is one master bias file and the gain it was taken at.
 type biasMaster struct {
 	gain string // "GA0", "GA2750"
+	date string // YYYYMMDD suffix, used to prefer the most recent
 	name string // masterBias_GA0_-10C_257f_20251117.xisf
 	src  string
 }
@@ -920,16 +921,9 @@ func indexBiasMasters(dir string) (map[string]biasMaster, []string, error) {
 		if e.IsDir() {
 			continue
 		}
-		// Dotfiles are skipped here as everywhere else: the syncthing client
-		// leaves ".syncthing.masterBias_....tmp" partials here, and copying a
-		// half-transferred master would be worse than having none.
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
+		if keep, n := isMasterFile(e.Name()); keep {
+			names = append(names, n)
 		}
-		if !masterExts[strings.ToUpper(filepath.Ext(e.Name()))] {
-			continue
-		}
-		names = append(names, e.Name())
 	}
 	sort.Strings(names)
 
@@ -944,13 +938,27 @@ func indexBiasMasters(dir string) (map[string]biasMaster, []string, error) {
 			continue
 		}
 		gain := m[1]
+		date := masterDate(name)
+
 		if prev, dup := masters[gain]; dup {
-			warnings = append(warnings, fmt.Sprintf(
-				"%s : deux masters pour le gain %s (%s et %s), %s retenu",
-				dir, gain, prev.name, name, prev.name))
+			if !preferLater(prev.date, date) {
+				if date == prev.date {
+					warnings = append(warnings, tieWarning(dir, gain, prev.name, name))
+				} else {
+					warnings = append(warnings,
+						collisionWarning(dir, gain, prev.name, name, prev.name))
+				}
+				continue
+			}
+			warnings = append(warnings,
+				collisionWarning(dir, gain, prev.name, name, name))
+			masters[gain] = biasMaster{gain: gain, date: date, name: name,
+				src: filepath.Join(dir, name)}
 			continue
 		}
-		masters[gain] = biasMaster{gain: gain, name: name, src: filepath.Join(dir, name)}
+
+		masters[gain] = biasMaster{gain: gain, date: date, name: name,
+			src: filepath.Join(dir, name)}
 	}
 
 	return masters, warnings, nil
@@ -1119,23 +1127,20 @@ func indexDarkMasters(root string) (map[darkKey]darkMaster, []string, error) {
 		exposure, _ := strconv.Atoi(m[1])
 		key := darkKey{gain: m[2], exposure: exposure}
 
-		date := ""
-		if d := masterDateRe.FindStringSubmatch(base); d != nil {
-			date = d[1]
-		}
+		date := masterDate(base)
 
 		if prev, dup := masters[key]; dup {
-			// The most recently made master wins: the names carry the date they
-			// were built from, so a newer one supersedes rather than competes.
-			if date <= prev.date {
-				warnings = append(warnings, fmt.Sprintf(
-					"%s : deux masters pour %s (%s et %s), %s retenu",
-					root, key, prev.name, base, prev.name))
+			if !preferLater(prev.date, date) {
+				if date == prev.date {
+					warnings = append(warnings, tieWarning(root, key.String(), prev.name, base))
+				} else {
+					warnings = append(warnings,
+						collisionWarning(root, key.String(), prev.name, base, prev.name))
+				}
 				continue
 			}
-			warnings = append(warnings, fmt.Sprintf(
-				"%s : deux masters pour %s (%s et %s), %s retenu",
-				root, key, prev.name, base, base))
+			warnings = append(warnings,
+				collisionWarning(root, key.String(), prev.name, base, base))
 			masters[key] = darkMaster{key: key, date: date, name: base,
 				src: filepath.Join(root, rel)}
 			continue
@@ -1161,6 +1166,50 @@ func isMasterFile(name string) (bool, string) {
 		return false, ""
 	}
 	return true, name
+}
+
+// masterDate reads the date suffix a master carries, empty when it has none.
+// Both biases and darks are named "<...>_<YYYYMMDD>.xisf".
+func masterDate(name string) string {
+	if m := masterDateRe.FindStringSubmatch(name); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// preferLater reports whether a candidate master should replace the one already
+// held. The most recently built master supersedes rather than competes, so a
+// newer calibration replaces an older one of the same kind.
+//
+// Nothing else weighs in. A bias name carries a frame count ("257f") ahead of
+// the date, which used to decide collisions purely by where it sorted; more
+// frames is not better evidence of a current calibration, so it is not read at
+// all. A tie therefore resolves to neither candidate on merit, and the caller
+// keeps the one it already holds -- deterministic only because candidates are
+// visited in sorted order, which is why an undecided tie is reported as such.
+//
+// Biases and darks share this: they were once decided differently, biases by
+// directory order and darks by date, which meant the two features disagreed
+// about which master was current.
+func preferLater(heldDate, candidateDate string) bool {
+	return candidateDate > heldDate
+}
+
+// collisionWarning reports two masters for one key. Reported whichever way it
+// resolves, because a duplicate master is an anomaly worth surfacing even when
+// the choice between them is unambiguous.
+func collisionWarning(dir, key, held, candidate, kept string) string {
+	return fmt.Sprintf("%s : deux masters pour %s (%s et %s), %s retenu",
+		dir, key, held, candidate, kept)
+}
+
+// tieWarning reports two masters for one key whose dates are equal. The date is
+// the only quality signal, so it does not choose between them, and saying
+// "retained" would imply it had. What is kept is only the first in sorted order.
+func tieWarning(dir, key, held, candidate string) string {
+	return fmt.Sprintf(
+		"%s : deux masters pour %s à la même date (%s et %s), date insuffisante pour trancher, %s conservé par ordre de nom",
+		dir, key, held, candidate, held)
 }
 
 // lightDarkKey returns the master dark combination a light frame needs, and
