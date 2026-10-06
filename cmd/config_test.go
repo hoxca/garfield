@@ -389,11 +389,17 @@ func TestApplyConfigBadValueIsAnError(t *testing.T) {
 	}
 }
 
-// TestRepoConfigMatchesCompiledDefaults checks the shipped conf/garfield.yaml
-// agrees with the compiled defaults. The file is a second place thresholds are
-// configured, and if the two drift a fresh checkout reports one value in --help
-// and judges frames by another.
-func TestRepoConfigMatchesCompiledDefaults(t *testing.T) {
+// TestRepoConfigIsValid checks the shipped conf/garfield.yaml is complete and
+// well-formed: every key the tool reads is present, nothing unrecognised is in
+// there, and the values have the types the flags expect.
+//
+// The values themselves are deliberately NOT checked against
+// defaultThresholds. Tuning a threshold is the whole point of shipping this
+// file, and an earlier version of this test asserted equality with the compiled
+// defaults, which made editing the config a test failure. The compiled defaults
+// remain the fallback for when no config file exists; once one does, the file
+// wins, and nothing should second-guess it.
+func TestRepoConfigIsValid(t *testing.T) {
 	v := mustReadConfig(t, "../"+configRelPath)
 
 	for key, want := range map[string]string{
@@ -406,17 +412,30 @@ func TestRepoConfigMatchesCompiledDefaults(t *testing.T) {
 		}
 	}
 
-	for key, want := range map[string]float64{
-		"thresholds.min-snr":       defaultThresholds.minSNR,
-		"thresholds.max-fwhm":      defaultThresholds.maxFWHM,
-		"thresholds.max-ecc":       defaultThresholds.maxEcc,
-		"thresholds.min-score":     defaultThresholds.minScore,
-		"thresholds.min-stars":     float64(defaultThresholds.minStars),
-		"concurrency.workers":      0,
-		"concurrency.conv-workers": 0,
+	// Every key must be present, so deleting one cannot silently fall back to
+	// the compiled default for a whole run.
+	for _, key := range []string{
+		"thresholds.min-snr", "thresholds.max-fwhm", "thresholds.max-ecc",
+		"thresholds.min-score", "thresholds.min-stars",
+		"concurrency.workers", "concurrency.conv-workers",
+		"prepare.input", "prepare.output", "analyze.dir",
 	} {
-		if got := v.GetFloat64(key); got != want {
-			t.Errorf("%s = %v in %s, want %v", key, got, configRelPath, want)
+		if !v.IsSet(key) {
+			t.Errorf("%s is missing from %s", key, configRelPath)
+		}
+	}
+
+	// Types must line up with the flags, or the value is rejected at startup.
+	for _, key := range []string{
+		"thresholds.min-snr", "thresholds.max-fwhm", "thresholds.max-ecc", "thresholds.min-score",
+	} {
+		if _, ok := v.Get(key).(float64); !ok {
+			t.Errorf("%s holds %T, want a number the float flags accept", key, v.Get(key))
+		}
+	}
+	for _, key := range []string{"thresholds.min-stars", "concurrency.workers", "concurrency.conv-workers"} {
+		if _, ok := v.Get(key).(int); !ok {
+			t.Errorf("%s holds %T, want an int the integer flags accept", key, v.Get(key))
 		}
 	}
 
