@@ -149,7 +149,56 @@ func TestIndexDarkMastersPrefersTheLatestDate(t *testing.T) {
 		t.Errorf("date = %q, want 20260901", masters[key].date)
 	}
 	if len(warnings) != 2 {
-		t.Errorf("got %d warnings (%v), want both collisions reported", len(warnings), warnings)
+		t.Fatalf("got %d warnings (%v), want both collisions reported", len(warnings), warnings)
+	}
+	for _, w := range warnings {
+		if !strings.Contains(w, "deux masters") {
+			t.Errorf("warning %q does not report a collision", w)
+		}
+	}
+	// Each replacement is reported as it happens, so an intermediate warning
+	// names a master the next one displaces. The last one records the winner.
+	const winner = "masterDark_300s_GA0_-10C_20260901.xisf"
+	if last := warnings[len(warnings)-1]; !strings.Contains(last, winner+" retenu") {
+		t.Errorf("last warning %q does not record %q as kept", last, winner)
+	}
+}
+
+// TestIndexDarkMastersReportsAnUndecidedTie covers the branch where the date
+// does not choose between two masters. The names carry one file per combination
+// per date, so this needs two files differing only outside the key to reach.
+//
+// The warning must not present a winner: nothing in the pair ranks them, so the
+// one kept is merely the first in sorted order.
+func TestIndexDarkMastersReportsAnUndecidedTie(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "G0")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{
+		"masterDark_300s_GA0_-10C_20251117_a.xisf",
+		"masterDark_300s_GA0_-10C_20251117_b.xisf",
+	} {
+		writeStub(t, filepath.Join(sub, n))
+	}
+
+	masters, warnings, err := indexDarkMasters(dir)
+	if err != nil {
+		t.Fatalf("indexDarkMasters: %v", err)
+	}
+	const held = "masterDark_300s_GA0_-10C_20251117_a.xisf"
+	if got := masters[darkKey{gain: "GA0", exposure: 300}].name; got != held {
+		t.Errorf("resolved to %q, want %q", got, held)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %v, want one collision", warnings)
+	}
+	if !strings.Contains(warnings[0], "date insuffisante") {
+		t.Errorf("warning %q does not say the date was insufficient", warnings[0])
+	}
+	if strings.Contains(warnings[0], "retenu") {
+		t.Errorf("warning %q claims a winner the date could not pick", warnings[0])
 	}
 }
 

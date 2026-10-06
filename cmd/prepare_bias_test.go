@@ -39,6 +39,14 @@ func biasFixture(target string) prepareFixture {
 	}
 }
 
+// wantDate reads the trailing YYYYMMDD of a master filename.
+func wantDate(name string) string {
+	if m := masterDateRe.FindStringSubmatch(name); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // TestPrepareCopiesBothBiasesForMixedGainSession is the core case: one session
 // needing two masters, copied once each into a shared directory, never per
 // session.
@@ -294,24 +302,209 @@ func TestIndexBiasMasters(t *testing.T) {
 		}
 	})
 
-	t.Run("two masters for one gain are reported, not silently resolved", func(t *testing.T) {
+	// The frame count in the name ("257f") is what used to decide the winner,
+	// purely by sorting. Two cases are needed to prove the date decides instead:
+	// one where the newest sorts last, and one where it sorts first. Either
+	// alone would pass under a rule of "first wins" or "last wins".
+	t.Run("two masters for one gain resolve to the latest date", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			files   []string
+			want    string
+			wantCnt int
+			// wantTie marks a case where the date does not decide, so the
+			// warning must say the date was insufficient rather than name a
+			// winner.
+			wantTie bool
+		}{
+			{
+				// 20260901 sorts after 20251117, so "first wins" would pick the
+				// older master.
+				name: "newest sorts last",
+				files: []string{
+					"masterBias_GA0_-10C_257f_20251117.xisf",
+					"masterBias_GA0_-10C_300f_20260901.xisf",
+				},
+				want: "masterBias_GA0_-10C_300f_20260901.xisf", wantCnt: 1,
+			},
+			{
+				// 100f sorts before 257f, so "last wins" would pick the oldest.
+				name: "newest sorts first",
+				files: []string{
+					"masterBias_GA0_-10C_100f_20260901.xisf",
+					"masterBias_GA0_-10C_257f_20251117.xisf",
+				},
+				want: "masterBias_GA0_-10C_100f_20260901.xisf", wantCnt: 1,
+			},
+			{
+				// Three masters: the winner is the last one seen, so the warning
+				// chain has to be followed to the end.
+				name: "three masters",
+				files: []string{
+					"masterBias_GA0_-10C_100f_20240101.xisf",
+					"masterBias_GA0_-10C_257f_20251117.xisf",
+					"masterBias_GA0_-10C_900f_20260901.xisf",
+				},
+				want: "masterBias_GA0_-10C_900f_20260901.xisf", wantCnt: 2,
+			},
+			{
+				// Same date, different frame counts. The date is the only quality
+				// signal and it does not choose, so the warning has to say so
+				// rather than present a winner.
+				name: "equal dates are reported as undecided",
+				files: []string{
+					"masterBias_GA0_-10C_100f_20251117.xisf",
+					"masterBias_GA0_-10C_257f_20251117.xisf",
+				},
+				want: "masterBias_GA0_-10C_100f_20251117.xisf", wantCnt: 1, wantTie: true,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				dir := t.TempDir()
+				for _, n := range tc.files {
+					writeStub(t, filepath.Join(dir, n))
+				}
+
+				masters, warnings, err := indexBiasMasters(dir)
+				if err != nil {
+					t.Fatalf("indexBiasMasters: %v", err)
+				}
+				if len(masters) != 1 {
+					t.Fatalf("got %d masters, want 1: %v", len(masters), masters)
+				}
+				if got := masters["GA0"].name; got != tc.want {
+					t.Errorf("resolved to %q, want %q", got, tc.want)
+				}
+				if got := masters["GA0"].date; got != wantDate(tc.want) {
+					t.Errorf("date = %q, want %q", got, wantDate(tc.want))
+				}
+				if len(warnings) != tc.wantCnt {
+					t.Fatalf("got %d warnings (%v), want %d", len(warnings), warnings, tc.wantCnt)
+				}
+				for _, w := range warnings {
+					if !strings.Contains(w, "deux masters") {
+						t.Errorf("warning %q does not report a collision", w)
+					}
+					if tc.wantTie {
+						// Presenting a retained master here would imply the date
+						// chose it.
+						if strings.Contains(w, "retenu") {
+							t.Errorf("warning %q claims a winner the date could not pick", w)
+						}
+						if !strings.Contains(w, "date insuffisante") {
+							t.Errorf("warning %q does not say the date was insufficient", w)
+						}
+						continue
+					}
+				}
+				if tc.wantTie {
+					return
+				}
+				// Intermediate collisions legitimately name a master that a later
+				// one then displaces; the final warning names the one kept.
+				if last := warnings[len(warnings)-1]; !strings.Contains(last, tc.want+" retenu") {
+					t.Errorf("last warning %q does not record %q as kept", last, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("a filename with no gain token is not a second candidate", func(t *testing.T) {
 		dir := t.TempDir()
-		writeStub(t, filepath.Join(dir, "masterBias_GA0_-10C_257f_20251117.xisf"))
-		writeStub(t, filepath.Join(dir, "masterBias_GA0_-10C_300f_20260901.xisf"))
+		for _, n := range []string{
+			"masterBias_G0_-10C_257f_20251117.xisf", // the legacy spelling
+			"masterBias_GA0_-10C_300f_20260901.xisf",
+		} {
+			writeStub(t, filepath.Join(dir, n))
+		}
 
 		masters, warnings, err := indexBiasMasters(dir)
 		if err != nil {
 			t.Fatalf("indexBiasMasters: %v", err)
 		}
 		if len(masters) != 1 {
-			t.Errorf("got %d masters, want 1", len(masters))
+			t.Fatalf("got %d masters, want 1: %v", len(masters), masters)
 		}
-		if len(warnings) != 1 || !strings.Contains(warnings[0], "deux masters") {
-			t.Errorf("warnings = %v, want the collision reported", warnings)
+		if got := masters["GA0"].name; got != "masterBias_GA0_-10C_300f_20260901.xisf" {
+			t.Errorf("resolved to %q", got)
 		}
-		// Sorted order decides, so the outcome does not depend on readdir.
-		if masters["GA0"].name != "masterBias_GA0_-10C_257f_20251117.xisf" {
-			t.Errorf("resolved to %q, want the first in sorted order", masters["GA0"].name)
+		// The gainless file is reported for having no gain, not as a collision:
+		// it was never a candidate.
+		if len(warnings) != 1 || strings.Contains(warnings[0], "deux masters") {
+			t.Errorf("warnings = %v, want only the gainless-file report", warnings)
+		}
+	})
+
+	t.Run("an undated master does not displace a dated one", func(t *testing.T) {
+		dir := t.TempDir()
+		for _, n := range []string{
+			"masterBias_GA0_-10C_257f_20251117.xisf",
+			"masterBias_GA0_-10C_999f.xisf", // sorts last, no date to weigh
+		} {
+			writeStub(t, filepath.Join(dir, n))
+		}
+
+		masters, _, err := indexBiasMasters(dir)
+		if err != nil {
+			t.Fatalf("indexBiasMasters: %v", err)
+		}
+		if got := masters["GA0"].name; got != "masterBias_GA0_-10C_257f_20251117.xisf" {
+			t.Errorf("resolved to %q, want the dated master", got)
+		}
+	})
+
+	t.Run("the winner is the same one the darks index would pick", func(t *testing.T) {
+		// These two were decided by different rules for a while -- biases by
+		// directory order, darks by date -- so the rule is asserted through both
+		// to keep them from drifting apart again.
+		//
+		// The bias names put a frame count before the date, so their sort order
+		// can contradict the dates. The dark names put the exposure there, and
+		// the exposure is part of the key, so two darks that collide always
+		// agree on it -- their sort order and their dates therefore coincide,
+		// and the date rule is what states the intent rather than what decides
+		// it. Both sides still have to name the same winner.
+		biasFiles := []string{
+			"masterBias_GA0_-10C_257f_20251117.xisf", // older, sorts first
+			"masterBias_GA0_-10C_300f_20260901.xisf", // newer, sorts last
+		}
+		darkFiles := []string{
+			"masterDark_300s_GA0_-10C_20251117.xisf",
+			"masterDark_300s_GA0_-10C_20260901.xisf",
+		}
+
+		biasDir := t.TempDir()
+		darkRoot := t.TempDir()
+		darkDir := filepath.Join(darkRoot, "G0")
+		if err := os.MkdirAll(darkDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range biasFiles {
+			writeStub(t, filepath.Join(biasDir, n))
+		}
+		for _, n := range darkFiles {
+			writeStub(t, filepath.Join(darkDir, n))
+		}
+
+		biases, bwarnings, err := indexBiasMasters(biasDir)
+		if err != nil {
+			t.Fatalf("indexBiasMasters: %v", err)
+		}
+		darks, dwarnings, err := indexDarkMasters(darkRoot)
+		if err != nil {
+			t.Fatalf("indexDarkMasters: %v", err)
+		}
+
+		biasDate := biases["GA0"].date
+		darkDate := darks[darkKey{gain: "GA0", exposure: 300}].date
+		if biasDate != darkDate {
+			t.Errorf("bias kept date %q, dark kept %q; the two rules have diverged", biasDate, darkDate)
+		}
+		if biasDate != "20260901" {
+			t.Errorf("kept date %q, want the latest 20260901", biasDate)
+		}
+		if len(bwarnings) != 1 || len(dwarnings) != 1 {
+			t.Errorf("warnings: bias %v, dark %v; want one collision each", bwarnings, dwarnings)
 		}
 	})
 
