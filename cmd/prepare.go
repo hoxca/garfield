@@ -31,6 +31,7 @@ const (
 	lightsDir = "Lights"
 	flatsDir  = "Flats"
 	biasDir   = "Bias"
+	darksDir  = "Darks"
 )
 
 // sessionLightsDir and sessionFlatsDir are the subdirectories of a prepared
@@ -48,9 +49,19 @@ const (
 // hundreds-megabyte files once per night.
 const biasOutDir = "bias"
 
-// biasMastersDir is the acquisition-side directory holding the master biases,
-// flat, one file per gain.
-const biasMastersDir = "Masters"
+// darksOutDir holds the master darks, for the same reason and with the same
+// shape as biasOutDir. Flat: the filename already carries both the gain and
+// the exposure, and a subdirectory would risk repeating the acquisition's own
+// G0-versus-GA0 spelling mismatch.
+const darksOutDir = "darks"
+
+// biasMastersDir and darksMastersDir are the acquisition-side directories
+// holding the masters. The biases are flat, one file per gain; the darks are
+// split into per-gain subdirectories, so indexing them recurses.
+const (
+	biasMastersDir  = "Masters"
+	darksMastersDir = "Masters"
+)
 
 // rejectedDir sits beside the Sessions directory rather than inside a session,
 // so a session tree holds only usable data and everything discarded is
@@ -116,6 +127,18 @@ var masterExts = map[string]bool{".XISF": true}
 // master calibrations use the same spelling, so the two match on the token
 // directly: "..._-10C_GA0_20260914_..." against "masterBias_GA0_-10C_...".
 var gainRe = regexp.MustCompile(`_(GA\d+)_`)
+
+// lightComboRe extracts the exposure and gain of a light frame, which together
+// identify the master dark needed to calibrate it. The exposure is spelled the
+// same way on both sides: "_600s_BIN1_..." against "masterDark_600s_...".
+var lightComboRe = regexp.MustCompile(`_(\d+)s_BIN\d_-10C_(GA\d+)_`)
+
+// darkComboRe extracts the exposure and gain from a master dark filename.
+var darkComboRe = regexp.MustCompile(`masterDark_(\d+)s_(GA\d+)_`)
+
+// masterDateRe extracts the trailing date suffix a master carries, so the most
+// recently made master of a kind can be preferred when there are several.
+var masterDateRe = regexp.MustCompile(`_(\d{8})\.xisf$`)
 
 type prepareOptions struct {
 	// Quality thresholds are shared with analyze, so a light frame is approved
@@ -203,9 +226,13 @@ type sessionPlan struct {
 	// gains lists the camera gain settings the session's light frames were
 	// taken at, sorted. Filters pair to gains in the acquisition, so a night
 	// covering both a B/G/L/R set and an O/S set records two.
-	gains      []string
-	lightCount int
-	flatCount  int
+	gains []string
+	// darksNeeded lists the master darks the session's approved frames need,
+	// sorted by gain then exposure. Filled in after the assessment, since it
+	// depends on which frames were approved.
+	darksNeeded []darkKey
+	lightCount  int
+	flatCount   int
 	// approvedCount and rejectedCount are filled in by the assessment pass.
 	approvedCount int
 	rejectedCount int
@@ -275,7 +302,7 @@ func runPrepare(opts prepareOptions) error {
 
 	// Indexed once for the whole target: the masters are shared by every
 	// session, so this is not per-session work. A missing directory is not an
-	// error -- the bias can be supplied during the reduction instead.
+	// error -- the calibration can be supplied during the reduction instead.
 	var masters map[string]biasMaster
 	biasRoot := filepath.Join(opts.input, biasDir, biasMastersDir)
 	if _, statErr := os.Stat(biasRoot); statErr == nil {
@@ -285,6 +312,17 @@ func runPrepare(opts prepareOptions) error {
 			return err
 		}
 		warnings = append(warnings, biasWarnings...)
+	}
+
+	var darkMasters map[darkKey]darkMaster
+	darkRoot := filepath.Join(opts.input, darksDir, darksMastersDir)
+	if _, statErr := os.Stat(darkRoot); statErr == nil {
+		var darkWarnings []string
+		darkMasters, darkWarnings, err = indexDarkMasters(darkRoot)
+		if err != nil {
+			return err
+		}
+		warnings = append(warnings, darkWarnings...)
 	}
 
 	if !opts.quiet {
@@ -302,6 +340,10 @@ func runPrepare(opts prepareOptions) error {
 		return err
 	}
 
+	// After the assessment, because a master dark is only wanted for frames
+	// that actually reach lights/.
+	collectDarkKeys(sessions)
+
 	if !opts.dryRun {
 		if err := os.MkdirAll(targetOut, 0o755); err != nil {
 			return fmt.Errorf("impossible de créer %q : %w", targetOut, err)
@@ -311,7 +353,7 @@ func runPrepare(opts prepareOptions) error {
 		}
 	}
 
-	totalLights, totalFlats, totalBias := 0, 0, 0
+	totalLights, totalFlats, totalBias, totalDarks := 0, 0, 0, 0
 	for _, s := range sessions {
 		copiedLights, copiedFlats, err := prepareSession(s, targetOut, opts)
 		if err != nil {
@@ -352,6 +394,14 @@ func runPrepare(opts prepareOptions) error {
 	totalBias = biasCount
 	warnings = append(warnings, biasWarnings...)
 
+	darkKeys, darkNeed := targetDarkKeys(sessions)
+	darkCount, darkWarnings, err := prepareDarks(targetOut, darkKeys, darkNeed, darkMasters, opts)
+	if err != nil {
+		return err
+	}
+	totalDarks = darkCount
+	warnings = append(warnings, darkWarnings...)
+
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "  avertissement : %s\n", w)
 	}
@@ -363,14 +413,18 @@ func runPrepare(opts prepareOptions) error {
 	}
 
 	if !opts.quiet {
-		fmt.Printf("\n%s : %d session(s), %d image(s) approuvée(s), %d rejetée(s), %d flat(s), %d master bias.\n",
-			finishVerb(opts.dryRun), len(sessions), approved, rejected, totalFlats, totalBias)
+		fmt.Printf("\n%s : %d session(s), %d image(s) approuvée(s), %d rejetée(s), %d flat(s), %d master bias, %d master dark.\n",
+			finishVerb(opts.dryRun), len(sessions), approved, rejected, totalFlats, totalBias, totalDarks)
 		if rejected > 0 && !opts.dryRun {
 			fmt.Printf("Images rejetées sous %q.\n", filepath.Join(targetOut, rejectedDir))
 		}
 		if totalBias > 0 {
 			fmt.Printf("Master bias sous %q.\n",
 				filepath.Join(sessionOutDir(targetOut, ""), biasOutDir))
+		}
+		if totalDarks > 0 {
+			fmt.Printf("Master dark sous %q.\n",
+				filepath.Join(sessionOutDir(targetOut, ""), darksOutDir))
 		}
 		if !opts.dryRun {
 			fmt.Printf("Index écrit dans %q.\n", metricsPath(targetOut, sessionsCSVName))
@@ -991,6 +1045,256 @@ func prepareBias(targetOut string, gains []string, masters map[string]biasMaster
 	return copied, warnings, nil
 }
 
+// darkKey identifies a master dark by the two properties that make one
+// necessary: the gain setting and the exposure time. Both are needed because a
+// target can mix them freely -- SH2-54 takes 30s and 60s frames at GA0 and 600s
+// frames at GA2750, and the night of 2026-07-16 holds two of those at once.
+type darkKey struct {
+	gain     string
+	exposure int
+}
+
+// String renders the pair the way the acquisition names it, "GA2750/600s".
+func (k darkKey) String() string {
+	return fmt.Sprintf("%s/%ds", k.gain, k.exposure)
+}
+
+// darkMaster is one master dark file and the combination it serves.
+type darkMaster struct {
+	key  darkKey
+	date string // YYYYMMDD suffix, used to prefer the most recent
+	name string
+	src  string
+}
+
+// indexDarkMasters reads the master darks and keys them by gain and exposure.
+//
+// The acquisition splits these across per-gain subdirectories whose names
+// disagree with the filenames inside them -- "G2750/" holding "GA2750" files --
+// so the key is taken from the filename alone. Keying on the directory would
+// produce "G2750", match nothing, and copy nothing at all.
+func indexDarkMasters(root string) (map[darkKey]darkMaster, []string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, nil, fmt.Errorf("impossible de lire %q : %w", root, err)
+	}
+
+	var names []string
+	for _, e := range entries {
+		path := filepath.Join(root, e.Name())
+
+		if e.IsDir() {
+			// One level of per-gain subdirectories, then the files.
+			sub, err := os.ReadDir(path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("impossible de lire %q : %w", path, err)
+			}
+			for _, se := range sub {
+				if se.IsDir() {
+					continue
+				}
+				if keep, n := isMasterFile(se.Name()); keep {
+					names = append(names, filepath.Join(e.Name(), n))
+				}
+			}
+			continue
+		}
+		if keep, n := isMasterFile(e.Name()); keep {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+
+	masters := map[darkKey]darkMaster{}
+	var warnings []string
+
+	for _, rel := range names {
+		base := filepath.Base(rel)
+		m := darkComboRe.FindStringSubmatch(base)
+		if m == nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s : %q ignoré, aucune paire exposition/gain dans le nom", root, base))
+			continue
+		}
+		exposure, _ := strconv.Atoi(m[1])
+		key := darkKey{gain: m[2], exposure: exposure}
+
+		date := ""
+		if d := masterDateRe.FindStringSubmatch(base); d != nil {
+			date = d[1]
+		}
+
+		if prev, dup := masters[key]; dup {
+			// The most recently made master wins: the names carry the date they
+			// were built from, so a newer one supersedes rather than competes.
+			if date <= prev.date {
+				warnings = append(warnings, fmt.Sprintf(
+					"%s : deux masters pour %s (%s et %s), %s retenu",
+					root, key, prev.name, base, prev.name))
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf(
+				"%s : deux masters pour %s (%s et %s), %s retenu",
+				root, key, prev.name, base, base))
+			masters[key] = darkMaster{key: key, date: date, name: base,
+				src: filepath.Join(root, rel)}
+			continue
+		}
+
+		masters[key] = darkMaster{key: key, date: date, name: base,
+			src: filepath.Join(root, rel)}
+	}
+
+	return masters, warnings, nil
+}
+
+// isMasterFile reports whether a directory entry is a master to consider,
+// returning its name. Dotfiles are excluded: the syncthing client leaves
+// ".syncthing.masterDark_....tmp" partials here, and copying a half-transferred
+// master would be worse than having none. Only XISF counts, which also keeps
+// the raw calibration frames under Darks/-10C/ out.
+func isMasterFile(name string) (bool, string) {
+	if strings.HasPrefix(name, ".") {
+		return false, ""
+	}
+	if !masterExts[strings.ToUpper(filepath.Ext(name))] {
+		return false, ""
+	}
+	return true, name
+}
+
+// lightDarkKey returns the master dark combination a light frame needs, and
+// whether the filename carried one at all.
+func lightDarkKey(name string) (darkKey, bool) {
+	m := lightComboRe.FindStringSubmatch(name)
+	if m == nil {
+		return darkKey{}, false
+	}
+	exposure, err := strconv.Atoi(m[1])
+	if err != nil {
+		return darkKey{}, false
+	}
+	return darkKey{gain: m[2], exposure: exposure}, true
+}
+
+// collectDarkKeys records, per session, the master darks its approved frames
+// need. Rejected frames are excluded on purpose: a dark for frames that never
+// reach lights/ is 233 MB of nothing.
+//
+// This runs after the assessment, unlike the gains, which are read from the
+// plan before any verdict is known.
+func collectDarkKeys(sessions []sessionPlan) {
+	for i := range sessions {
+		s := &sessions[i]
+		seen := map[darkKey]bool{}
+
+		for _, filter := range s.filterNames() {
+			for _, name := range s.filters[filter] {
+				if !s.approved(name) {
+					continue
+				}
+				if key, ok := lightDarkKey(name); ok {
+					seen[key] = true
+				}
+			}
+		}
+
+		s.darksNeeded = make([]darkKey, 0, len(seen))
+		for k := range seen {
+			s.darksNeeded = append(s.darksNeeded, k)
+		}
+		sort.Slice(s.darksNeeded, func(a, b int) bool {
+			if s.darksNeeded[a].gain != s.darksNeeded[b].gain {
+				return s.darksNeeded[a].gain < s.darksNeeded[b].gain
+			}
+			return s.darksNeeded[a].exposure < s.darksNeeded[b].exposure
+		})
+	}
+}
+
+// targetDarkKeys returns the sorted union of the master darks every session
+// needs, and for each one the sessions that need it, so a missing master can be
+// reported against the nights it affects.
+func targetDarkKeys(sessions []sessionPlan) ([]darkKey, map[darkKey][]string) {
+	need := map[darkKey][]string{}
+
+	for _, s := range sessions {
+		for _, k := range s.darksNeeded {
+			need[k] = append(need[k], s.sessionDir())
+		}
+	}
+
+	keys := make([]darkKey, 0, len(need))
+	for k := range need {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(a, b int) bool {
+		if keys[a].gain != keys[b].gain {
+			return keys[a].gain < keys[b].gain
+		}
+		return keys[a].exposure < keys[b].exposure
+	})
+	return keys, need
+}
+
+// prepareDarks copies the master darks the target's approved frames need into a
+// shared directory under Sessions/, once for the whole target.
+func prepareDarks(targetOut string, keys []darkKey, need map[darkKey][]string,
+	masters map[darkKey]darkMaster, opts prepareOptions) (int, []string, error) {
+
+	var (
+		copied   int
+		warnings []string
+		dstRoot  = filepath.Join(sessionOutDir(targetOut, ""), darksOutDir)
+		present  = make([]string, 0, len(masters))
+		done     []string
+	)
+	for k := range masters {
+		present = append(present, k.String())
+	}
+	sort.Strings(present)
+
+	for _, key := range keys {
+		master, ok := masters[key]
+		if !ok {
+			// Same policy as a missing flat or bias: reported, but the run
+			// continues, because the frames are still usable data and the dark
+			// can be shot or supplied later.
+			warnings = append(warnings, fmt.Sprintf(
+				"aucun master dark pour %s dans %q (disponibles : %s), sessions concernées : %s",
+				key, filepath.Join(opts.input, darksDir, darksMastersDir),
+				strings.Join(present, " "), strings.Join(need[key], " ")))
+			continue
+		}
+
+		dst := filepath.Join(dstRoot, master.name)
+		if !opts.dryRun {
+			if err := os.MkdirAll(dstRoot, 0o755); err != nil {
+				return copied, warnings, fmt.Errorf("impossible de créer %q : %w", dstRoot, err)
+			}
+		}
+		n, err := copyFITS(master.src, dst, opts)
+		if err != nil {
+			return copied, warnings, err
+		}
+		if n {
+			copied++
+		}
+		done = append(done, key.String())
+	}
+
+	if !opts.quiet && len(keys) > 0 {
+		verb := prepareVerb(opts.dryRun)
+		if copied == 0 {
+			fmt.Printf("  %s : aucun master dark (%s)\n", verb, strings.Join(done, " "))
+		} else {
+			fmt.Printf("  %s : %d master dark pour %s\n", verb, copied, strings.Join(done, " "))
+		}
+	}
+
+	return copied, warnings, nil
+}
+
 // copyFITS copies one file, reporting whether it actually wrote anything. In
 // dry-run mode nothing is touched, and with skip-existing an already-present
 // destination is left alone.
@@ -1115,12 +1419,14 @@ func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 	defer f.Close()
 
 	w := newCSVWriter(f)
-	// gains is appended last so the position of every existing column is
-	// unchanged for anything already reading this file.
+	// gains and darks are appended last so the position of every existing
+	// column is unchanged for anything already reading this file. darks holds
+	// the gain/exposure pairs rather than bare exposures, because the pairing
+	// is what identifies a master.
 	header := []string{
 		"session", "date", "pa", "filters", "lightCount",
 		"approvedCount", "rejectedCount", "flatCount", "missingFlats",
-		"frameDateMin", "frameDateMax", "gains",
+		"frameDateMin", "frameDateMax", "gains", "darks",
 	}
 	if err := w.Write(header); err != nil {
 		return fmt.Errorf("écriture CSV : %w", err)
@@ -1129,6 +1435,10 @@ func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 	for _, s := range sessions {
 		filters := strings.Join(s.filterNames(), " ")
 		missing := strings.Join(s.missingFlats, " ")
+		darks := make([]string, 0, len(s.darksNeeded))
+		for _, k := range s.darksNeeded {
+			darks = append(darks, k.String())
+		}
 		row := []string{
 			s.sessionDir(),
 			s.date,
@@ -1142,6 +1452,7 @@ func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 			s.frameDateMin,
 			s.frameDateMax,
 			strings.Join(s.gains, " "),
+			strings.Join(darks, " "),
 		}
 		if err := w.Write(row); err != nil {
 			return fmt.Errorf("écriture CSV : %w", err)

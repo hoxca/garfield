@@ -24,6 +24,10 @@ type prepareFixture struct {
 	// biases maps gain token -> master filename. Empty means the fixture writes
 	// no Bias/Masters directory at all.
 	biases map[string]string
+	// darks maps "GA2750/600s" to a master filename. The file is written under
+	// a per-gain subdirectory, mirroring the acquisition. Empty means no
+	// Darks/Masters directory at all.
+	darks map[string]string
 }
 
 // build writes the fixture under root and returns it.
@@ -59,6 +63,26 @@ func (f prepareFixture) build(t *testing.T, root string) {
 		}
 		for _, n := range f.biases {
 			writeStub(t, filepath.Join(dir, n))
+		}
+	}
+	if len(f.darks) > 0 {
+		dir := filepath.Join(root, darksDir, darksMastersDir)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		for key, n := range f.darks {
+			// The acquisition splits darks by gain into subdirectories named
+			// "G0" and "G2750" whose spelling disagrees with the GA0/GA2750
+			// inside the filenames.
+			gain, _, found := strings.Cut(key, "/")
+			if !found {
+				t.Fatalf("dark key %q is not <gain>/<exposure>", key)
+			}
+			subdir := filepath.Join(dir, "G"+strings.TrimPrefix(gain, "GA"))
+			if err := os.MkdirAll(subdir, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", subdir, err)
+			}
+			writeStub(t, filepath.Join(subdir, n))
 		}
 	}
 }
@@ -144,16 +168,23 @@ func writeStarFrame(t *testing.T, path string, w, h int, level, noise, amp, sigm
 }
 
 // lightName builds a science frame filename in the acquisition convention, at
-// the GA0 gain setting.
+// the GA0 gain setting and 300s.
 func lightName(target, filter, date, time, ms, pa string) string {
-	return lightNameGain(target, filter, date, time, ms, pa, "GA0")
+	return lightNameGainExp(target, filter, date, time, ms, pa, "GA0", "300s")
 }
 
 // lightNameGain builds a science frame filename at an explicit gain setting,
 // which is what lets a fixture mix filters taken at two different gains.
 func lightNameGain(target, filter, date, time, ms, pa, gain string) string {
-	return fmt.Sprintf("%s_LIGHT_%s_300s_BIN1_-10C_%s_%s_%s_%s_PA%s_E.FIT",
-		target, filter, gain, date, time, ms, pa)
+	return lightNameGainExp(target, filter, date, time, ms, pa, gain, "300s")
+}
+
+// lightNameGainExp builds a science frame filename at an explicit gain and
+// exposure, which is what lets a fixture need two different master darks in one
+// session. exposure carries its own "s" suffix, as the acquisition spells it.
+func lightNameGainExp(target, filter, date, time, ms, pa, gain, exposure string) string {
+	return fmt.Sprintf("%s_LIGHT_%s_%s_BIN1_-10C_%s_%s_%s_%s_PA%s_E.FIT",
+		target, filter, exposure, gain, date, time, ms, pa)
 }
 
 // flatName builds a flat frame filename.
@@ -913,12 +944,13 @@ func TestPrepareSessionsCSV(t *testing.T) {
 		t.Fatalf("got %d records, want 3 (header plus two sessions)", len(recs))
 	}
 
-	// gains is appended last, so every pre-existing column keeps its position.
+	// gains and darks are appended last, so every pre-existing column keeps its
+	// position.
 	wantHeader := []string{
 		"session", "date", "pa", "filters", "lightCount",
 		"approvedCount", "rejectedCount", "flatCount",
 		"missingFlats", "frameDateMin", "frameDateMax",
-		"gains",
+		"gains", "darks",
 	}
 	if len(recs[0]) != len(wantHeader) {
 		t.Fatalf("header has %d columns, want %d", len(recs[0]), len(wantHeader))
@@ -958,9 +990,13 @@ func TestPrepareSessionsCSV(t *testing.T) {
 	if row[8] != "B" {
 		t.Errorf("missingFlats = %q, want %q", row[8], "B")
 	}
-	// lightName writes the GA0 token, so both sessions record that gain.
+	// lightName writes the GA0 token at 300s, so the session records that gain
+	// and needs that master dark.
 	if row[11] != "GA0" {
 		t.Errorf("gains = %q, want %q", row[11], "GA0")
+	}
+	if row[12] != "GA0/300s" {
+		t.Errorf("darks = %q, want %q", row[12], "GA0/300s")
 	}
 }
 

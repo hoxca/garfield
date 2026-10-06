@@ -78,8 +78,12 @@ func TestPrepareCopiesBothBiasesForMixedGainSession(t *testing.T) {
 	if len(recs) != 2 {
 		t.Fatalf("got %d records, want header plus one session", len(recs))
 	}
-	if got := recs[1][len(recs[1])-1]; got != "GA0 GA2750" {
+	// gains and darks are the two trailing columns, in that order.
+	if got := recs[1][11]; got != "GA0 GA2750" {
 		t.Errorf("gains column = %q, want %q", got, "GA0 GA2750")
+	}
+	if got := recs[1][12]; got != "GA0/300s GA2750/300s" {
+		t.Errorf("darks column = %q, want %q", got, "GA0/300s GA2750/300s")
 	}
 }
 
