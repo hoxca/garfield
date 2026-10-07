@@ -32,6 +32,7 @@ func configTestAnalyzeCmd() (*cobra.Command, *analyzeOptions) {
 	registerQualityFlags(f, &opts.qualityThresholds)
 	registerWorkerFlags(f, &opts.workers, &opts.convWorkers)
 	f.StringVarP(&opts.dir, "dir", "d", "images", "dossier contenant les FITS")
+	f.BoolVarP(&opts.recursive, "recursive", "r", false, "parcourt aussi les sous-dossiers de --dir")
 	f.StringVarP(&opts.output, "output", "o", "", "fichier CSV de sortie")
 	setConfigSections(c, sectionThresholds, sectionConcurrency, sectionAnalyze)
 	return c, opts
@@ -418,7 +419,7 @@ func TestRepoConfigIsValid(t *testing.T) {
 		"thresholds.min-snr", "thresholds.max-fwhm", "thresholds.max-ecc",
 		"thresholds.min-score", "thresholds.min-stars",
 		"concurrency.workers", "concurrency.conv-workers",
-		"prepare.input", "prepare.output", "analyze.dir",
+		"prepare.input", "prepare.output", "analyze.dir", "analyze.recursive",
 	} {
 		if !v.IsSet(key) {
 			t.Errorf("%s is missing from %s", key, configRelPath)
@@ -437,6 +438,11 @@ func TestRepoConfigIsValid(t *testing.T) {
 		if _, ok := v.Get(key).(int); !ok {
 			t.Errorf("%s holds %T, want an int the integer flags accept", key, v.Get(key))
 		}
+	}
+	// A bool must arrive as a bool: viper hands back a string for "true", which
+	// the boolean flag would reject at startup.
+	if _, ok := v.Get("analyze.recursive").(bool); !ok {
+		t.Errorf("analyze.recursive holds %T, want a bool", v.Get("analyze.recursive"))
 	}
 
 	if out := captureStderr(t, func() { warnUnknownKeys(v, "../"+configRelPath) }); out != "" {

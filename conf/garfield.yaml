@@ -28,5 +28,10 @@ prepare:
   output: /Volumes/T7/Workspace
 
 # Répertoire par défaut de analyze.
+#
+# recursive : false n'analyse que les images placées directement dans dir.
+# true parcourt aussi les sous-dossiers. Un -r sur la ligne de commande l'emporte
+# sur cette valeur.
 analyze:
   dir: images
+  recursive: false

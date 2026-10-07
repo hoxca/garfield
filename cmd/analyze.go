@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -23,7 +24,10 @@ import (
 type analyzeOptions struct {
 	qualityThresholds
 
-	dir                string
+	dir string
+	// recursive extends the search to subdirectories of dir. Off by default, so
+	// pointing analyze at a directory containing frames analyses exactly those.
+	recursive          bool
 	workers            int
 	convWorkers        int
 	limitComputedStars int
@@ -58,6 +62,8 @@ Exemple :
 
 func init() {
 	analyzeCmd.Flags().StringVarP(&analyzeOpts.dir, "dir", "d", "images", "dossier contenant les FITS")
+	analyzeCmd.Flags().BoolVarP(&analyzeOpts.recursive, "recursive", "r", false,
+		fmt.Sprintf("parcourt les sous-dossiers de --dir, sur %d niveaux", maxRecursiveDepth))
 	registerWorkerFlags(analyzeCmd.Flags(), &analyzeOpts.workers, &analyzeOpts.convWorkers)
 	registerQualityFlags(analyzeCmd.Flags(), &analyzeOpts.qualityThresholds)
 	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "limite le nombre d'étoiles brillantes analysées")
@@ -294,6 +300,143 @@ func writeResultsCSV(results []ImageResult, w *csv.Writer) error {
 	return w.Error()
 }
 
+// maxRecursiveDepth is how many levels of subdirectory -r descends. The
+// acquisition stores a frame as <target>/<YYYY-MM-DD>/<FILTER>/<frame>.FIT, two
+// levels below Lights/<target>, and no frame anywhere in the tree sits deeper --
+// every one of the sixteen targets measures exactly two. So this covers a target
+// in full, while stopping the scan from wandering into an unrelated subtree.
+const maxRecursiveDepth = 2
+
+// discoverFITSFiles collects the FITS frames in dir, descending into
+// subdirectories only when recursive is set. The default is deliberately flat:
+// analysing a directory should mean the frames in it, and reaching into the tree
+// is opt-in so a stray frame below the chosen directory cannot quietly join the
+// report. A recursive scan stops at maxRecursiveDepth and says so when it does.
+//
+// Dotfiles are skipped in both modes, through isFITSName. macOS writes
+// AppleDouble sidecars named "._<frame>.FIT" beside every frame on an exFAT
+// volume, and they carry a FITS extension, so without this they would all be
+// analysed and each would fail as unreadable, filling the report with error
+// rows. They appear at every level, not only in subdirectories, so the flat scan
+// needs the rule too. prepare applies the same one.
+func discoverFITSFiles(dir string, recursive bool) ([]string, bool, error) {
+	if recursive {
+		return walkFITSFiles(dir)
+	}
+	fitsFiles, err := topLevelFITSFiles(dir)
+	return fitsFiles, false, err
+}
+
+// topLevelFITSFiles collects the frames sitting directly in dir.
+func topLevelFITSFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("impossible de lire le dossier %q : %w", dir, err)
+	}
+
+	var fitsFiles []string
+	for _, e := range entries {
+		// A directory named like a frame is not a frame.
+		if e.IsDir() || !isFITSName(e.Name()) {
+			continue
+		}
+		fitsFiles = append(fitsFiles, filepath.Join(dir, e.Name()))
+	}
+	return fitsFiles, nil
+}
+
+// walkFITSFiles collects the frames in dir and its subdirectories, down to
+// maxRecursiveDepth levels. dirLevel measures the scan root as 0, so a frame in
+// dir/a/b is at depth 2 and one in dir/a/b/c at depth 3.
+//
+// Directories are cut on their own depth rather than on the frames inside them:
+// the directory at depth 3 is skipped whole, which keeps its depth-3 frames out
+// while leaving the depth-2 frames of dir/a/b collected.
+//
+// Two further exclusions. Directories named like a frame are never collected,
+// which covers the trap of a directory called "trap.FIT". Symlinked directories
+// are not descended, matching filepath.WalkDir: following them risks cycles, and
+// the acquisition volumes hold none. A symlink to a frame file is still
+// analysed; only directories are left alone.
+//
+// The second return value reports whether the depth cap stopped the walk, so the
+// caller can say the search was bounded rather than complete.
+func walkFITSFiles(dir string) ([]string, bool, error) {
+	var (
+		fitsFiles    []string
+		wasTruncated bool
+	)
+
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != dir && dirLevel(dir, path) > maxRecursiveDepth {
+				wasTruncated = true
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !isFITSName(d.Name()) {
+			return nil
+		}
+		fitsFiles = append(fitsFiles, path)
+		return nil
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("impossible de lire le dossier %q : %w", dir, err)
+	}
+	return fitsFiles, wasTruncated, nil
+}
+
+// dirLevel counts the subdirectory levels between the scan root and path, the
+// root itself being 0.
+func dirLevel(root, path string) int {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "." {
+		return 0
+	}
+	return strings.Count(rel, string(filepath.Separator)) + 1
+}
+
+// warnDuplicateBasenames reports frames whose names collide across directories.
+// Only meaningful for a recursive scan, which is the only one that can reach the
+// same basename twice.
+//
+// The report records the bare filename, so two frames called the same thing in
+// different subdirectories produce two indistinguishable rows. Real acquisition
+// names embed target, filter, date, time and position angle and so never
+// collide, but a hand-assembled tree can, and the ambiguity is worth surfacing
+// rather than leaving to be noticed later.
+func warnDuplicateBasenames(fitsFiles []string) []string {
+	seen := map[string]bool{}
+	dupes := map[string]bool{}
+
+	for _, path := range fitsFiles {
+		base := filepath.Base(path)
+		if seen[base] {
+			dupes[base] = true
+			continue
+		}
+		seen[base] = true
+	}
+
+	names := make([]string, 0, len(dupes))
+	for n := range dupes {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	warnings := make([]string, 0, len(names))
+	for _, n := range names {
+		warnings = append(warnings, fmt.Sprintf(
+			"plusieurs images portent le nom %q dans des sous-dossiers différents ; "+
+				"le rapport ne les distingue que par leur position", n))
+	}
+	return warnings
+}
+
 func runAnalyze(dir string, opts analyzeOptions) error {
 	switch opts.format {
 	case "console", "csv", "both":
@@ -304,30 +447,38 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		return fmt.Errorf("--output est requis avec --format both")
 	}
 
-	entries, err := os.ReadDir(dir)
+	fitsFiles, truncated, err := discoverFITSFiles(dir, opts.recursive)
 	if err != nil {
-		return fmt.Errorf("impossible de lire le dossier %q : %w", dir, err)
+		return err
 	}
 
-	var fitsFiles []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		ext := strings.ToUpper(filepath.Ext(e.Name()))
-		if ext == ".FIT" || ext == ".FITS" || ext == ".FTS" {
-			fitsFiles = append(fitsFiles, filepath.Join(dir, e.Name()))
-		}
-	}
-
-	// os.ReadDir already returns entries sorted by filename, so this only has
-	// to restore that ordering over the filtered subset. It is what makes CSV
-	// rows come out alphabetically rather than in completion order, which is
-	// otherwise nondeterministic across runs.
+	// WalkDir visits each directory in lexical order, but that is per directory,
+	// so a/z.FIT is still reached before b/a.FIT. Sorting the full paths is what
+	// makes CSV rows come out alphabetically rather than in completion order,
+	// which is otherwise nondeterministic across runs. The flat scan reads a
+	// single directory, so this only restores that ordering for it.
 	sort.Strings(fitsFiles)
 
 	if len(fitsFiles) == 0 {
-		return fmt.Errorf("aucun fichier FITS trouvé dans %q", dir)
+		// The flat case is where someone pointed at the wrong level of a tree,
+		// so it names the flag rather than just reporting an empty directory.
+		if opts.recursive {
+			// Not "ni dans ses sous-dossiers": with a depth cap that would be
+			// false, since frames can sit below what was searched.
+			return fmt.Errorf(
+				"aucun fichier FITS trouvé dans %q dans les %d niveaux de sous-dossiers",
+				dir, maxRecursiveDepth)
+		}
+		return fmt.Errorf(
+			"aucun fichier FITS trouvé dans %q ; utilisez -r pour parcourir aussi les sous-dossiers", dir)
+	}
+
+	// Said whenever the cap actually cut the walk short, so a bounded search is
+	// never mistaken for a complete one.
+	if truncated {
+		fmt.Fprintf(os.Stderr,
+			"  note : recherche récursive limitée à %d niveaux ; des sous-dossiers plus profonds n'ont pas été parcourus\n",
+			maxRecursiveDepth)
 	}
 
 	// Outer workers scale with CPUs; inner convolution workers are divided
@@ -352,6 +503,14 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		}
 	}
 	mrs.ConvWorkers = convWorkers
+
+	// Only reachable when recursing: within a single directory names are
+	// unique, so a flat scan cannot produce a collision.
+	if opts.recursive {
+		for _, w := range warnDuplicateBasenames(fitsFiles) {
+			fmt.Fprintf(os.Stderr, "  avertissement : %s\n", w)
+		}
+	}
 
 	showConsole := opts.format == "console" || opts.format == "both"
 	csvToStdout := opts.format == "csv" && opts.output == ""

@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -363,7 +365,7 @@ func TestWriteResultsCSVNonFiniteValues(t *testing.T) {
 
 // TestRunAnalyzeDiscoversFITSFiles pins the extension filter. Matching is
 // case-insensitive, only the three known extensions count, directories are
-// skipped even when named like a FITS file, and subdirectories are not walked.
+// skipped even when named like a FITS file, and subdirectories are walked.
 func TestRunAnalyzeDiscoversFITSFiles(t *testing.T) {
 	dir := t.TempDir()
 
@@ -392,11 +394,12 @@ func TestRunAnalyzeDiscoversFITSFiles(t *testing.T) {
 		}
 	}
 
-	// A directory whose name looks like a FITS file must be skipped.
+	// A directory whose name looks like a FITS file must be skipped: the walk
+	// descends into it, but never collects it as a frame.
 	if err := os.MkdirAll(filepath.Join(dir, "trap.FIT"), 0o755); err != nil {
 		t.Fatalf("mkdir trap: %v", err)
 	}
-	// A nested frame must not be found by a non-recursive scan.
+	// A nested frame is found, since the scan is recursive.
 	nested := filepath.Join(dir, "nested")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatalf("mkdir nested: %v", err)
@@ -408,13 +411,14 @@ func TestRunAnalyzeDiscoversFITSFiles(t *testing.T) {
 	o.format = "csv"
 	o.output = out
 	o.quiet = true
+	o.recursive = true
 	if err := runAnalyze(dir, o); err != nil {
 		t.Fatalf("runAnalyze: %v", err)
 	}
 
 	recs := readCSVFile(t, out)
-	if len(recs) != 6 { // header + 5 frames
-		t.Fatalf("got %d records, want 6 (header plus five frames)\n%v", len(recs), recs)
+	if len(recs) != 7 { // header + 6 frames
+		t.Fatalf("got %d records, want 7 (header plus six frames)\n%v", len(recs), recs)
 	}
 
 	var names []string
@@ -422,7 +426,7 @@ func TestRunAnalyzeDiscoversFITSFiles(t *testing.T) {
 		names = append(names, r[0])
 	}
 	sort.Strings(names)
-	want := []string{"lower.fits", "mixed.Fts", "plain.fts", "real.FIT", "upper.FITS"}
+	want := []string{"deep.FIT", "lower.fits", "mixed.Fts", "plain.fts", "real.FIT", "upper.FITS"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("discovered %v, want %v", names, want)
 	}
@@ -431,6 +435,564 @@ func TestRunAnalyzeDiscoversFITSFiles(t *testing.T) {
 		if r[11] != "" {
 			t.Errorf("%s reported an error: %s", r[0], r[11])
 		}
+	}
+}
+
+// TestRunAnalyzeFlatScanIgnoresSubdirectories guards the default. Recursion is
+// opt-in, so a frame below the chosen directory must not join the report: the
+// same tree with and without -r has to produce different results, otherwise the
+// flag is decorative and a stray frame can silently appear in a report.
+func TestRunAnalyzeFlatScanIgnoresSubdirectories(t *testing.T) {
+	dir := t.TempDir()
+
+	writeFrame(t, dir, "top.FIT", goodFrameOpts())
+	nested := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, nested, "deep.FIT", goodFrameOpts())
+	// Two levels down, to be sure it is the whole subtree that is off limits.
+	deep := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, deep, "deeper.FIT", goodFrameOpts())
+
+	flat, _, err := discoverFITSFiles(dir, false)
+	if err != nil {
+		t.Fatalf("discoverFITSFiles(flat): %v", err)
+	}
+	if len(flat) != 1 || filepath.Base(flat[0]) != "top.FIT" {
+		t.Errorf("flat scan found %v, want only top.FIT", flat)
+	}
+
+	// And through a real run, so the flag plumbing is covered too.
+	out := filepath.Join(dir, "out.csv")
+	o := defaultOpts()
+	o.format = "csv"
+	o.output = out
+	o.quiet = true
+	if err := runAnalyze(dir, o); err != nil {
+		t.Fatalf("runAnalyze: %v", err)
+	}
+	recs := readCSVFile(t, out)
+	if len(recs) != 2 { // header plus the one top-level frame
+		t.Fatalf("got %d records, want 2\n%v", len(recs), recs)
+	}
+	if recs[1][0] != "top.FIT" {
+		t.Errorf("row = %q, want top.FIT", recs[1][0])
+	}
+
+	// The same tree with -r finds all three.
+	o2 := defaultOpts()
+	o2.format = "csv"
+	o2.output = out
+	o2.quiet = true
+	o2.recursive = true
+	if err := runAnalyze(dir, o2); err != nil {
+		t.Fatalf("runAnalyze -r: %v", err)
+	}
+	if got := len(readCSVFile(t, out)); got != 4 {
+		t.Errorf("recursive run got %d records, want 4", got)
+	}
+}
+
+// TestRunAnalyzeFlatScanSkipsDotfiles checks the dotfile rule is not a side
+// effect of recursing. AppleDouble sidecars sit at the top level too, and would
+// each be analysed and fail as unreadable.
+func TestRunAnalyzeFlatScanSkipsDotfiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFrame(t, dir, "real.FIT", goodFrameOpts())
+
+	for _, name := range []string{"._real.FIT", ".DS_Store", ".hidden.FITS"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("resource fork"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	found, _, err := discoverFITSFiles(dir, false)
+	if err != nil {
+		t.Fatalf("discoverFITSFiles: %v", err)
+	}
+	if len(found) != 1 || filepath.Base(found[0]) != "real.FIT" {
+		t.Errorf("flat scan found %v, want only real.FIT", found)
+	}
+}
+
+// TestRecursiveFlagParsing covers the flag on its own: both spellings, and the
+// default being off.
+func TestRecursiveFlagParsing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"absent by default", nil, false},
+		{"long form", []string{"--recursive"}, true},
+		{"short form", []string{"-r"}, true},
+		{"explicitly off", []string{"--recursive=false"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got analyzeOptions
+			opts := analyzeOptions{}
+			c := newAnalyzeCmd(&opts, func(_ string, o analyzeOptions) error {
+				got = o
+				return nil
+			})
+			c.SetArgs(tc.args)
+			c.SetOut(io.Discard)
+			c.SetErr(io.Discard)
+
+			if err := c.Execute(); err != nil {
+				t.Fatalf("Execute(%v): %v", tc.args, err)
+			}
+			if got.recursive != tc.want {
+				t.Errorf("recursive = %v, want %v", got.recursive, tc.want)
+			}
+		})
+	}
+
+	// The production command must register it the same way.
+	f := analyzeCmd.Flags().Lookup("recursive")
+	if f == nil {
+		t.Fatal("--recursive is not registered on analyzeCmd")
+	}
+	if f.Shorthand != "r" {
+		t.Errorf("--recursive shorthand = %q, want %q", f.Shorthand, "r")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("--recursive default = %q, want false", f.DefValue)
+	}
+}
+
+// TestRunAnalyzeWalksTheWholeTree checks frames are found down to the depth cap
+// and no further. The acquisition keeps every frame at exactly two levels, so the
+// cap has to admit depth 2 -- the boundary is what matters, and it is asserted
+// separately by TestRunAnalyzeDepthBoundary.
+func TestRunAnalyzeWalksTheWholeTree(t *testing.T) {
+	dir := t.TempDir()
+
+	within := map[string]string{
+		"top.FIT":              "",
+		"one/second.FIT":       "one",
+		"two/three/third.FIT":  "two/three",
+		"two/four/fourth.FITS": "two/four",
+	}
+	beyond := map[string]string{
+		"a/b/c/deeper.Fts":      "a/b/c",
+		"a/b/c/d/e/deepest.FIT": "a/b/c/d/e",
+	}
+	for _, set := range []map[string]string{within, beyond} {
+		for name, rel := range set {
+			full := filepath.Join(dir, rel)
+			if err := os.MkdirAll(full, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", full, err)
+			}
+			writeFrame(t, full, filepath.Base(name), goodFrameOpts())
+		}
+	}
+
+	found, truncated, err := discoverFITSFiles(dir, true)
+	if err != nil {
+		t.Fatalf("discoverFITSFiles: %v", err)
+	}
+	if len(found) != len(within) {
+		t.Errorf("found %d frames, want the %d within the cap: %v", len(found), len(within), found)
+	}
+	if !truncated {
+		t.Error("the walk was not reported as truncated, but deeper directories were skipped")
+	}
+
+	out := filepath.Join(dir, "out.csv")
+	o := defaultOpts()
+	o.format = "csv"
+	o.output = out
+	o.quiet = true
+	o.recursive = true
+	if err := runAnalyze(dir, o); err != nil {
+		t.Fatalf("runAnalyze: %v", err)
+	}
+
+	recs := readCSVFile(t, out)
+	if len(recs) != len(within)+1 {
+		t.Fatalf("got %d records, want %d (header plus the frames within the cap)\n%v",
+			len(recs), len(within)+1, recs)
+	}
+	for _, r := range recs[1:] {
+		if r[11] != "" {
+			t.Errorf("%s reported an error: %s", r[0], r[11])
+		}
+	}
+}
+
+// TestRunAnalyzeDepthBoundary pins exactly where the cap falls: a frame two
+// levels down is found, one three levels down is not. Without this the choice of
+// > against >= in the skip condition is unobservable, and off-by-one either way
+// would pass every other test here.
+func TestRunAnalyzeDepthBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		depth    int
+		wantKept bool
+	}{
+		{0, true},
+		{1, true},
+		{maxRecursiveDepth, true},
+		{maxRecursiveDepth + 1, false},
+		{maxRecursiveDepth + 3, false},
+	} {
+		t.Run(fmt.Sprintf("depth %d", tc.depth), func(t *testing.T) {
+			dir := t.TempDir()
+
+			// Build dir/d0/d1/... to exactly tc.depth.
+			full := dir
+			for i := range tc.depth {
+				full = filepath.Join(full, fmt.Sprintf("d%d", i))
+			}
+			if err := os.MkdirAll(full, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFrame(t, full, "frame.FIT", goodFrameOpts())
+
+			if got := dirLevel(dir, full); got != tc.depth {
+				t.Fatalf("fixture is at dirLevel %d, want %d", got, tc.depth)
+			}
+
+			found, _, err := discoverFITSFiles(dir, true)
+			if err != nil {
+				t.Fatalf("discoverFITSFiles: %v", err)
+			}
+			if kept := len(found) == 1; kept != tc.wantKept {
+				t.Errorf("depth %d: frame kept = %v, want %v (found %v)",
+					tc.depth, kept, tc.wantKept, found)
+			}
+		})
+	}
+}
+
+// TestRunAnalyzeReportsTruncation covers the note that tells a bounded search
+// apart from a complete one.
+func TestRunAnalyzeReportsTruncation(t *testing.T) {
+	// A tree that fits inside the cap: nothing is skipped, so nothing is said.
+	shallow := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(shallow, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, filepath.Join(shallow, "a", "b"), "inside.FIT", goodFrameOpts())
+
+	out := filepath.Join(shallow, "out.csv")
+	quiet := captureStderr(t, func() {
+		o := defaultOpts()
+		o.format = "csv"
+		o.output = out
+		o.quiet = true
+		o.recursive = true
+		if err := runAnalyze(shallow, o); err != nil {
+			t.Errorf("runAnalyze: %v", err)
+		}
+	})
+	if strings.Contains(quiet, "limitée") {
+		t.Errorf("stderr %q announces a limit although the whole tree was searched", quiet)
+	}
+
+	// One directory deeper and the note appears.
+	deep := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(deep, "a", "b", "c"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, filepath.Join(deep, "a", "b"), "inside.FIT", goodFrameOpts())
+	writeFrame(t, filepath.Join(deep, "a", "b", "c"), "outside.FIT", goodFrameOpts())
+
+	noted := captureStderr(t, func() {
+		o := defaultOpts()
+		o.format = "csv"
+		o.output = filepath.Join(deep, "out.csv")
+		o.quiet = true
+		o.recursive = true
+		if err := runAnalyze(deep, o); err != nil {
+			t.Errorf("runAnalyze: %v", err)
+		}
+	})
+	if !strings.Contains(noted, "limitée") || !strings.Contains(noted, "2 niveaux") {
+		t.Errorf("stderr %q does not announce the depth limit", noted)
+	}
+	// And the frame beyond the cap is genuinely absent from the report.
+	recs := readCSVFile(t, filepath.Join(deep, "out.csv"))
+	for _, r := range recs[1:] {
+		if r[0] == "outside.FIT" {
+			t.Error("a frame beyond the cap reached the report")
+		}
+	}
+}
+
+// TestRunAnalyzeSortsAcrossDirectories pins that the row order is global rather
+// than per directory. WalkDir visits each directory in lexical order, so a/z.FIT
+// is reached before b/a.FIT; without a sort over the full paths the CSV rows
+// would come out in that order.
+//
+// Asserted through runAnalyze's output rather than the helper, because sorting
+// the discovered list here would make the check tautological.
+func TestRunAnalyzeSortsAcrossDirectories(t *testing.T) {
+	dir := t.TempDir()
+
+	// The layout is chosen so the walk order and the sorted order disagree.
+	// WalkDir sorts entries within a directory, and "a" sorts before "a.FIT", so
+	// it descends the directory first and yields a/m.FIT before a.FIT. Sorting
+	// the full paths compares '.' (0x2E) against '/' (0x2F) instead, which puts
+	// a.FIT first. A shallower tree would leave the two orders identical and the
+	// test would pass whether or not the sort existed.
+	if err := os.MkdirAll(filepath.Join(dir, "a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, filepath.Join(dir, "a"), "m.FIT", goodFrameOpts())
+	writeFrame(t, dir, "a.FIT", goodFrameOpts())
+	writeFrame(t, dir, "z.FIT", goodFrameOpts())
+
+	walked, _, err := discoverFITSFiles(dir, true)
+	if err != nil {
+		t.Fatalf("discoverFITSFiles: %v", err)
+	}
+	if len(walked) != 3 {
+		t.Fatalf("discovered %v, want three frames", walked)
+	}
+	// Pin the premise: the walk order must differ from the sorted order, or this
+	// fixture cannot tell a working sort from a missing one.
+	sortedWalked := append([]string(nil), walked...)
+	sort.Strings(sortedWalked)
+	if strings.Join(walked, ",") == strings.Join(sortedWalked, ",") {
+		t.Fatalf("walk order %v already matches the sorted order; "+
+			"this fixture can no longer detect a missing sort", walked)
+	}
+
+	out := filepath.Join(dir, "out.csv")
+	o := defaultOpts()
+	o.format = "csv"
+	o.output = out
+	o.quiet = true
+	o.recursive = true
+	if err := runAnalyze(dir, o); err != nil {
+		t.Fatalf("runAnalyze: %v", err)
+	}
+
+	recs := readCSVFile(t, out)
+	var got []string
+	for _, r := range recs[1:] {
+		got = append(got, r[0])
+	}
+	// Sorted by full path: a.FIT, a/m.FIT, z.FIT.
+	want := []string{"a.FIT", "m.FIT", "z.FIT"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("row order = %v, want %v (sorted by full path, not by walk order)", got, want)
+	}
+}
+
+// TestRunAnalyzeSkipsDotfiles covers the AppleDouble sidecars macOS writes next
+// to every frame on an exFAT volume. They carry a FITS extension, so without the
+// dotfile rule each would be analysed and fail as unreadable, filling the report
+// with error rows.
+func TestRunAnalyzeSkipsDotfiles(t *testing.T) {
+	dir := t.TempDir()
+
+	writeFrame(t, dir, "real.FIT", goodFrameOpts())
+	sub := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, sub, "nested.FIT", goodFrameOpts())
+
+	// Sidecars, one beside each frame and one at the root.
+	for _, rel := range []string{
+		"._real.FIT",
+		filepath.Join("nested", "._nested.FIT"),
+		".DS_Store",
+		".syncthing.real.FIT.tmp",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte("resource fork"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	found, _, err := discoverFITSFiles(dir, true)
+	if err != nil {
+		t.Fatalf("discoverFITSFiles: %v", err)
+	}
+	if len(found) != 2 {
+		t.Errorf("discovered %v, want only the two real frames", found)
+	}
+
+	out := filepath.Join(dir, "out.csv")
+	o := defaultOpts()
+	o.format = "csv"
+	o.output = out
+	o.quiet = true
+	if err := runAnalyze(dir, o); err != nil {
+		t.Fatalf("runAnalyze: %v", err)
+	}
+	for _, r := range readCSVFile(t, out)[1:] {
+		if r[11] != "" {
+			t.Errorf("%s reported an error: %s", r[0], r[11])
+		}
+	}
+}
+
+// TestRunAnalyzeDoesNotFollowSymlinkedDirs documents the boundary of the walk.
+// A symlink to a frame is analysed; a symlink to a directory is not descended,
+// which is what keeps a cycle from hanging the walk.
+func TestRunAnalyzeDoesNotFollowSymlinkedDirs(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "tree")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, dir, "real.FIT", goodFrameOpts())
+
+	elsewhere := filepath.Join(root, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, elsewhere, "hidden.FIT", goodFrameOpts())
+
+	if err := os.Symlink(elsewhere, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	found, _, err := discoverFITSFiles(dir, true)
+	if err != nil {
+		t.Fatalf("discoverFITSFiles: %v", err)
+	}
+	if len(found) != 1 || filepath.Base(found[0]) != "real.FIT" {
+		t.Errorf("discovered %v, want only real.FIT: a symlinked directory must not be descended", found)
+	}
+}
+
+// TestRunAnalyzeWarnsOnDuplicateBasenames checks the collision reaches the user.
+// The report records bare filenames, so two frames of the same name in different
+// subdirectories are indistinguishable in the CSV and the warning is the only
+// signal that the row count exceeds the number of distinct frames.
+func TestRunAnalyzeWarnsOnDuplicateBasenames(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, rel := range []string{"a/same.FIT", "b/same.FIT", "a/other.FIT"} {
+		full := filepath.Join(dir, filepath.Dir(rel))
+		if err := os.MkdirAll(full, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", full, err)
+		}
+		writeFrame(t, full, filepath.Base(rel), goodFrameOpts())
+	}
+
+	out := filepath.Join(dir, "out.csv")
+	stderr := captureStderr(t, func() {
+		o := defaultOpts()
+		o.format = "csv"
+		o.output = out
+		o.quiet = true
+		o.recursive = true
+		if err := runAnalyze(dir, o); err != nil {
+			t.Errorf("runAnalyze: %v", err)
+		}
+	})
+
+	if !strings.Contains(stderr, "same.FIT") {
+		t.Errorf("stderr %q does not name the colliding frame", stderr)
+	}
+	if !strings.Contains(stderr, "avertissement") {
+		t.Errorf("stderr %q is not flagged as a warning", stderr)
+	}
+	// Only the collision is worth mentioning.
+	if strings.Contains(stderr, "other.FIT") {
+		t.Errorf("stderr %q names a frame that does not collide", stderr)
+	}
+	// And the run still produces a row for each frame.
+	if got := len(readCSVFile(t, out)); got != 4 {
+		t.Errorf("got %d records, want 4 (header plus three frames)", got)
+	}
+}
+
+// TestRunAnalyzeFlatScanDoesNotWarnAboutDuplicates pins that the collision
+// warning is a recursive-scan concern. A single directory cannot hold two entries
+// of the same name, so a flat scan has nothing to report even on a tree full of
+// collisions -- and it should stay silent rather than cry wolf.
+func TestRunAnalyzeFlatScanDoesNotWarnAboutDuplicates(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, rel := range []string{"a/same.FIT", "b/same.FIT", "c/same.FIT"} {
+		full := filepath.Join(dir, filepath.Dir(rel))
+		if err := os.MkdirAll(full, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", full, err)
+		}
+		writeFrame(t, full, filepath.Base(rel), goodFrameOpts())
+	}
+
+	out := filepath.Join(dir, "out.csv")
+
+	// Every frame is in a subdirectory, so the flat scan finds nothing and fails
+	// before writing a report. What matters is what it did not say.
+	flat := captureStderr(t, func() {
+		o := defaultOpts()
+		o.format = "csv"
+		o.output = out
+		o.quiet = true
+		if err := runAnalyze(dir, o); err == nil {
+			t.Error("flat scan succeeded on a tree with no top-level frame, want an error")
+		}
+	})
+	if strings.Contains(flat, "same.FIT") || strings.Contains(flat, "sous-dossiers différents") {
+		t.Errorf("flat scan reported a collision %q, want only the -r hint", flat)
+	}
+
+	// With -r the same tree does warn, so the silence above is the flag's doing.
+	recursive := captureStderr(t, func() {
+		o := defaultOpts()
+		o.format = "csv"
+		o.output = out
+		o.quiet = true
+		o.recursive = true
+		if err := runAnalyze(dir, o); err != nil {
+			t.Errorf("recursive runAnalyze: %v", err)
+		}
+	})
+	if !strings.Contains(recursive, "same.FIT") {
+		t.Errorf("recursive scan warned %q, want the collision reported", recursive)
+	}
+	if got := len(readCSVFile(t, out)); got != 4 {
+		t.Errorf("got %d records, want 4 (header plus three frames)", got)
+	}
+}
+
+// TestWarnDuplicateBasenames covers the ambiguity the report cannot express.
+func TestWarnDuplicateBasenames(t *testing.T) {
+	tests := []struct {
+		name  string
+		files []string
+		want  []string
+	}{
+		{
+			name:  "distinct names are silent",
+			files: []string{"a/one.FIT", "b/two.FIT"},
+		},
+		{
+			name:  "a collision is reported once, not once per extra copy",
+			files: []string{"a/same.FIT", "b/same.FIT", "c/same.FIT"},
+			want:  []string{"same.FIT"},
+		},
+		{
+			name:  "several collisions are sorted",
+			files: []string{"a/beta.FIT", "z/beta.FIT", "a/alpha.FIT", "z/alpha.FIT"},
+			want:  []string{"alpha.FIT", "beta.FIT"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := warnDuplicateBasenames(tc.files)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d warnings (%v), want %d", len(got), got, len(tc.want))
+			}
+			for i, w := range got {
+				if !strings.Contains(w, tc.want[i]) {
+					t.Errorf("warning %d = %q, want it to name %q", i, w, tc.want[i])
+				}
+			}
+		})
 	}
 }
 
@@ -685,7 +1247,19 @@ func TestRunAnalyzeErrors(t *testing.T) {
 			name: "no FITS files",
 			dir:  dir,
 			opts: func(*analyzeOptions) {},
-			want: "aucun fichier FITS trouvé",
+			// The flat scan is where someone pointed at the wrong level of a
+			// tree, so the message names the flag rather than only reporting an
+			// empty directory.
+			want: "utilisez -r",
+		},
+		{
+			name: "no FITS files, recursive",
+			dir:  dir,
+			opts: func(o *analyzeOptions) { o.recursive = true },
+			// The message must state how deep the search actually went. Saying
+			// "nor its subdirectories" would be false under a depth cap, since
+			// frames can sit below what was searched.
+			want: "dans les 2 niveaux de sous-dossiers",
 		},
 	}
 
