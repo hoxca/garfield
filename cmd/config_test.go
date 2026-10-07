@@ -538,6 +538,28 @@ func setConfigPath(t *testing.T, path string) {
 	t.Cleanup(func() { configPath = prev })
 }
 
+// consoleField returns the number printed after label on the first line that
+// carries it, e.g. consoleField(t, out, "Score=") on "… SNR=27.40, Score=4.457,
+// APPROUVEE" gives "4.457".
+func consoleField(t *testing.T, out, label string) string {
+	t.Helper()
+
+	for _, line := range strings.Split(out, "\n") {
+		i := strings.Index(line, label)
+		if i < 0 {
+			continue
+		}
+		rest := line[i+len(label):]
+		end := strings.IndexAny(rest, ", )")
+		if end < 0 {
+			continue
+		}
+		return rest[:end]
+	}
+	t.Fatalf("no line carries %q:\n%s", label, out)
+	return ""
+}
+
 func mustReadConfig(t *testing.T, path string) *viper.Viper {
 	t.Helper()
 	v, err := readConfig(path)
