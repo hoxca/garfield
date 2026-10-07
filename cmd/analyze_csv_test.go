@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1176,6 +1177,55 @@ func TestRunAnalyzeFormats(t *testing.T) {
 		}
 	})
 
+	t.Run("console prints the score and agrees with the CSV", func(t *testing.T) {
+		out := filepath.Join(dir, "score.csv")
+
+		stdout := captureStdout(t, func() {
+			o := defaultOpts()
+			o.format = "both"
+			o.output = out
+			if err := runAnalyze(dir, o); err != nil {
+				t.Errorf("runAnalyze: %v", err)
+			}
+		})
+
+		if !strings.Contains(stdout, "Score=") {
+			t.Fatalf("console output carries no score:\n%s", stdout)
+		}
+
+		// The console prints eight numbers per frame, so a swapped argument would
+		// still render plausible values. Reading the score back out of the line
+		// and comparing it with the CSV for the same frame is what catches that:
+		// both come from the same ImageResult.
+		rec := readCSVFile(t, out)[1]
+		col := -1
+		for i, h := range imageResultHeader {
+			if h == "score" {
+				col = i
+			}
+		}
+		if col < 0 {
+			t.Fatalf("no score column in %v", imageResultHeader)
+		}
+
+		want := rec[col]
+		printed := consoleField(t, stdout, "Score=")
+
+		// The CSV carries four decimals and the console three, so they are
+		// compared as numbers: the console must show the CSV's value at its own
+		// precision, not merely something close.
+		csvScore, err := strconv.ParseFloat(want, 64)
+		if err != nil {
+			t.Fatalf("CSV score %q is not a number: %v", want, err)
+		}
+		if csvScore == 0 {
+			t.Errorf("the fixture produced no measurable score (%q), the check would be vacuous", want)
+		}
+		if got := fmt.Sprintf("%.3f", csvScore); got != printed {
+			t.Errorf("console printed Score=%s, the CSV records %q for the same frame", printed, want)
+		}
+	})
+
 	t.Run("both writes console and a file", func(t *testing.T) {
 		out := filepath.Join(dir, "both.csv")
 		o := defaultOpts()
@@ -1371,6 +1421,56 @@ func TestRunAnalyzeRecordsPerFileError(t *testing.T) {
 	}
 	if bad[10] != "" {
 		t.Errorf("bad.FIT decision = %q, want empty alongside an error", bad[10])
+	}
+}
+
+// TestRunAnalyzeErrorLineCarriesNoMetrics checks the console keeps metrics off
+// the failure line. processImage returns Score 0 for a file it could not read, so
+// printing any metric beside the error would present a placeholder as though it
+// were a measurement -- and the reader has no way to tell it apart from a real
+// zero.
+func TestRunAnalyzeErrorLineCarriesNoMetrics(t *testing.T) {
+	dir := t.TempDir()
+	writeFrame(t, dir, "good.FIT", goodFrameOpts())
+	if err := os.WriteFile(filepath.Join(dir, "bad.FIT"), []byte("garbage"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	stdout := captureStdout(t, func() {
+		o := defaultOpts()
+		o.format = "console"
+		if err := runAnalyze(dir, o); err != nil {
+			t.Errorf("runAnalyze: %v", err)
+		}
+	})
+
+	var errLine string
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, "bad.FIT") && strings.Contains(line, "ERREUR") {
+			errLine = line
+		}
+	}
+	if errLine == "" {
+		t.Fatalf("no error line for bad.FIT:\n%s", stdout)
+	}
+
+	for _, metric := range []string{"Score=", "FWHM=", "Ecc=", "SNR=", "étoiles"} {
+		if strings.Contains(errLine, metric) {
+			t.Errorf("the error line carries %s: %q", metric, errLine)
+		}
+	}
+
+	// And the frame that did measure still reports all of them.
+	var okLine string
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, "good.FIT") {
+			okLine = line
+		}
+	}
+	for _, metric := range []string{"FWHM=", "Ecc=", "SNR=", "Score="} {
+		if !strings.Contains(okLine, metric) {
+			t.Errorf("the success line is missing %s: %q", metric, okLine)
+		}
 	}
 }
 

@@ -538,8 +538,12 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 					if r.Error != nil {
 						fmt.Printf("  [%d/%d] %s ... ERREUR: %v\n", done, len(fitsFiles), r.Filename, r.Error)
 					} else {
-						fmt.Printf("  [%d/%d] %s ... OK (%d/%d étoiles, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, %s)\n",
-							done, len(fitsFiles), r.Filename, r.StarCount, r.DetectedStars, r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Decision)
+						// Score is printed to three decimals, like Ecc, because the
+						// score gate is the finest of the six: a frame sitting just
+						// above --min-score would render as exactly on it at two.
+						fmt.Printf("  [%d/%d] %s ... OK (%d/%d étoiles, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f, %s)\n",
+							done, len(fitsFiles), r.Filename, r.StarCount, r.DetectedStars,
+							r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Score, r.Decision)
 					}
 				}
 				printMu.Unlock()
