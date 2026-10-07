@@ -45,6 +45,8 @@ var analyzeCmd = &cobra.Command{
 	Long: `Parcourt un dossier, détecte les fichiers .fit/.fits/.fts
 et calcule FWHM, excentricité, SNR et score pour chacun.
 
+score = snr/fwhm*(1-ecc)
+
 Exemple :
   garfield analyze images/
   garfield analyze --dir images/ --limit-computed-stars 500
