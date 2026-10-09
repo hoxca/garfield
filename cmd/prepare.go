@@ -19,14 +19,14 @@ import (
 
 // Default locations for the Kosmodrom acquisition tree. The input is the
 // capture volume; the output is the scratch volume the prepared sessions are
-// staged on before calibration.
+// staged on before calibration is done with WBPP in Pixinsight.
 const (
 	defaultPrepareInput  = "/Volumes/Dyno/Kosmodrom"
 	defaultPrepareOutput = "/Volumes/T7/Workspace"
 )
 
-// lightsDir and flatsDir are the subdirectories of the input root holding
-// science and flat frames respectively.
+// lightsDir, flatsDir and masterDir are the subdirectories of the input root holding
+// lights, flat and calibration frames respectively.
 const (
 	lightsDir = "Lights"
 	flatsDir  = "Flats"
@@ -35,8 +35,7 @@ const (
 )
 
 // sessionLightsDir and sessionFlatsDir are the subdirectories of a prepared
-// session. Keeping lights and calibration symmetric means a downstream
-// pipeline can treat the two alike.
+// session. 
 const (
 	sessionLightsDir = "lights"
 	sessionFlatsDir  = "flats"
@@ -50,13 +49,11 @@ const (
 const biasOutDir = "bias"
 
 // darksOutDir holds the master darks, for the same reason and with the same
-// shape as biasOutDir. Flat: the filename already carries both the gain and
-// the exposure, and a subdirectory would risk repeating the acquisition's own
-// G0-versus-GA0 spelling mismatch.
+// shape as biasOutDir. 
 const darksOutDir = "darks"
 
 // biasMastersDir and darksMastersDir are the acquisition-side directories
-// holding the masters. The biases are flat, one file per gain; the darks are
+// holding the masters. The biases normally contain one file per gain; the darks are
 // split into per-gain subdirectories, so indexing them recurses.
 const (
 	biasMastersDir  = "Masters"
@@ -68,8 +65,9 @@ const (
 // quarantined in one place.
 const rejectedDir = "rejected"
 
-// sessionsDir groups the prepared sessions, so the target root holds only
-// Sessions/, rejected/ and metrics/.
+// sessionsDir groups the prepared sessions, so it could be imported with one
+// import directory <Sessions> in the WBPP Pixinsight process.
+// the target root holds only Sessions/, rejected/ and metrics/.
 const sessionsDir = "Sessions"
 
 // metricsDir holds the CSV reports beside the session directories, keeping the
@@ -118,12 +116,10 @@ var frameDateRe = regexp.MustCompile(`_(\d{8})_\d{6}_\d+_PA`)
 var fitsExts = map[string]bool{".FIT": true, ".FITS": true, ".FTS": true}
 
 // masterExts are the extensions of the calibration masters. They are kept apart
-// from fitsExts because the masters are XISF: pixelinsight's serialisation of
-// a FITS image, with an XML header rather than 80-byte cards. readfits cannot
-// read one, so a master must never reach the quality pass that fitsExts gates.
+// from fitsExts because the masters are in XISF pixinsight's format.
 var masterExts = map[string]bool{".XISF": true}
 
-// gainRe extracts the gain setting token, "GA0" or "GA2750". Light frames and
+// gainRe extracts the gain setting, "GA0" or "GA2750". Light frames and
 // master calibrations use the same spelling, so the two match on the token
 // directly: "..._-10C_GA0_20260914_..." against "masterBias_GA0_-10C_...".
 var gainRe = regexp.MustCompile(`_(GA\d+)_`)
@@ -301,8 +297,8 @@ func runPrepare(opts prepareOptions) error {
 	}
 
 	// Indexed once for the whole target: the masters are shared by every
-	// session, so this is not per-session work. A missing directory is not an
-	// error -- the calibration can be supplied during the reduction instead.
+	// session, so this is not per-session work. 
+	// A missing directory is not an error
 	var masters map[string]biasMaster
 	biasRoot := filepath.Join(opts.input, biasDir, biasMastersDir)
 	if _, statErr := os.Stat(biasRoot); statErr == nil {
@@ -1157,7 +1153,7 @@ func indexDarkMasters(root string) (map[darkKey]darkMaster, []string, error) {
 // returning its name. Dotfiles are excluded: the syncthing client leaves
 // ".syncthing.masterDark_....tmp" partials here, and copying a half-transferred
 // master would be worse than having none. Only XISF counts, which also keeps
-// the raw calibration frames under Darks/-10C/ out.
+// the raw calibration frames under Darks/-10C/ out (G4 camera calibration files).
 func isMasterFile(name string) (bool, string) {
 	if strings.HasPrefix(name, ".") {
 		return false, ""
@@ -1187,10 +1183,6 @@ func masterDate(name string) string {
 // all. A tie therefore resolves to neither candidate on merit, and the caller
 // keeps the one it already holds -- deterministic only because candidates are
 // visited in sorted order, which is why an undecided tie is reported as such.
-//
-// Biases and darks share this: they were once decided differently, biases by
-// directory order and darks by date, which meant the two features disagreed
-// about which master was current.
 func preferLater(heldDate, candidateDate string) bool {
 	return candidateDate > heldDate
 }
@@ -1226,8 +1218,8 @@ func lightDarkKey(name string) (darkKey, bool) {
 	return darkKey{gain: m[2], exposure: exposure}, true
 }
 
-// collectDarkKeys records, per session, the master darks its approved frames
-// need. Rejected frames are excluded on purpose: a dark for frames that never
+// collectDarkKeys records, per session, the master darks for its approved frames.
+// Rejected frames are excluded on purpose: a dark for frames that never
 // reach lights/ is 233 MB of nothing.
 //
 // This runs after the assessment, unlike the gains, which are read from the
