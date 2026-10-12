@@ -1,14 +1,13 @@
-# Configuration de garfield.
+# garfield configuration.
 #
-# Ce fichier est optionnel : sans lui, les valeurs par défaut compilées dans
-# l'exécutable s'appliquent. 
-# Chaque clé correspond prends la forme <section>.<nom-du-drapeau>.
+# This file is optional: without it, the defaults compiled into the
+# executable apply. Each key takes the form <section>.<flag-name>.
 #
-# Un drapeau passé sur la ligne de commande l'emporte toujours sur ce fichier.
+# A flag passed on the command line always wins over this file.
 
-# Critères de qualité d'une image, appliqués par analyze ET par prepare.
-# Toute modification est une décision : c'est ce qui détermine quelles images
-# sont jetées.
+# Quality criteria for an image, applied by analyze AND by prepare.
+# Every change is a decision: this is what determines which images
+# are discarded.
 thresholds:
   min-snr: 11.0
   max-fwhm: 5.0
@@ -16,22 +15,22 @@ thresholds:
   min-score: 2.0
   min-stars: 680
 
-# Parallélisme, lu par analyze ET par prepare.
-# 0 = automatique (NumCPU/2 pour workers, nombre de cœurs pour conv-workers).
+# Parallelism, read by analyze AND by prepare.
+# 0 = automatic (NumCPU/2 for workers, core count for conv-workers).
 concurrency:
   workers: 0
   conv-workers: 0
 
-# Répertoires par défaut de prepare.
+# Default directories for prepare.
 prepare:
   input: /Volumes/Dyno/Kosmodrom
   output: /Volumes/T7/Workspace
 
-# Répertoire par défaut de analyze.
+# Default directory for analyze.
 #
-# recursive : false n'analyse que les images placées directement dans dir.
-# true parcourt aussi les sous-dossiers. Un -r sur la ligne de commande l'emporte
-# sur cette valeur.
+# recursive: false analyses only the images placed directly in dir.
+# true also walks the subdirectories. A -r on the command line wins
+# over this value.
 analyze:
   dir: images
   recursive: false
