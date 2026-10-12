@@ -22,8 +22,6 @@ authority; if this document and the code disagree, the code wins.
 The acquisition tree is a capture volume. `prepare` reads it and writes a
 session tree that can be imported into WBPP (PixInsight) in one step.
 
-Defaults, from `cmd/prepare.go:23-26`:
-
 | Flag | Default |
 |---|---|
 | `--input`, `-i` | `/Volumes/Dyno/Kosmodrom` |
@@ -35,7 +33,7 @@ Defaults, from `cmd/prepare.go:23-26`:
 ├── Lights/
 │   └── <target>/              ← --target must match this directory name
 │       ├── 2026-09-10/        ← one session per date directory
-│       │   └── <FILTER>/      ← directory name used verbatim as the filter
+│       │   └── <FILTER>/      ← one of L R G B S H O, used verbatim
 │       │       └── *.FIT      ← science light frames
 │       └── 2026-09-16/
 │           └── O/
@@ -63,8 +61,8 @@ Only `Lights/<target>` is required. A missing `Flats`, `Bias/Masters` or
 `Darks/Masters` produces warnings, not errors — see
 [§11 Failure modes](#11-failure-modes).
 
-Directory names are exact: `Lights`, `Flats`, `Bias`, `Darks`, `Masters`
-(`cmd/prepare.go:30-61`). These are case-sensitive, unlike file extensions.
+Directory names are exact: `Lights`, `Flats`, `Bias`, `Darks`, `Masters`.
+These are case-sensitive, unlike file extensions.
 
 ---
 
@@ -73,11 +71,7 @@ Directory names are exact: `Lights`, `Flats`, `Bias`, `Darks`, `Masters`
 ### 2.1 What makes a session
 
 A session is a direct subdirectory of `Lights/<target>` whose name matches
-exactly (`cmd/prepare.go:102`):
-
-```go
-var sessionDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-```
+exactly :
 
 Anything else in `Lights/<target>/` is ignored — stray files, dotfiles, a
 `masterFlat_*.fit` dropped there by mistake. Only directories are considered,
@@ -85,7 +79,7 @@ and only ones that match.
 
 **Session numbering is positional, not derived from the date.** The matching
 directories are sorted as strings and the index in that list, plus one, becomes
-the session number (`cmd/prepare.go:634-637`):
+the session number :
 
 ```
 Lights/M51/2026-01-15/   →  sorted first   →  Session_01
@@ -102,46 +96,54 @@ A target with no date directories is a fatal error.
 
 ### 2.2 The filter directory
 
-Every subdirectory of a session directory is a filter (`filterSubdirs`,
-`cmd/prepare.go:750`). The name is **used verbatim** — no validation, no
-mapping, no check that it is a real filter. `B`, `G`, `L`, `R`, `O`, `S` are
-what the acquisition happens to use.
+Each subdirectory of a session directory is one filter, and its name must be
+one of the seven known colour filters — **L**, **R**, **G**, **B**, **S**,
+**H**, **O**. The name is used verbatim otherwise: no mapping, no normalisation.
 
-The filter is a *directory* for lights and a *filename token* for flats. The two
-must agree for a flat to be matched (§3).
+A directory outside the set is **skipped with a warning** rather than carried
+into the plan. Left alone it would become a filter with no flats, and the
+session would then report a missing flat for it — naming a filter the
+acquisition does not use.
 
-Dotfile directories are skipped.
+Dotfile directories are skipped without comment.
+
+The filter is a *directory* for lights and a *filename token* for flats.
+The two must agree, and both are validated against the same set, for a flat
+to be matched (§3).
 
 ### 2.3 Light filename grammar
 
 A real frame:
 
 ```
+
+target     filter   bin       gain         time        PA
+   │         │       │   │     │       │     │          │
 LBN527_LIGHT_R_300s_BIN1_-10C_GA0_20260910_021539_988_PA310_E.FIT
-        │      │    │   │   │   │        │       │    │    │   │
-     target  type filter exp bin  temp  gain    date   time  ms  PA flip
+         │      │         │          │             │        │
+       type    exp       temp       date           ms     flip
 ```
 
-`<target>` is the `--target` value. `<flip>` is `E` or `W`.
+`<target>` is the `--target` value. `<flip>` is `E` or `W` side of pier.
 
 **No regex validates the whole name.** Four independent regexes pluck tokens out
 of it. A frame missing a token still gets analysed and copied — the token is
 simply absent from the report.
 
-| Token | Regex | Source | Consequence if absent |
+| Token | Regex | Consequence if absent |
 |---|---|---|---|
-| frame date | `_(\d{8})_\d{6}_\d+_PA` | `prepare.go:113` | `frameDateMin/Max` stay empty in `sessions.csv` |
-| PA | `_PA(\d+)` | `prepare.go:105` | Session PA is empty; **no flats will match** |
-| gain | `_(GA\d+)_` | `prepare.go:125` | Not counted in the session gains; no bias copied for it |
-| exposure + gain | `_(\d+)s_BIN\d_-10C_(GA\d+)_` | `prepare.go:130` | **No master dark** will be copied for this frame |
+| frame date | `_(\d{8})_\d{6}_\d+_PA`  | `frameDateMin/Max` stay empty in `sessions.csv` |
+| PA | `_PA(\d+)`  | Session PA is empty; **no flats will match** |
+| gain | `_(GA\d+)_`  | Not counted in the session gains; no bias copied for it |
+| exposure + gain | `_(\d+)s_BIN\d_-10C_(GA\d+)_`  | **No master dark** will be copied for this frame |
 
-Frame date, time, milliseconds and flip are not used for matching at all. The
-`E`/`W` suffix is cosmetic here.
+Frame date, time, milliseconds and flip are not used for matching at all. 
+The `E`/`W` side of pier suffix is cosmetic here.
 
 ### 2.4 Multi-angle sessions
 
 If the frames of one session carry more than one PA value, the **lowest sorted
-angle wins** and a warning lists every angle found (`cmd/prepare.go:695-707`):
+angle wins** and a warning lists every angle found :
 
 ```
 session Session_01 (2026-09-16) : angles multiples 0/90, flats pris pour PA0
@@ -159,51 +161,73 @@ other frames exist.
 
 `Flats/<YYYY-MM-DD>/` — **one level only**. Unlike lights, there is no filter
 subdirectory. The filter is a filename token instead. The scan is
-non-recursive (`indexFlats`, `cmd/prepare.go:772`).
+non-recursive.
 
 A real flat:
 
 ```
+
+   filter     bin        gain            time       PA
+     │         │          │                │         │  
 FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT
-     │   │      │   │   │        │       │   │    │   │
-  filter  dur  bin  temp  gain   date   time  ms   PA
+         │           │            │             │    
+        exp        temp          date           ms   
 ```
 
-Both of these must match or the file is skipped without comment:
+Filter and PA must match or the file is skipped without comment:
 
-```go
-var flatFilterRe = regexp.MustCompile(`^FLAT_([A-Za-z0-9]+)_`)  // prepare.go:109
-var paRe          = regexp.MustCompile(`_PA(\d+)`)              // prepare.go:105
-```
+The filter must be one of seven known colour filters, and the PA must be
+present, or the file is dropped with a warning naming it.
 
-`flatFilterRe` is **anchored at the start of the name**. `FLATL_H_41s_PA310.FIT`
-does not match, because after `FLAT` comes `L` rather than `_`. Neither does a
+`flatFilterRe` is **anchored on the `FLAT_` prefix** and its group is a
+character class over `knownFilters`. `FLATL_41s_..._PA310.FIT` does not match,
+because after `FLAT` comes `L` rather than `_`. Neither does a
 `masterFlat_...` file or any light frame.
 
-The filter group is `[A-Za-z0-9]+` — no underscores, no hyphens.
+The recognised set is **exactly one character** from `LRGBSHO` — L, R, G, B,
+S, H, O:
+
+```
+FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT   → S   matched
+FLAT_Ha_41.4s_BIN1_PA310.FIT                                 → nil no known filter
+FLAT_OIII_41.4s_BIN1_PA310.FIT                               → nil no known filter
+FLAT_L2_41.4s_BIN1_PA310.FIT                                 → nil no known filter
+```
+
+Two consequences:
+
+- **Narrowband does not parse.** `Ha`, `OIII`, `SII`, `L2` and anything else
+  outside the seven are dropped until their letters are added to `knownFilters`.
+
+A file is *reported* rather than silently dropped when it carries the `FLAT_`
+prefix but fails the filter test — that is how a newly added filter announces
+itself. A name without the prefix (`FLATL_...`, a light frame, a master) is a
+different kind of frame sharing the directory and is left alone. The prefix
+test is deliberately looser than the token test, so a plainly malformed
+`FLAT_-weird_name.FIT` is named rather than discarded.
+- **Multi-character tokens cannot match by accident.** 
+
+`knownFilters` is written in band order for readability. 
 
 ### 3.2 Matching
 
-Flats are indexed by `filter@PA` (`flatKey`, `cmd/prepare.go:767`), e.g. `S@310`,
+Flats are indexed by `filter@PA`, e.g. `S@310`,
 and matched against the session's filter directories and session PA:
 
 ```
 session 2026-09-16, filter S, PA310  →  Flats/2026-09-16/  file starting FLAT_S_ and containing _PA310
 ```
 
-A filter with lights but no matching flats is recorded in `missingFlats`,
-warned about, and **not** copied. Flats for a filter with no lights are never
-copied either.
+A filter with lights but no matching flats is recorded in `missingFlats`, warned about, and **not** copied. 
+Flats for a filter with no lights are never copied either.
 
 ### 3.3 Why the session date, not the frame date
 
 Flats are matched on the **session directory date**, never the date embedded in
-the light filenames (`cmd/prepare.go:709-711`). Sessions run past midnight, so
-for most nights the two disagree by a day; only the directory name lines up with
-`Flats/`.
+the light filenames. Sessions run past midnight, so for most nights the two disagree by a day;
+only the directory name lines up with `Flats/`.
 
-This is why `frameDateMin` and `frameDateMax` are reported separately from
-`date` in `sessions.csv` — the discrepancy is real and worth seeing.
+This is why `frameDateMin` and `frameDateMax` are reported separately from `date` in `sessions.csv`.
 
 ---
 
@@ -213,25 +237,20 @@ This is why `frameDateMin` and `frameDateMax` are reported separately from
 <input>/Bias/Masters/*.xisf
 ```
 
-Flat directory. The scan is **non-recursive** — subdirectories are skipped
-(`indexBiasMasters`, `cmd/prepare.go:909`).
+The scan of master bias directory is **non-recursive** — subdirectories are skipped
 
 ```
+           gain     frames 
+            │         │
 masterBias_GA0_-10C_257f_20251117.xisf
-          │      │    │       │
-        gain   temp frames  date
+                 │           │
+               temp         date
 ```
 
 - Keyed by **gain**, taken from the filename via `_(GA\d+)_`.
 - The frame count (`257f`) is **not read** — see §6.
 - The date suffix must be eight digits directly before `.xisf`.
-- A file with no gain token is skipped with a warning. The legacy `G0` spelling
-  does not match, so a bias named `masterBias_G0_...` is ignored:
-
-  ```
-  /input/Bias/Masters: "masterBias_G0_...xisf" ignored, no gain setting in the name
-  ```
-
+- A file with no gain token is skipped with a warning. 
 - Only **one** master bias is copied per gain, for the whole target.
 
 ---
@@ -247,18 +266,13 @@ masterBias_GA0_-10C_257f_20251117.xisf
 └── masterDark_120s_GA0_-10C_20251119.xisf     ← also accepted
 ```
 
-The scan recurses **exactly one level** (`indexDarkMasters`, `cmd/prepare.go:1080`).
+The scan recurses **exactly one level**.
 Files directly under `Masters/` are accepted alongside per-gain subdirectories.
 
 ### 5.1 The key is the filename, not the directory
 
 The directory names and the filenames **deliberately disagree**:
-`G2750/` holds `GA2750` files. The key comes from the filename alone, via
-`darkComboRe` (`cmd/prepare.go:133`):
-
-```go
-var darkComboRe = regexp.MustCompile(`masterDark_(\d+)s_(GA\d+)_`)
-```
+`G2750/` holds `GA2750` files. The key comes from the filename alone.
 
 Keying on the directory would yield `G2750`, which matches no light frame, and
 **nothing would be copied at all**. This is the single sharpest edge in the
@@ -266,15 +280,11 @@ input contract. A dark in a directory whose name suggests gain `G2750` but
 whose file says `GA2750` works; a dark in a directory named `GA2750` whose file
 says `GA2750` also works, because the directory is never read.
 
-The key renders as `GA2750/600s` (`darkKey.String`, `cmd/prepare.go:1063`).
+The key renders as `GA2750/600s`.
 
 ### 5.2 The `-10C` hardcode
 
-A light's needed dark is computed with `lightComboRe` (`cmd/prepare.go:130`):
-
-```go
-var lightComboRe = regexp.MustCompile(`_(\d+)s_BIN\d_-10C_(GA\d+)_`)
-```
+A light's needed dark is computed with `lightComboRe`:
 
 `-10C` is **hardcoded**. The setpoint must appear literally, between the binning
 token and the gain. A light taken at a different sensor temperature matches no
@@ -286,8 +296,8 @@ gain to the bias set, but contributes no dark.
 
 ### 5.3 Which darks get copied
 
-`collectDarkKeys` runs **after** the quality pass and considers **only approved
-frames** (`cmd/prepare.go:1227`). A dark for a rejected frame is never copied.
+Darks collection runs **after** the quality pass and considers **only approved
+frames**. A dark for a rejected frame is never copied.
 
 Missing masters are warnings, not errors — the frames are still usable data and
 the dark can be supplied later:
@@ -301,11 +311,9 @@ no master dark for GA2750/600s in "..." (available: GA0/300s GA0/600s), affected
 ## 6. Duplicate masters
 
 Two masters for one key is an anomaly worth surfacing whichever way it resolves
-(`preferLater`, `cmd/prepare.go:1186`).
 
 **Only the trailing date decides.** The frame count in a bias name (`257f`,
-`129f`) is deliberately not read — more frames is not better evidence of a
-current calibration.
+`129f`) is deliberately not read — more frames is not better than a more recent calibration.
 
 | Situation | Outcome | Warning |
 |---|---|---|
@@ -329,7 +337,7 @@ All in `cmd/prepare.go` unless noted.
 |---|---|---|---|
 | `sessionDateRe` | `^\d{4}-\d{2}-\d{2}$` | 102 | which directories are sessions |
 | `paRe` | `_PA(\d+)` | 105 | session angle; flat index |
-| `flatFilterRe` | `^FLAT_([A-Za-z0-9]+)_` | 109 | flat index — **anchored at start** |
+| `flatFilterRe` | `^FLAT_([LRGBSHO])_` | see §3.1 | flat index — **anchored at start**, set from `knownFilters` |
 | `frameDateRe` | `_(\d{8})_\d{6}_\d+_PA` | 113 | report only |
 | `gainRe` | `_(GA\d+)_` | 125 | session gains; bias index |
 | `lightComboRe` | `_(\d+)s_BIN\d_-10C_(GA\d+)_` | 130 | light → dark — **`-10C` hardcoded** |
@@ -340,8 +348,7 @@ All in `cmd/prepare.go` unless noted.
 
 ## 8. Extensions and dotfiles
 
-Two distinct extension sets, kept apart because masters are in PixInsight's
-format (`cmd/prepare.go:116`, `120`):
+Two distinct extension sets, kept apart because masters are in PixInsight's format : 
 
 | Set | Extensions | Used for |
 |---|---|---|
@@ -352,9 +359,7 @@ Extensions are upper-cased before lookup, so `.fit` and `.xisf` work. But the
 **sets do not overlap**: a master with a `.fit` extension is rejected, and a
 light with a `.xisf` extension is not collected.
 
-Dotfiles are excluded everywhere (`isFITSName`, `cmd/prepare.go:805`; and
-explicitly in `isMasterFile`, `cmd/prepare.go:1157`). Two sources produce them
-and both are traps:
+Dotfiles are excluded everywhere, two sources produce them and both are traps:
 
 - macOS writes AppleDouble sidecars `._<frame>.FIT` on exFAT volumes. They carry
   a FITS extension, so without the dotfile rule they would all be analysed and
@@ -380,13 +385,13 @@ Much looser. Any directory of FITS frames works.
 **Flat by default.** Only files directly in `--dir`. Descending is opt-in so a
 stray frame below the chosen directory cannot quietly join the report.
 
-**With `-r`, the walk stops at depth 2** (`maxRecursiveDepth`,
-`cmd/analyze.go:310`). This is sized for the acquisition layout, where a frame
+**With `-r`, the walk stops at depth 2** 
+This is sized for the acquisition layout, where a frame
 sits two levels below `Lights/<target>`:
 
 ```
 Lights/<target>/2026-09-10/S/frame.FIT
-                 ←1→    ←2→
+                    ←1→   ←2→
 ```
 
 The cap cuts on **directory** depth, not file depth, so a directory at depth 3
@@ -394,29 +399,18 @@ is skipped whole while its parent's depth-2 frames are still collected. When
 the cap stops the walk, `analyze` says the search was bounded rather than
 complete — on stderr.
 
-Also excluded: directories named like a frame (covers a directory called
-`trap.FIT`), symlinked directories (cycle risk; the acquisition volumes hold
-none). A symlinked *file* is still analysed. Duplicate basenames across
+Also excluded: directories named like a frame (covers a directory called `trap.FIT`),
+symlinked directories (cycle risk; the acquisition volumes hold none).
+A symlinked *file* is still analysed. Duplicate basenames across
 subdirectories are warned about.
 
 ### 9.1 Known limitation: the filter and date columns
 
-`parseFilename` (`cmd/analyze.go:102`) is separate from `prepare`'s regexes and
+`parseFilename` is separate from `prepare`'s regexes and
 much dumber — it splits on `_` and takes positional fields:
-
-```go
-parts := strings.Split(base, "_")
-if len(parts) >= 3 { filter = parts[2] }
-if len(parts) >= 8 { date = parts[7][:8] }
-```
 
 So the third `_`-separated field is the filter and the eighth is the date. This
 holds for light and flat names but **not** for a generated master name:
-
-```
-masterFlat_BIN-1_9576x6388_FILTER-S_mono_SESSION-1.fit
-                  ^^^^^^^^^^^ reported as filter
-```
 
 A master dropped into an `analyze` directory reports its dimensions as a filter.
 This is a known limitation, pinned by `TestParseFilenameMasterFlat`.
@@ -465,7 +459,7 @@ Four things worth knowing:
 
 ### 10.1 Reports
 
-Both CSVs use `;` as separator (`csvSeparator`, `cmd/analyze.go:246`), matching
+Both CSVs use `;` as separator, matching
 the reference PixInsight tool's export format.
 
 `metrics/sessions.csv`:
@@ -481,8 +475,8 @@ Session_01;2026-09-16;PA310;S;2;2;0;2;;2026-09-16;2026-09-17;GA0;GA0/300s
 session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error
 ```
 
-The `decision` column holds one of six values, which are **data, not
-messages** — anything parsing this file must match on them:
+The `decision` column holds one of six values, which are **data, not messages** 
+Anything parsing this file must match on them:
 
 | Value | Meaning |
 |---|---|
@@ -492,9 +486,6 @@ messages** — anything parsing this file must match on them:
 | `REJECTED FWHM` | failed `--max-fwhm` |
 | `REJECTED SNR` | failed `--min-snr` |
 | `REJECTED SCORING` | failed `--min-score` |
-
-These were `APPROUVEE` and `REJETEE *` before the interface was translated to
-English, so a CSV written by an older build mixes both vocabularies.
 
 Both reports record the **bare** session name, never a path, so consumers join
 on the session column. Metric columns come from the same `imageResultRow` used
@@ -560,8 +551,12 @@ Things that will bite, ranked by how quietly they fail:
    filenames will usually differ. Both are reported; use `date`, not
    `frameDateMin`.
 
-6. **`FLAT_` is anchored.** `FLATL_H_41s_PA310.FIT` is not a flat. The filter
-   token is `[A-Za-z0-9]+` — a filter containing `_` or `-` breaks extraction.
+6. **Only seven filters are known**, on both sides: L, R, G, B, S, H, O. A flat
+   with any other filter is dropped with a warning, and a light subdirectory
+   that is not one of the seven is skipped with a warning rather than becoming
+   a phantom filter that then reports a missing flat. **Narrowband needs
+   `knownFilters` extended** — `FLAT_Ha_` and `FLAT_OIII_` do not parse until
+   then (§3.1).
 
 7. **Masters must be `.xisf`.** A `.fit` master is rejected by the extension
    check *and* excluded by the directory structure — the raw calibration frames
@@ -570,12 +565,6 @@ Things that will bite, ranked by how quietly they fail:
 8. **`analyze`'s filter and date columns are positional.** A
    `masterFlat_BIN-1_9576x6388_...fit` reports `9576x6388` as its filter
    (§9.1).
-
-9. **Quality defaults are stricter than the PixInsight reference.** On the
-   82-frame `data/all/` set, garfield rejects 15 where the reference export
-   rejects 0 — `data/correlation_test/correlation.txt` records the comparison.
-   The rejects are all low-end tail in both systems, so this is stricter rather
-   than contradictory, but a first run can look alarming.
 
 ---
 

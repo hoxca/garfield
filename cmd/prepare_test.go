@@ -1946,6 +1946,188 @@ func TestPrepareParsesLightNames(t *testing.T) {
 	}
 }
 
+// TestKnownFilters pins the recognised filter set and isKnownFilter.
+//
+// isKnownFilter gates both the flat filename token and the light filter
+// subdirectory name, so an entry that drifts out of step with knownFilters
+// would silently stop indexing that filter's flats.
+func TestKnownFilters(t *testing.T) {
+	if knownFilters != "LRGBSHO" {
+		t.Errorf("knownFilters = %q, want %q (band order)", knownFilters, "LRGBSHO")
+	}
+
+	for _, f := range []string{"L", "R", "G", "B", "S", "H", "O"} {
+		if !isKnownFilter(f) {
+			t.Errorf("isKnownFilter(%q) = false, want true", f)
+		}
+	}
+
+	// Single characters only, so a narrowband name is not accepted by accident
+	// just because its letters appear in the set: "BG" is a substring of the
+	// set, and strings.Contains would otherwise report it a member.
+	for _, f := range []string{"Ha", "OIII", "L2", "LR", "BG", "b", "l", "", "LRGBSHO"} {
+		if isKnownFilter(f) {
+			t.Errorf("isKnownFilter(%q) = true, want false", f)
+		}
+	}
+}
+
+// TestFlatFilterReAcceptsOnlyKnownFilters pins the narrowed capture group.
+//
+// The group is a character class spliced in from knownFilters, so the failure
+// mode worth guarding is structural: a non-capturing group, or losing the
+// brackets, matches nothing at all and drops every flat silently.
+func TestFlatFilterReAcceptsOnlyKnownFilters(t *testing.T) {
+	for _, f := range []string{"L", "R", "G", "B", "S", "H", "O"} {
+		name := fmt.Sprintf("FLAT_%s_41.4s_BIN1_PA310.FIT", f)
+		m := flatFilterRe.FindStringSubmatch(name)
+		if m == nil {
+			t.Errorf("flatFilterRe does not match %q", name)
+			continue
+		}
+		if m[1] != f {
+			t.Errorf("flatFilterRe on %q captured %q, want %q (the group must stay capturing)",
+				name, m[1], f)
+		}
+		if len(m) != 2 {
+			t.Errorf("flatFilterRe on %q returned %d groups, want exactly 2", name, len(m))
+		}
+	}
+
+	// Narrowband and unknown filters no longer parse, but they still carry the
+	// FLAT_ prefix, which is what earns them a warning rather than a silent
+	// drop in indexFlats.
+	for _, name := range []string{
+		"FLAT_Ha_41.4s_BIN1_PA310.FIT",
+		"FLAT_OIII_41.4s_BIN1_PA310.FIT",
+		"FLAT_L2_41.4s_BIN1_PA310.FIT",
+		"FLAT_X_41.4s_BIN1_PA310.FIT",
+	} {
+		if flatFilterRe.MatchString(name) {
+			t.Errorf("flatFilterRe matched %q, want no match", name)
+		}
+		if !strings.HasPrefix(name, flatNamePrefix) {
+			t.Errorf("%q lacks the %q prefix, so indexFlats would drop it silently",
+				name, flatNamePrefix)
+		}
+	}
+
+	// Not a flat at all: no FLAT_ prefix, so indexFlats leaves them alone
+	// rather than mislabelling another frame type as a broken flat.
+	for _, name := range []string{
+		"FLATL_H_41s_PA310.FIT",
+		"masterFlat_BIN-1_9576x6388_FILTER-S_mono_SESSION-1.fit",
+		"NOT_A_FLAT_H_41s_PA310.FIT",
+	} {
+		if strings.HasPrefix(name, flatNamePrefix) {
+			t.Errorf("%q carries the %q prefix, so indexFlats would warn on a non-flat",
+				name, flatNamePrefix)
+		}
+	}
+
+	// The prefix and the regex must not drift apart: the regex is what decides
+	// a flat is usable, the prefix is what decides an unusable one is worth
+	// reporting, and a name that satisfies one but not the other would either
+	// vanish or be mislabelled.
+	if !strings.HasPrefix("FLAT_S_1s_PA0.FIT", flatNamePrefix) {
+		t.Error("a valid flat does not carry flatNamePrefix")
+	}
+	if !strings.HasPrefix(flatFilterRe.String(), "^"+flatNamePrefix) {
+		t.Errorf("flatFilterRe %q does not start with ^%s",
+			flatFilterRe.String(), flatNamePrefix)
+	}
+}
+
+// TestIndexFlatsWarnsOnUnusableFlats checks the two ways a real flat is
+// dropped, both of which used to be silent: an unrecognised filter, and a
+// filter with no position angle.
+func TestIndexFlatsWarnsOnUnusableFlats(t *testing.T) {
+	dir := t.TempDir()
+	usable := flatName("S", "67.02", "20260916", "071758", "808", "310")
+	for _, n := range []string{
+		usable,
+		"FLAT_Ha_41.4s_BIN1_-10C_GA2750_20260916_070000_000_PA310.FIT",
+		"FLAT_OIII_41.4s_BIN1_-10C_GA2750_20260916_070100_000_PA310.FIT",
+		"FLAT_H_41.4s_BIN1_-10C_GA2750_20260916_070200_000.FIT",
+		// Carries the prefix but no usable token, so it warns. The prefix test
+		// is looser than the filter regex on purpose: a name that is plainly
+		// meant to be a flat is worth naming even when it is malformed, and
+		// the warning says why.
+		"FLAT_-weird_name.FIT",
+		"FLAT__PA310.FIT",
+		// No prefix at all, so it is another frame type sharing the directory.
+		"FLATL_H_41.4s_PA310.FIT",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	index, warnings := indexFlats(dir)
+
+	if got := index[flatKey("S", "310")]; len(got) != 1 || got[0] != usable {
+		t.Errorf("index = %v, want the one usable flat keyed S@310", index)
+	}
+
+	// Two warnings, one per dropped real flat. Both name the file and say why.
+	// Five warnings: two unknown filters, two malformed names, one missing angle.
+	if len(warnings) != 5 {
+		t.Fatalf("got %d warnings (%v), want 5", len(warnings), warnings)
+	}
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{
+		"FLAT_Ha_", "no known filter",
+		"FLAT_OIII_",
+		"FLAT_H_41.4s", "no position angle",
+		"FLAT_-weird_name.FIT",
+		"FLAT__PA310.FIT",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings %q do not mention %q", joined, want)
+		}
+	}
+	// FLATL_ is not a flat, so it must not be reported as a broken one.
+	if strings.Contains(joined, "FLATL_") {
+		t.Errorf("warnings %q report a non-flat as a broken flat", joined)
+	}
+}
+
+// TestFilterSubdirsSkipsUnknownFilters checks the light side: a session
+// subdirectory that is not a known filter is reported and dropped rather than
+// carried into the plan as a filter that will then look for flats.
+func TestFilterSubdirsSkipsUnknownFilters(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"B", "R", "Ha", "calibration", ".hidden"} {
+		if err := os.MkdirAll(filepath.Join(dir, n), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	names, warnings, err := filterSubdirs(dir)
+	if err != nil {
+		t.Fatalf("filterSubdirs: %v", err)
+	}
+
+	if got := strings.Join(names, " "); got != "B R" {
+		t.Errorf("names = %q, want %q", got, "B R")
+	}
+
+	// Ha and calibration are reported; the dotfile is not, matching the rule
+	// that dotfiles are skipped rather than named.
+	if len(warnings) != 2 {
+		t.Fatalf("got %d warnings (%v), want 2", len(warnings), warnings)
+	}
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{"Ha", "calibration", "not a known filter", knownFilters} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings %q do not mention %q", joined, want)
+		}
+	}
+	if strings.Contains(joined, ".hidden") {
+		t.Errorf("warnings %q report a dotfile", joined)
+	}
+}
+
 func TestPrepareFormatFrameDate(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"20260910", "2026-09-10"},

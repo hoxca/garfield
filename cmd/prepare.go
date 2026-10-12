@@ -104,9 +104,38 @@ var sessionDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 // paRe extracts the position angle from a frame filename, e.g. "_PA310_E".
 var paRe = regexp.MustCompile(`_PA(\d+)`)
 
+// knownFilters are the colour filters the acquisition names, in a flat's
+// filter token and in a light filter subdirectory. Written in band order for
+// readability; it is a membership set, not a display order, since filters are
+// reported alphabetically. The token is a single character, so the set doubles
+// as a character class for flatFilterRe below.
+//
+// Narrowband filters are the obvious extension: FLAT_Ha_ and FLAT_OIII_ do not
+// match until their letters are added here, and until then every session warns
+// that it has no flats for them.
+const knownFilters = "LRGBSHO"
+
+// isKnownFilter reports whether f names one of the recognised colour filters.
+// The length check is load-bearing: strings.Contains reports "BG" as a member
+// of the set just as it does "B", and only single-character tokens are filters.
+func isKnownFilter(f string) bool {
+	return len(f) == 1 && strings.Contains(knownFilters, f)
+}
+
+// flatNamePrefix opens every flat filename. A name carrying it that
+// flatFilterRe rejects is a flat garfield cannot use; a name without it is some
+// other frame that merely shares the flats directory, so it is left alone.
+const flatNamePrefix = "FLAT_"
+
 // flatFilterRe extracts the filter from a flat frame filename, e.g.
 // "FLAT_S_67.02s_...".
-var flatFilterRe = regexp.MustCompile(`^FLAT_([A-Za-z0-9]+)_`)
+//
+// knownFilters is spliced in as a character class, so the emitted pattern is
+// ^FLAT_([LRGBSHO])_ : a single character drawn from the set, not the literal
+// seven-letter string. The group stays capturing because indexFlats reads
+// mf[1]; a non-capturing group, or dropping the brackets, would silently
+// return nil for every flat.
+var flatFilterRe = regexp.MustCompile(`^` + flatNamePrefix + `(` + `[` + knownFilters + `]` + `)_`)
 
 // frameDateRe extracts the YYYYMMDD acquisition date embedded in a frame
 // filename.
@@ -651,12 +680,12 @@ func planSession(sessionDir, flatDir string, number int, date string) (sessionPl
 		flats:   map[string][]string{},
 	}
 
-	filterDirs, err := filterSubdirs(sessionDir)
+	filterDirs, filterWarns, err := filterSubdirs(sessionDir)
 	if err != nil {
 		return s, nil, err
 	}
 
-	var warnings []string
+	warnings := filterWarns
 	paSeen := map[string]bool{}
 	gainSeen := map[string]bool{}
 
@@ -708,7 +737,8 @@ func planSession(sessionDir, flatDir string, number int, date string) (sessionPl
 	// Flats are matched on the session date, not the date embedded in the
 	// light filenames: sessions run past midnight, so the two disagree for
 	// most nights and only the directory name lines up with Flats/.
-	flatIndex := indexFlats(flatDir)
+	flatIndex, flatWarns := indexFlats(flatDir)
+	warnings = append(warnings, flatWarns...)
 
 	for _, filter := range s.filterNames() {
 		key := flatKey(filter, s.pa)
@@ -746,20 +776,35 @@ func formatFrameDate(v string) string {
 	return v[:4] + "-" + v[4:6] + "-" + v[6:8]
 }
 
-func filterSubdirs(sessionDir string) ([]string, error) {
+// filterSubdirs returns the light filter subdirectory names of a session,
+// together with a warning for each directory that is not a known filter.
+//
+// An unrecognised directory is skipped rather than becoming a filter: left
+// alone it would be carried into the plan as a filter with no flats, and the
+// session would then report a missing flat for it, naming a filter the
+// acquisition does not use. Reporting it as what it is -- a directory that is
+// not a filter -- says more and keeps the report free of phantom filters.
+func filterSubdirs(sessionDir string) ([]string, []string, error) {
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
-		return nil, fmt.Errorf("unable to read %q: %w", sessionDir, err)
+		return nil, nil, fmt.Errorf("unable to read %q: %w", sessionDir, err)
 	}
 	var names []string
+	var warnings []string
 	for _, e := range entries {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if !isKnownFilter(e.Name()) {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: %q is not a known filter (%s), ignored",
+				sessionDir, e.Name(), knownFilters))
 			continue
 		}
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-	return names, nil
+	return names, warnings, nil
 }
 
 // flatKey identifies a flat set by filter and position angle.
@@ -767,15 +812,25 @@ func flatKey(filter, pa string) string {
 	return filter + "@" + pa
 }
 
-// indexFlats groups the flat frames of one date by filter and angle.
-func indexFlats(flatDir string) map[string][]string {
+// indexFlats groups the flat frames of one date by filter and angle, and
+// returns a warning for each flat it had to drop.
+//
+// Only files that are actually flats are reported. A name that is not anchored
+// on FLAT_ at all -- FLATL_H_..., a light frame, a master -- is a different
+// kind of frame that happens to share the directory, and naming it as a broken
+// flat would be misleading. A name that is anchored on FLAT_ but whose filter
+// is outside the known set is a flat garfield cannot use, so it is reported:
+// that is how a newly added narrowband filter announces itself before anyone
+// has extended knownFilters.
+func indexFlats(flatDir string) (map[string][]string, []string) {
 	index := map[string][]string{}
+	var warnings []string
 
 	entries, err := os.ReadDir(flatDir)
 	if err != nil {
 		// A missing or unreadable flats directory simply yields no flats; the
 		// caller reports the gap per session.
-		return index
+		return index, warnings
 	}
 
 	for _, e := range entries {
@@ -785,10 +840,24 @@ func indexFlats(flatDir string) map[string][]string {
 		}
 		mf := flatFilterRe.FindStringSubmatch(name)
 		if mf == nil {
+			// Recognised by its prefix rather than a second, looser regex: a
+			// name carrying flatNamePrefix that the filter rejects is a flat
+			// garfield cannot use, and naming it is how a newly added filter
+			// announces itself before anyone extends knownFilters. A name
+			// without the prefix -- FLATL_, a light frame, a master -- is a
+			// different kind of frame sharing the directory, so reporting it as
+			// a broken flat would be misleading.
+			if strings.HasPrefix(name, flatNamePrefix) {
+				warnings = append(warnings, fmt.Sprintf(
+					"%s: %q has no known filter (%s), ignored",
+					flatDir, name, knownFilters))
+			}
 			continue
 		}
 		mp := paRe.FindStringSubmatch(name)
 		if mp == nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"%s: %q has no position angle, ignored", flatDir, name))
 			continue
 		}
 		key := flatKey(mf[1], mp[1])
@@ -798,7 +867,8 @@ func indexFlats(flatDir string) map[string][]string {
 	for k := range index {
 		sort.Strings(index[k])
 	}
-	return index
+	sort.Strings(warnings)
+	return index, warnings
 }
 
 func isFITSName(name string) bool {
