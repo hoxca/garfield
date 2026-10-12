@@ -140,18 +140,27 @@ simply absent from the report.
 Frame date, time, milliseconds and flip are not used for matching at all. 
 The `E`/`W` side of pier suffix is cosmetic here.
 
-### 2.4 Multi-angle sessions
+### 2.4 Position angles
 
-If the frames of one session carry more than one PA value, the **lowest sorted
-angle wins** and a warning lists every angle found :
+A target is acquired at **one position angle, chosen before acquisition starts.**
+Two faults contradict that and are both **fatal**:
+
+| Fault | Means | Reported as |
+|---|---|---|
+| More than one angle **within** a session | instrument rotated mid-session | `multiple angles 240/310` |
+| Sessions of one target at **different** angles | target rotated between nights | `is acquired at 2 different angles (240/310)` |
 
 ```
-session Session_01 (2026-09-16) : angles multiples 0/90, flats pris pour PA0
+mixed angles: session Session_03 (2026-09-14): multiple angles 240/310;
+session Session_07 (2026-09-18): multiple angles 180/310
 ```
 
-This is a silent quality decision, not an error. A session that was rotated
-mid-night gets only one angle's flats, and the report will not tell you the
-other frames exist.
+Every offending session is named in one error, so a single run surfaces all of
+them rather than one per fix-and-rerun. The failure happens during planning,
+before anything is written, so it leaves no output tree behind.
+
+Sessions carrying **no** angle are not part of this check. An empty `pa` can
+never match a flat, so such a session already reports a missing flat (§3.2).
 
 ---
 
@@ -336,7 +345,7 @@ All in `cmd/prepare.go` unless noted.
 | Var | Pattern | Line | Keys |
 |---|---|---|---|
 | `sessionDateRe` | `^\d{4}-\d{2}-\d{2}$` | 102 | which directories are sessions |
-| `paRe` | `_PA(\d+)` | 105 | session angle; flat index |
+| `paRe` | `_PA(\d+)` | 105 | session angle; flat index — a session must yield exactly one (§2.4) |
 | `flatFilterRe` | `^FLAT_([LRGBSHO])_` | see §3.1 | flat index — **anchored at start**, set from `knownFilters` |
 | `frameDateRe` | `_(\d{8})_\d{6}_\d+_PA` | 113 | report only |
 | `gainRe` | `_(GA\d+)_` | 125 | session gains; bias index |
@@ -503,6 +512,8 @@ by `analyze`, so the two commands' CSVs cannot disagree.
 | `--input` or `--output` empty | `... cannot be empty` |
 | `Lights/<target>` absent | `target %q not found in %q` |
 | No date directories | `no session (YYYY-MM-DD directory) found in %q` |
+| More than one angle in a session | `mixed angles: session ... multiple angles ...` (§2.4) |
+| Sessions of one target at different angles | `... is acquired at N different angles (...)` (§2.4) |
 | Malformed config YAML | (deliberate: the config decides which frames get discarded) |
 | `--config` path given but missing | no fallback to the search path |
 
@@ -538,9 +549,12 @@ Things that will bite, ranked by how quietly they fail:
    silently matches no dark. The gain regex has no such requirement, so a frame
    at the wrong temperature still gets a bias but no dark.
 
-3. **Multi-PA sessions take the lowest angle** and copy only that angle's flats.
-   The report records one PA; the other frames' existence is visible only in the
-   warning.
+3. **Rotated targets cannot be prepared.** One target means one angle, chosen
+   upfront (§2.4). A session with two angles, or sessions of one target at
+   different angles, is a hard failure. If you ever *do* need to combine
+   targets acquired at different angles, that is a change to the acquisition
+   layout, not something garfield can reconcile — the flats are matched per
+   session date, so there is no single angle to calibrate against.
 
 4. **Session numbers are positional.** Inserting a date directory renumbers
    every later session. Never treat `Session_03` as a stable identifier — join
@@ -589,7 +603,11 @@ Layout claims in this document are enforced by tests, not just documented:
 | only needed biases copied | `TestPrepareCopiesOnlyTheBiasesNeeded` |
 | only approved frames draw a dark | `TestPrepareDarksOnlyForApprovedFrames` |
 | flats keyed on the **session** date | `TestPrepareUsesSessionDateForFlats`, `TestFramesCSVUsesSessionDateNotFrameDate` |
-| multi-PA warns and takes the lowest angle | `TestPrepareMixedAnglesWarns`, `TestPrepareFiltersFlatsByAngle` |
+| mixed angles within a session are fatal | `TestPrepareMixedAnglesIsFatal`, `TestPlanSessionLeavesAngleUnsetOnMixedAngles` |
+| sessions at different angles are fatal | `TestPrepareMixedAnglesAcrossSessionsIsFatal`, `TestMixedAnglesAcrossSessions` |
+| every offending session reported at once | `TestPrepareReportsEveryMixedAngleAtOnce` |
+| a single-angle target still prepares | `TestPrepareSingleAngleTargetIsUnaffected` |
+| flats matched on PA, multi-angle flats fine | `TestPrepareFiltersFlatsByAngle` |
 | missing bias/dark/flats are warnings, not errors | `TestPrepareWarnsOnMissing{Bias,Dark,Flats}`, `TestPrepareWithout{Bias,Darks}MastersIsNotAnError` |
 | no verdict means not approved | `TestSessionPlanApproved` |
 | analyze master-name filter limitation | `TestParseFilenameMasterFlat` |

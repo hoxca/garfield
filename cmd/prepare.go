@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -316,7 +317,7 @@ func runPrepare(opts prepareOptions) error {
 
 	targetOut := filepath.Join(opts.output, opts.target)
 
-	sessions, warnings, err := planSessions(lightsRoot, filepath.Join(opts.input, flatsDir))
+	sessions, warnings, err := planSessions(lightsRoot, filepath.Join(opts.input, flatsDir), opts.target)
 	if err != nil {
 		return err
 	}
@@ -637,9 +638,28 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 	return nil
 }
 
+// errMixedAngles marks a session holding frames at more than one position
+// angle. It is a data fault rather than a fault of the run, so planSessions
+// collects every such session and reports them together instead of stopping at
+// the first: one pass then names everything that needs fixing.
+var errMixedAngles = errors.New("mixed angles")
+
 // planSessions walks the Lights target directory and builds a plan per session,
 // pairing each with the flats of the same date, filter and position angle.
-func planSessions(lightsRoot, flatsRoot string) ([]sessionPlan, []string, error) {
+//
+// Two position-angle faults are fatal rather than warnings, because both
+// corrupt the calibration silently if they pass:
+//
+//   - a session carrying more than one angle, meaning the instrument was
+//     rotated mid-session;
+//   - sessions of one target disagreeing, meaning it was rotated between
+//     nights. A target is acquired at a single angle chosen before the run
+//     starts.
+//
+// In the second case each session would still be matched to its own date's
+// flats, so every session would look internally consistent and the report
+// would carry several different angles with nothing explaining why.
+func planSessions(lightsRoot, flatsRoot, target string) ([]sessionPlan, []string, error) {
 	entries, err := os.ReadDir(lightsRoot)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to read %q: %w", lightsRoot, err)
@@ -657,18 +677,66 @@ func planSessions(lightsRoot, flatsRoot string) ([]sessionPlan, []string, error)
 	var (
 		sessions []sessionPlan
 		warnings []string
+		fatal    []string
 	)
 
 	for i, date := range dates {
 		s, warns, err := planSession(filepath.Join(lightsRoot, date), filepath.Join(flatsRoot, date), i+1, date)
 		if err != nil {
+			// A fault in the data is collected and reported with the others; a
+			// directory that could not be read is not, since planning on from
+			// an incomplete view would be worse than stopping.
+			if errors.Is(err, errMixedAngles) {
+				// Unwrapped before collecting, so the batched message does not
+				// repeat the sentinel's own text on every entry.
+				fatal = append(fatal, strings.TrimPrefix(err.Error(), errMixedAngles.Error()+": "))
+				continue
+			}
 			return nil, nil, err
 		}
 		sessions = append(sessions, s)
 		warnings = append(warnings, warns...)
 	}
 
+	if msg := mixedAnglesAcrossSessions(sessions, target); msg != "" {
+		fatal = append(fatal, msg)
+	}
+
+	if len(fatal) > 0 {
+		return nil, nil, fmt.Errorf("%s: %s", errMixedAngles, strings.Join(fatal, "; "))
+	}
+
 	return sessions, warnings, nil
+}
+
+// mixedAnglesAcrossSessions reports a target whose sessions do not all share
+// one position angle, or "" when they do. Returns a message rather than a bare
+// bool because the set of angles is what the operator needs: there is no
+// principled "correct" angle to name, and saying which one is expected would be
+// arbitrary when the target has been rotated more than once.
+//
+// Sessions with no angle at all are left out: an empty pa matches no flat, so
+// they already surface as a missing-flat warning, and treating that as fatal
+// would be a separate change.
+func mixedAnglesAcrossSessions(sessions []sessionPlan, target string) string {
+	seen := map[string]bool{}
+	for _, s := range sessions {
+		if s.pa != "" {
+			seen[s.pa] = true
+		}
+	}
+	if len(seen) < 2 {
+		return ""
+	}
+
+	angles := make([]string, 0, len(seen))
+	for a := range seen {
+		angles = append(angles, a)
+	}
+	sort.Strings(angles)
+
+	return fmt.Sprintf("target %s is acquired at %d different angles (%s), want one",
+		target, len(angles), strings.Join(angles, "/"))
 }
 
 // planSession builds the plan for a single session directory.
@@ -726,12 +794,18 @@ func planSession(sessionDir, flatDir string, number int, date string) (sessionPl
 			angles = append(angles, a)
 		}
 		sort.Strings(angles)
-		s.pa = angles[0]
 		if len(angles) > 1 {
-			warnings = append(warnings, fmt.Sprintf(
-				"session %s (%s): multiple angles %s, flats taken for PA%s",
-				s.sessionDir(), date, strings.Join(angles, "/"), s.pa))
+			// A target is acquired at one angle chosen before the run starts,
+			// so frames at a second angle mean the instrument was rotated
+			// mid-session. Picking the lowest and carrying on would calibrate
+			// part of the night against flats shot for a different angle, and
+			// the report would name only the angle that happened to sort
+			// first. Refuse instead, and leave s.pa unset so no half-built
+			// session escapes with an arbitrary angle recorded.
+			return s, nil, fmt.Errorf("%w: session %s (%s): multiple angles %s",
+				errMixedAngles, s.sessionDir(), date, strings.Join(angles, "/"))
 		}
+		s.pa = angles[0]
 	}
 
 	// Flats are matched on the session date, not the date embedded in the

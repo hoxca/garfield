@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -684,7 +685,7 @@ func TestPrepareDryRunStillAssesses(t *testing.T) {
 	}
 
 	lightsRoot := filepath.Join(root, lightsDir, target)
-	sessions, _, err := planSessions(lightsRoot, filepath.Join(root, flatsDir))
+	sessions, _, err := planSessions(lightsRoot, filepath.Join(root, flatsDir), target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2220,7 +2221,15 @@ func TestPrepareRealTreeShape(t *testing.T) {
 
 // TestPrepareMixedAnglesWarns covers a session whose lights somehow span two
 // parallactic angles, which the acquisition software should prevent.
-func TestPrepareMixedAnglesWarns(t *testing.T) {
+// TestPrepareMixedAnglesIsFatal checks that a session holding two angles stops
+// the run.
+//
+// This used to be a warning that took the lowest angle and carried on, which
+// calibrated part of the night against flats shot for a different angle while
+// the report named only one. A target is acquired at a single angle chosen
+// before the run, so a second angle means the instrument was rotated and the
+// data cannot be trusted.
+func TestPrepareMixedAnglesIsFatal(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 
@@ -2243,21 +2252,233 @@ func TestPrepareMixedAnglesWarns(t *testing.T) {
 	f.build(t, root)
 	out := t.TempDir()
 
+	err := runPrepare(prepareOptionsForTest(target, root, out))
+	if err == nil {
+		t.Fatal("runPrepare succeeded on a mixed-angle session, want a failure")
+	}
+
+	// Both angles named, so the operator can see what the session actually
+	// holds rather than being told one of them was chosen.
+	for _, want := range []string{"multiple angles", "240", "310", "Session_01"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+
+	// Planning happens before anything is written, so the failure leaves no
+	// tree behind: no half-prepared session to mistake for real output.
+	if _, statErr := os.Stat(filepath.Join(out, target)); !os.IsNotExist(statErr) {
+		t.Errorf("output tree exists after a fatal error: %v", statErr)
+	}
+}
+
+// TestPrepareMixedAnglesAcrossSessionsIsFatal covers the case that was
+// silently accepted before any of this: each session internally consistent, but
+// the target rotated between nights. Every session matched its own date's flats,
+// so nothing looked wrong and sessions.csv simply carried two angles.
+func TestPrepareMixedAnglesAcrossSessionsIsFatal(t *testing.T) {
+	const target = "TEST"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {"H": {
+					lightName(target, "H", "20260910", "220000", "000", "310"),
+				}},
+				"2026-09-11": {"H": {
+					lightName(target, "H", "20260911", "220000", "000", "240"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": {flatName("H", "41.4", "20260910", "070000", "000", "310")},
+			"2026-09-11": {flatName("H", "41.5", "20260911", "070000", "000", "240")},
+		},
+	}
+	f.build(t, root)
+	out := t.TempDir()
+
+	err := runPrepare(prepareOptionsForTest(target, root, out))
+	if err == nil {
+		t.Fatal("runPrepare succeeded on a target acquired at two angles, want a failure")
+	}
+
+	// The whole set is reported, not one "expected" angle: with the target
+	// rotated more than once there is no principled choice to name.
+	for _, want := range []string{"TEST", "2 different angles", "240/310"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(out, target)); !os.IsNotExist(statErr) {
+		t.Errorf("output tree exists after a fatal error: %v", statErr)
+	}
+}
+
+// TestPrepareReportsEveryMixedAngleAtOnce checks the failures batch rather than
+// stopping at the first, so one run names everything that needs fixing instead
+// of demanding a fix-and-rerun per session.
+func TestPrepareReportsEveryMixedAngleAtOnce(t *testing.T) {
+	const target = "TEST"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				// Mixed within the session.
+				"2026-09-10": {"H": {
+					lightName(target, "H", "20260910", "220000", "000", "310"),
+					lightName(target, "H", "20260910", "230000", "000", "240"),
+				}},
+				// Clean, and at an angle of its own, so it survives planning
+				// while disagreeing with the target's other sessions.
+				"2026-09-11": {"H": {
+					lightName(target, "H", "20260911", "220000", "000", "90"),
+				}},
+				// Also mixed within the session.
+				"2026-09-12": {"H": {
+					lightName(target, "H", "20260912", "220000", "000", "310"),
+					lightName(target, "H", "20260912", "230000", "000", "180"),
+				}},
+				// Mixed, at a third angle, so the batching assertion below needs
+				// no cross-session check: three offenders must all be named.
+				"2026-09-13": {"H": {
+					lightName(target, "H", "20260913", "220000", "000", "90"),
+					lightName(target, "H", "20260913", "230000", "000", "180"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": {flatName("H", "41.4", "20260910", "070000", "000", "310")},
+			"2026-09-11": {flatName("H", "41.5", "20260911", "070000", "000", "90")},
+			"2026-09-12": {flatName("H", "41.6", "20260912", "070000", "000", "310")},
+			"2026-09-13": {flatName("H", "41.7", "20260913", "070000", "000", "90")},
+			"2026-09-14": {flatName("H", "41.8", "20260914", "070000", "000", "90")},
+		},
+	}
+	f.build(t, root)
+	out := t.TempDir()
+
+	err := runPrepare(prepareOptionsForTest(target, root, out))
+	if err == nil {
+		t.Fatal("runPrepare succeeded on a rotated target with mixed sessions, want a failure")
+	}
+
+	// Three mixed sessions, all named in one error. The cross-session
+	// disagreement does not fire here: every session that survived planning
+	// shares PA90, so only the within-session faults are reported.
+	msg := err.Error()
+	for _, want := range []string{"Session_01", "Session_03", "Session_04"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q does not mention %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "different angles") {
+		t.Errorf("error %q reports a cross-session rotation that did not occur: %q", msg, msg)
+	}
+}
+
+// TestPrepareSingleAngleTargetIsUnaffected guards the other side: a target
+// acquired at one angle throughout must still plan and copy as before.
+func TestPrepareSingleAngleTargetIsUnaffected(t *testing.T) {
+	const target = "TEST"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {"H": {
+					lightName(target, "H", "20260910", "220000", "000", "310"),
+					lightName(target, "H", "20260910", "230000", "000", "310"),
+				}},
+				"2026-09-11": {"R": {
+					lightName(target, "R", "20260911", "220000", "000", "310"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": {flatName("H", "41.4", "20260910", "070000", "000", "310")},
+			"2026-09-11": {flatName("R", "41.5", "20260911", "070000", "000", "310")},
+		},
+	}
+	f.build(t, root)
+	out := t.TempDir()
+
 	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
 		t.Fatalf("runPrepare: %v", err)
 	}
 
-	// The lowest angle wins deterministically and is what gets recorded.
 	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
-	if recs[1][2] != "PA240" {
-		t.Errorf("pa = %q, want PA240 (lowest angle, deterministically)", recs[1][2])
+	if len(recs) != 3 {
+		t.Fatalf("got %d rows, want header plus two sessions", len(recs))
 	}
-	files, err := os.ReadDir(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats", "H"))
-	if err != nil {
-		t.Fatal(err)
+	for _, row := range recs[1:] {
+		if row[2] != "PA310" {
+			t.Errorf("%s pa = %q, want PA310", row[0], row[2])
+		}
 	}
-	if len(files) != 1 || !strings.Contains(files[0].Name(), "PA240") {
-		t.Errorf("flats = %v, want the single PA240 frame", namesOf(files))
+}
+
+// TestMixedAnglesAcrossSessions covers the predicate on its own, including the
+// cases that must not be mistaken for a rotation: a target with one angle, and
+// sessions carrying no angle at all.
+func TestMixedAnglesAcrossSessions(t *testing.T) {
+	tests := []struct {
+		name     string
+		sessions []sessionPlan
+		want     bool
+	}{
+		{"no sessions", nil, false},
+		{"one angle", []sessionPlan{{pa: "310"}}, false},
+		{"two sessions one angle", []sessionPlan{{pa: "310"}, {pa: "310"}}, false},
+		{"sessions without an angle", []sessionPlan{{pa: ""}, {pa: ""}}, false},
+		{"mixed present and absent", []sessionPlan{{pa: "310"}, {pa: ""}}, false},
+		{"two angles", []sessionPlan{{pa: "310"}, {pa: "240"}}, true},
+		{"three angles", []sessionPlan{{pa: "310"}, {pa: "240"}, {pa: "90"}}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mixedAnglesAcrossSessions(tc.sessions, "TGT") != ""
+			if got != tc.want {
+				t.Errorf("mixedAnglesAcrossSessions = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPlanSessionLeavesAngleUnsetOnMixedAngles pins that the failing session
+// carries no position angle. A half-built session with an arbitrary angle
+// recorded is worse than none: it looks like a usable plan.
+func TestPlanSessionLeavesAngleUnsetOnMixedAngles(t *testing.T) {
+	const target = "TEST"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {"H": {
+					lightName(target, "H", "20260910", "220000", "000", "310"),
+					lightName(target, "H", "20260910", "230000", "000", "240"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": {flatName("H", "41.4", "20260910", "070000", "000", "310")},
+		},
+	}
+	f.build(t, root)
+
+	s, _, err := planSession(filepath.Join(root, lightsDir, target, "2026-09-10"),
+		filepath.Join(root, flatsDir, "2026-09-10"), 1, "2026-09-10")
+	if err == nil {
+		t.Fatal("planSession succeeded on a mixed-angle session, want a failure")
+	}
+	if !errors.Is(err, errMixedAngles) {
+		t.Errorf("error %v does not wrap errMixedAngles", err)
+	}
+	if s.pa != "" {
+		t.Errorf("pa = %q, want empty on the failure path", s.pa)
 	}
 }
 
