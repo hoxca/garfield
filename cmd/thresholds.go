@@ -33,19 +33,19 @@ var defaultThresholds = qualityThresholds{
 // names and help text here as well as the values means the two commands present
 // an identical interface.
 func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
-	fs.Float64Var(&dst.minSNR, "min-snr", defaultThresholds.minSNR, "SNR minimal pour APPROUVÉE")
-	fs.Float64Var(&dst.maxFWHM, "max-fwhm", defaultThresholds.maxFWHM, "FWHM maximale pour APPROUVÉE")
-	fs.Float64Var(&dst.maxEcc, "max-ecc", defaultThresholds.maxEcc, "excentricité maximale pour APPROUVÉE")
-	fs.Float64Var(&dst.minScore, "min-score", defaultThresholds.minScore, "score minimal pour APPROUVÉE")
-	fs.IntVar(&dst.minStars, "min-stars", defaultThresholds.minStars, "nombre minimum d'étoiles détectées pour APPROUVÉE")
+	fs.Float64Var(&dst.minSNR, "min-snr", defaultThresholds.minSNR, "minimum SNR for APPROVED")
+	fs.Float64Var(&dst.maxFWHM, "max-fwhm", defaultThresholds.maxFWHM, "maximum FWHM for APPROVED")
+	fs.Float64Var(&dst.maxEcc, "max-ecc", defaultThresholds.maxEcc, "maximum eccentricity for APPROVED")
+	fs.Float64Var(&dst.minScore, "min-score", defaultThresholds.minScore, "minimum score for APPROVED")
+	fs.IntVar(&dst.minStars, "min-stars", defaultThresholds.minStars, "minimum number of detected stars for APPROVED")
 }
 
 // registerWorkerFlags binds the parallelism knobs, which both commands expose
 // with identical meaning: workers drives the outer per-frame pool and
 // convWorkers the inner convolution. Both default to 0, meaning auto.
 func registerWorkerFlags(fs *pflag.FlagSet, workers, convWorkers *int) {
-	fs.IntVarP(workers, "workers", "w", 0, "workers de traitement (0 = auto : NumCPU/2)")
-	fs.IntVar(convWorkers, "conv-workers", 0, "workers de convolution internes (0 = auto)")
+	fs.IntVarP(workers, "workers", "w", 0, "processing workers (0 = auto: NumCPU/2)")
+	fs.IntVar(convWorkers, "conv-workers", 0, "inner convolution workers (0 = auto)")
 }
 
 // analyze builds the analyzeOptions carrying these thresholds, for prepare to

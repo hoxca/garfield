@@ -158,25 +158,24 @@ var prepareOpts = prepareOptions{}
 
 var prepareCmd = &cobra.Command{
 	Use:   "prepare",
-	Short: "Prépare les sessions d'une cible pour le traitement",
-	Long: `Copie et réorganise les images d'une cible astronomerique
-depuis l'arborescence d'acquisition vers une arborescence de
-travail :
+	Short: "Prepare a target's sessions for processing",
+	Long: `Copies and reorganises the images of an astronomical target
+from the acquisition tree into a working tree:
 
-  <sortie>/<cible>/Sessions/Session_NN/lights/<filtre>/*.FIT
-  <sortie>/<cible>/Sessions/Session_NN/flats/<filtre>/*.FIT
-  <sortie>/<cible>/rejected/Session_NN/<filtre>/*.FIT
+  <out>/<target>/Sessions/Session_NN/lights/<filter>/*.FIT
+  <out>/<target>/Sessions/Session_NN/flats/<filter>/*.FIT
+  <out>/<target>/rejected/Session_NN/<filter>/*.FIT
 
-Une session correspond à un dossier de date dans Lights/<cible>.
-Les numéros de session suivent l'ordre chronologique des dates.
-Les flats sont sélectionnés par filtre et par position angle
-(PA), sur la date de la session.
+A session is a date directory under Lights/<target>.
+Session numbers follow the chronological order of the dates.
+Flats are selected by filter and by position angle
+(PA), on the session date.
 
-Chaque image est analysée avant copie : seules les images APPROUVÉE
-sont placées dans lights/, les autres dans rejected/. Les seuils de
-qualité sont ceux de la commande analyze.
+Every image is analysed before copying: only APPROVED images
+go into lights/, the rest into rejected/. The quality
+thresholds are those of the analyze command.
 
-Exemple :
+Example:
   garfield prepare --target LBN527
   garfield prepare -t LBN527 -i /Volumes/Dyno/Kosmodrom -o /Volumes/T7/Workspace
   garfield prepare -t M51 --dry-run`,
@@ -187,12 +186,12 @@ Exemple :
 }
 
 func init() {
-	prepareCmd.Flags().StringVarP(&prepareOpts.target, "target", "t", "", "cible astronomique (dossier dans Lights/)")
-	prepareCmd.Flags().StringVarP(&prepareOpts.input, "input", "i", defaultPrepareInput, "racine des données d'acquisition")
-	prepareCmd.Flags().StringVarP(&prepareOpts.output, "output", "o", defaultPrepareOutput, "racine de destination")
-	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "affiche le plan sans copier")
-	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "ne remplace pas les fichiers existants")
-	prepareCmd.Flags().BoolVar(&prepareOpts.quiet, "quiet", false, "évite la sortie console")
+	prepareCmd.Flags().StringVarP(&prepareOpts.target, "target", "t", "", "astronomical target (directory under Lights/)")
+	prepareCmd.Flags().StringVarP(&prepareOpts.input, "input", "i", defaultPrepareInput, "root of the acquisition data")
+	prepareCmd.Flags().StringVarP(&prepareOpts.output, "output", "o", defaultPrepareOutput, "destination root")
+	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "show the plan without copying")
+	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "do not overwrite existing files")
+	prepareCmd.Flags().BoolVar(&prepareOpts.quiet, "quiet", false, "suppress console output")
 
 	registerQualityFlags(prepareCmd.Flags(), &prepareOpts.qualityThresholds)
 
@@ -265,25 +264,25 @@ func (s sessionPlan) filterNames() []string {
 
 func runPrepare(opts prepareOptions) error {
 	if opts.target == "" {
-		return fmt.Errorf("--target est requis")
+		return fmt.Errorf("--target is required")
 	}
 	if opts.input == "" {
-		return fmt.Errorf("--input ne peut pas être vide")
+		return fmt.Errorf("--input cannot be empty")
 	}
 	if opts.output == "" {
-		return fmt.Errorf("--output ne peut pas être vide")
+		return fmt.Errorf("--output cannot be empty")
 	}
 
 	lightsRoot := filepath.Join(opts.input, lightsDir, opts.target)
 	info, err := os.Stat(lightsRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("cible %q introuvable dans %q", opts.target, filepath.Join(opts.input, lightsDir))
+			return fmt.Errorf("target %q not found in %q", opts.target, filepath.Join(opts.input, lightsDir))
 		}
-		return fmt.Errorf("impossible d'accéder à %q : %w", lightsRoot, err)
+		return fmt.Errorf("unable to access %q: %w", lightsRoot, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("%q n'est pas un dossier", lightsRoot)
+		return fmt.Errorf("%q is not a directory", lightsRoot)
 	}
 
 	targetOut := filepath.Join(opts.output, opts.target)
@@ -293,7 +292,7 @@ func runPrepare(opts prepareOptions) error {
 		return err
 	}
 	if len(sessions) == 0 {
-		return fmt.Errorf("aucune session (dossier YYYY-MM-DD) trouvée dans %q", lightsRoot)
+		return fmt.Errorf("no session (YYYY-MM-DD directory) found in %q", lightsRoot)
 	}
 
 	// Indexed once for the whole target: the masters are shared by every
@@ -322,10 +321,10 @@ func runPrepare(opts prepareOptions) error {
 	}
 
 	if !opts.quiet {
-		fmt.Printf("\n%s de %q (%d session(s)) vers %q%s\n\n",
+		fmt.Printf("\n%s of %q (%d session(s)) into %q%s\n\n",
 			prepareVerb(opts.dryRun), opts.target, len(sessions), targetOut, dryRunSuffix(opts.dryRun))
 		if !opts.dryRun {
-			fmt.Printf("Analyse de la qualité de %d image(s), cela peut prendre plusieurs minutes...\n\n",
+			fmt.Printf("Analysing the quality of %d image(s), this can take several minutes...\n\n",
 				totalLightCount(sessions))
 		}
 	}
@@ -342,10 +341,10 @@ func runPrepare(opts prepareOptions) error {
 
 	if !opts.dryRun {
 		if err := os.MkdirAll(targetOut, 0o755); err != nil {
-			return fmt.Errorf("impossible de créer %q : %w", targetOut, err)
+			return fmt.Errorf("unable to create %q: %w", targetOut, err)
 		}
 		if err := os.MkdirAll(filepath.Join(targetOut, metricsDir), 0o755); err != nil {
-			return fmt.Errorf("impossible de créer %q : %w", filepath.Join(targetOut, metricsDir), err)
+			return fmt.Errorf("unable to create %q: %w", filepath.Join(targetOut, metricsDir), err)
 		}
 	}
 
@@ -363,20 +362,20 @@ func runPrepare(opts prepareOptions) error {
 			if s.pa != "" {
 				detail += fmt.Sprintf(" PA%s", s.pa)
 			}
-			detail += fmt.Sprintf(" : %d approuvé(s), %d rejeté(s) [%s]",
+			detail += fmt.Sprintf(": %d approved, %d rejected [%s]",
 				s.approvedCount, s.rejectedCount, strings.Join(s.filterNames(), " "))
 			if copiedFlats > 0 {
 				detail += fmt.Sprintf(", %d flat(s)", copiedFlats)
 			} else if len(s.missingFlats) > 0 {
-				detail += fmt.Sprintf(", aucun flat pour [%s]", strings.Join(s.missingFlats, " "))
+				detail += fmt.Sprintf(", no flat for [%s]", strings.Join(s.missingFlats, " "))
 			}
 			if opts.dryRun {
-				detail = "(simulation) " + detail
+				detail = "(dry run) " + detail
 			}
 			fmt.Println("  " + detail)
 
 			if reason := s.dominantRejectReason(); reason != "" {
-				fmt.Printf("      motif de rejet : %s\n", reason)
+				fmt.Printf("      reject reason: %s\n", reason)
 			}
 		}
 	}
@@ -399,7 +398,7 @@ func runPrepare(opts prepareOptions) error {
 	warnings = append(warnings, darkWarnings...)
 
 	for _, w := range warnings {
-		fmt.Fprintf(os.Stderr, "  avertissement : %s\n", w)
+		fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
 	}
 
 	approved, rejected := 0, 0
@@ -409,22 +408,22 @@ func runPrepare(opts prepareOptions) error {
 	}
 
 	if !opts.quiet {
-		fmt.Printf("\n%s : %d session(s), %d image(s) approuvée(s), %d rejetée(s), %d flat(s), %d master bias, %d master dark.\n",
+		fmt.Printf("\n%s: %d session(s), %d approved image(s), %d rejected image(s), %d flat(s), %d master bias, %d master dark.\n",
 			finishVerb(opts.dryRun), len(sessions), approved, rejected, totalFlats, totalBias, totalDarks)
 		if rejected > 0 && !opts.dryRun {
-			fmt.Printf("Images rejetées sous %q.\n", filepath.Join(targetOut, rejectedDir))
+			fmt.Printf("Rejected images under %q.\n", filepath.Join(targetOut, rejectedDir))
 		}
 		if totalBias > 0 {
-			fmt.Printf("Master bias sous %q.\n",
+			fmt.Printf("Master bias under %q.\n",
 				filepath.Join(sessionOutDir(targetOut, ""), biasOutDir))
 		}
 		if totalDarks > 0 {
-			fmt.Printf("Master dark sous %q.\n",
+			fmt.Printf("Master dark under %q.\n",
 				filepath.Join(sessionOutDir(targetOut, ""), darksOutDir))
 		}
 		if !opts.dryRun {
-			fmt.Printf("Index écrit dans %q.\n", metricsPath(targetOut, sessionsCSVName))
-			fmt.Printf("Métriques par image écrites dans %q.\n", metricsPath(targetOut, framesCSVName))
+			fmt.Printf("Index written to %q.\n", metricsPath(targetOut, sessionsCSVName))
+			fmt.Printf("Per-image metrics written to %q.\n", metricsPath(targetOut, framesCSVName))
 		}
 	}
 
@@ -439,23 +438,23 @@ func runPrepare(opts prepareOptions) error {
 
 func dryRunSuffix(dry bool) string {
 	if dry {
-		return " [simulation]"
+		return " [dry run]"
 	}
 	return ""
 }
 
 func finishVerb(dry bool) string {
 	if dry {
-		return "Simulation terminée"
+		return "Dry run finished"
 	}
-	return "Préparation terminée"
+	return "Preparation finished"
 }
 
 func prepareVerb(dry bool) string {
 	if dry {
-		return "Simulation"
+		return "Dry run"
 	}
-	return "Préparation"
+	return "Preparation"
 }
 
 // totalLightCount sums the light frames across every session.
@@ -614,7 +613,7 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 func planSessions(lightsRoot, flatsRoot string) ([]sessionPlan, []string, error) {
 	entries, err := os.ReadDir(lightsRoot)
 	if err != nil {
-		return nil, nil, fmt.Errorf("impossible de lire %q : %w", lightsRoot, err)
+		return nil, nil, fmt.Errorf("unable to read %q: %w", lightsRoot, err)
 	}
 
 	var dates []string
@@ -701,7 +700,7 @@ func planSession(sessionDir, flatDir string, number int, date string) (sessionPl
 		s.pa = angles[0]
 		if len(angles) > 1 {
 			warnings = append(warnings, fmt.Sprintf(
-				"session %s (%s) : angles multiples %s, flats pris pour PA%s",
+				"session %s (%s): multiple angles %s, flats taken for PA%s",
 				s.sessionDir(), date, strings.Join(angles, "/"), s.pa))
 		}
 	}
@@ -717,7 +716,7 @@ func planSession(sessionDir, flatDir string, number int, date string) (sessionPl
 		if len(matched) == 0 {
 			s.missingFlats = append(s.missingFlats, filter)
 			warnings = append(warnings, fmt.Sprintf(
-				"session %s (%s) : aucun flat pour le filtre %s (PA%s) dans %q",
+				"session %s (%s): no flat for filter %s (PA%s) in %q",
 				s.sessionDir(), date, filter, s.pa, flatDir))
 			continue
 		}
@@ -750,7 +749,7 @@ func formatFrameDate(v string) string {
 func filterSubdirs(sessionDir string) ([]string, error) {
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
-		return nil, fmt.Errorf("impossible de lire %q : %w", sessionDir, err)
+		return nil, fmt.Errorf("unable to read %q: %w", sessionDir, err)
 	}
 	var names []string
 	for _, e := range entries {
@@ -813,7 +812,7 @@ func isFITSName(name string) bool {
 func listFITS(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("impossible de lire %q : %w", dir, err)
+		return nil, fmt.Errorf("unable to read %q: %w", dir, err)
 	}
 	var names []string
 	for _, e := range entries {
@@ -846,7 +845,7 @@ func prepareSession(s sessionPlan, targetOut string, opts prepareOptions) (int, 
 			}
 			if !opts.dryRun {
 				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-					return lights, flats, fmt.Errorf("impossible de créer %q : %w", filepath.Dir(dst), err)
+					return lights, flats, fmt.Errorf("unable to create %q: %w", filepath.Dir(dst), err)
 				}
 			}
 			n, err := copyFITS(filepath.Join(srcDir, name), dst, opts)
@@ -870,7 +869,7 @@ func prepareSession(s sessionPlan, targetOut string, opts prepareOptions) (int, 
 			dst := filepath.Join(flatRoot, filter, name)
 			if !opts.dryRun {
 				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-					return lights, flats, fmt.Errorf("impossible de créer %q : %w", filepath.Dir(dst), err)
+					return lights, flats, fmt.Errorf("unable to create %q: %w", filepath.Dir(dst), err)
 				}
 			}
 			n, err := copyFITS(filepath.Join(srcDir, name), dst, opts)
@@ -909,7 +908,7 @@ type biasMaster struct {
 func indexBiasMasters(dir string) (map[string]biasMaster, []string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("impossible de lire %q : %w", dir, err)
+		return nil, nil, fmt.Errorf("unable to read %q: %w", dir, err)
 	}
 
 	names := make([]string, 0, len(entries))
@@ -930,7 +929,7 @@ func indexBiasMasters(dir string) (map[string]biasMaster, []string, error) {
 		m := gainRe.FindStringSubmatch(name)
 		if m == nil {
 			warnings = append(warnings, fmt.Sprintf(
-				"%s : %q ignoré, aucun réglage de gain dans le nom", dir, name))
+				"%s: %q ignored, no gain setting in the name", dir, name))
 			continue
 		}
 		gain := m[1]
@@ -983,7 +982,7 @@ func targetGains(sessions []sessionPlan) []string {
 // gainList renders a gain set for a message, or a placeholder when empty.
 func gainList(gains []string) string {
 	if len(gains) == 0 {
-		return "aucun"
+		return "none"
 	}
 	return strings.Join(gains, " ")
 }
@@ -1016,7 +1015,7 @@ func prepareBias(targetOut string, gains []string, masters map[string]biasMaster
 			// because a session without its master is still usable data and the
 			// reduction can supply the bias later.
 			warnings = append(warnings, fmt.Sprintf(
-				"aucun master bias pour le gain %s dans %q (disponibles : %s)",
+				"no master bias for gain %s in %q (available: %s)",
 				gain, filepath.Join(opts.input, biasDir, biasMastersDir), gainList(present)))
 			continue
 		}
@@ -1024,7 +1023,7 @@ func prepareBias(targetOut string, gains []string, masters map[string]biasMaster
 		dst := filepath.Join(dstRoot, master.name)
 		if !opts.dryRun {
 			if err := os.MkdirAll(dstRoot, 0o755); err != nil {
-				return copied, warnings, fmt.Errorf("impossible de créer %q : %w", dstRoot, err)
+				return copied, warnings, fmt.Errorf("unable to create %q: %w", dstRoot, err)
 			}
 		}
 		n, err := copyFITS(master.src, dst, opts)
@@ -1040,7 +1039,7 @@ func prepareBias(targetOut string, gains []string, masters map[string]biasMaster
 	if !opts.quiet && len(gains) > 0 {
 		verb := prepareVerb(opts.dryRun)
 		if copied == 0 {
-			fmt.Printf("  %s : aucun master bias (%s)\n", verb, gainList(gains))
+			fmt.Printf("  %s: no master bias (%s)\n", verb, gainList(gains))
 		} else {
 			fmt.Printf("  %s : %d master bias pour le gain %s\n", verb, copied, gainList(done))
 		}
@@ -1080,7 +1079,7 @@ type darkMaster struct {
 func indexDarkMasters(root string) (map[darkKey]darkMaster, []string, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil, nil, fmt.Errorf("impossible de lire %q : %w", root, err)
+		return nil, nil, fmt.Errorf("unable to read %q: %w", root, err)
 	}
 
 	var names []string
@@ -1091,7 +1090,7 @@ func indexDarkMasters(root string) (map[darkKey]darkMaster, []string, error) {
 			// One level of per-gain subdirectories, then the files.
 			sub, err := os.ReadDir(path)
 			if err != nil {
-				return nil, nil, fmt.Errorf("impossible de lire %q : %w", path, err)
+				return nil, nil, fmt.Errorf("unable to read %q: %w", path, err)
 			}
 			for _, se := range sub {
 				if se.IsDir() {
@@ -1117,7 +1116,7 @@ func indexDarkMasters(root string) (map[darkKey]darkMaster, []string, error) {
 		m := darkComboRe.FindStringSubmatch(base)
 		if m == nil {
 			warnings = append(warnings, fmt.Sprintf(
-				"%s : %q ignoré, aucune paire exposition/gain dans le nom", root, base))
+				"%s: %q ignored, no exposure/gain pair in the name", root, base))
 			continue
 		}
 		exposure, _ := strconv.Atoi(m[1])
@@ -1191,7 +1190,7 @@ func preferLater(heldDate, candidateDate string) bool {
 // resolves, because a duplicate master is an anomaly worth surfacing even when
 // the choice between them is unambiguous.
 func collisionWarning(dir, key, held, candidate, kept string) string {
-	return fmt.Sprintf("%s : deux masters pour %s (%s et %s), %s retenu",
+	return fmt.Sprintf("%s: two masters for %s (%s and %s), retaining %s",
 		dir, key, held, candidate, kept)
 }
 
@@ -1200,7 +1199,7 @@ func collisionWarning(dir, key, held, candidate, kept string) string {
 // "retained" would imply it had. What is kept is only the first in sorted order.
 func tieWarning(dir, key, held, candidate string) string {
 	return fmt.Sprintf(
-		"%s : deux masters pour %s à la même date (%s et %s), date insuffisante pour trancher, %s conservé par ordre de nom",
+		"%s: two masters for %s at the same date (%s and %s), date insufficient to decide, kept %s by name order",
 		dir, key, held, candidate, held)
 }
 
@@ -1302,7 +1301,7 @@ func prepareDarks(targetOut string, keys []darkKey, need map[darkKey][]string,
 			// continues, because the frames are still usable data and the dark
 			// can be shot or supplied later.
 			warnings = append(warnings, fmt.Sprintf(
-				"aucun master dark pour %s dans %q (disponibles : %s), sessions concernées : %s",
+				"no master dark for %s in %q (available: %s), affected sessions: %s",
 				key, filepath.Join(opts.input, darksDir, darksMastersDir),
 				strings.Join(present, " "), strings.Join(need[key], " ")))
 			continue
@@ -1311,7 +1310,7 @@ func prepareDarks(targetOut string, keys []darkKey, need map[darkKey][]string,
 		dst := filepath.Join(dstRoot, master.name)
 		if !opts.dryRun {
 			if err := os.MkdirAll(dstRoot, 0o755); err != nil {
-				return copied, warnings, fmt.Errorf("impossible de créer %q : %w", dstRoot, err)
+				return copied, warnings, fmt.Errorf("unable to create %q: %w", dstRoot, err)
 			}
 		}
 		n, err := copyFITS(master.src, dst, opts)
@@ -1327,7 +1326,7 @@ func prepareDarks(targetOut string, keys []darkKey, need map[darkKey][]string,
 	if !opts.quiet && len(keys) > 0 {
 		verb := prepareVerb(opts.dryRun)
 		if copied == 0 {
-			fmt.Printf("  %s : aucun master dark (%s)\n", verb, strings.Join(done, " "))
+			fmt.Printf("  %s: no master dark (%s)\n", verb, strings.Join(done, " "))
 		} else {
 			fmt.Printf("  %s : %d master dark pour %s\n", verb, copied, strings.Join(done, " "))
 		}
@@ -1351,22 +1350,22 @@ func copyFITS(src, dst string, opts prepareOptions) (bool, error) {
 
 	in, err := os.Open(src)
 	if err != nil {
-		return false, fmt.Errorf("impossible d'ouvrir %q : %w", src, err)
+		return false, fmt.Errorf("unable to open %q: %w", src, err)
 	}
 	defer in.Close()
 
 	out, err := os.Create(dst)
 	if err != nil {
-		return false, fmt.Errorf("impossible de créer %q : %w", dst, err)
+		return false, fmt.Errorf("unable to create %q: %w", dst, err)
 	}
 
 	buf := make([]byte, copyBufferSize)
 	if _, err := io.CopyBuffer(out, in, buf); err != nil {
 		out.Close()
-		return false, fmt.Errorf("échec de la copie %q -> %q : %w", src, dst, err)
+		return false, fmt.Errorf("copy failed %q -> %q: %w", src, dst, err)
 	}
 	if err := out.Close(); err != nil {
-		return false, fmt.Errorf("fermeture de %q : %w", dst, err)
+		return false, fmt.Errorf("closing %q: %w", dst, err)
 	}
 	return true, nil
 }
@@ -1393,13 +1392,13 @@ func writeFramesCSV(targetOut string, sessions []sessionPlan) error {
 	path := metricsPath(targetOut, framesCSVName)
 	f, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("impossible de créer %q : %w", path, err)
+		return fmt.Errorf("unable to create %q: %w", path, err)
 	}
 	defer f.Close()
 
 	w := newCSVWriter(f)
 	if err := w.Write(framesCSVHeader); err != nil {
-		return fmt.Errorf("écriture CSV : %w", err)
+		return fmt.Errorf("writing CSV: %w", err)
 	}
 
 	// imageResultRow is ordered as imageResultHeader: filename, filter, date,
@@ -1436,7 +1435,7 @@ func writeFramesCSV(targetOut string, sessions []sessionPlan) error {
 						len(row), len(framesCSVHeader))
 				}
 				if err := w.Write(row); err != nil {
-					return fmt.Errorf("écriture CSV : %w", err)
+					return fmt.Errorf("writing CSV: %w", err)
 				}
 			}
 		}
@@ -1444,7 +1443,7 @@ func writeFramesCSV(targetOut string, sessions []sessionPlan) error {
 
 	w.Flush()
 	if err := w.Error(); err != nil {
-		return fmt.Errorf("écriture CSV : %w", err)
+		return fmt.Errorf("writing CSV: %w", err)
 	}
 	return nil
 }
@@ -1455,7 +1454,7 @@ func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 	path := metricsPath(targetOut, sessionsCSVName)
 	f, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("impossible de créer %q : %w", path, err)
+		return fmt.Errorf("unable to create %q: %w", path, err)
 	}
 	defer f.Close()
 
@@ -1470,7 +1469,7 @@ func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 		"frameDateMin", "frameDateMax", "gains", "darks",
 	}
 	if err := w.Write(header); err != nil {
-		return fmt.Errorf("écriture CSV : %w", err)
+		return fmt.Errorf("writing CSV: %w", err)
 	}
 
 	for _, s := range sessions {
@@ -1496,13 +1495,13 @@ func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 			strings.Join(darks, " "),
 		}
 		if err := w.Write(row); err != nil {
-			return fmt.Errorf("écriture CSV : %w", err)
+			return fmt.Errorf("writing CSV: %w", err)
 		}
 	}
 
 	w.Flush()
 	if err := w.Error(); err != nil {
-		return fmt.Errorf("écriture CSV : %w", err)
+		return fmt.Errorf("writing CSV: %w", err)
 	}
 	return nil
 }

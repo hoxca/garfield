@@ -691,7 +691,7 @@ func TestRunAnalyzeReportsTruncation(t *testing.T) {
 			t.Errorf("runAnalyze: %v", err)
 		}
 	})
-	if strings.Contains(quiet, "limitée") {
+	if strings.Contains(quiet, "capped") {
 		t.Errorf("stderr %q announces a limit although the whole tree was searched", quiet)
 	}
 
@@ -713,7 +713,7 @@ func TestRunAnalyzeReportsTruncation(t *testing.T) {
 			t.Errorf("runAnalyze: %v", err)
 		}
 	})
-	if !strings.Contains(noted, "limitée") || !strings.Contains(noted, "2 niveaux") {
+	if !strings.Contains(noted, "capped") || !strings.Contains(noted, "2 levels") {
 		t.Errorf("stderr %q does not announce the depth limit", noted)
 	}
 	// And the frame beyond the cap is genuinely absent from the report.
@@ -895,7 +895,7 @@ func TestRunAnalyzeWarnsOnDuplicateBasenames(t *testing.T) {
 	if !strings.Contains(stderr, "same.FIT") {
 		t.Errorf("stderr %q does not name the colliding frame", stderr)
 	}
-	if !strings.Contains(stderr, "avertissement") {
+	if !strings.Contains(stderr, "warning") {
 		t.Errorf("stderr %q is not flagged as a warning", stderr)
 	}
 	// Only the collision is worth mentioning.
@@ -936,7 +936,7 @@ func TestRunAnalyzeFlatScanDoesNotWarnAboutDuplicates(t *testing.T) {
 			t.Error("flat scan succeeded on a tree with no top-level frame, want an error")
 		}
 	})
-	if strings.Contains(flat, "same.FIT") || strings.Contains(flat, "sous-dossiers différents") {
+	if strings.Contains(flat, "same.FIT") || strings.Contains(flat, "different subdirectories") {
 		t.Errorf("flat scan reported a collision %q, want only the -r hint", flat)
 	}
 
@@ -1163,7 +1163,7 @@ func TestRunAnalyzeFormats(t *testing.T) {
 			}
 		})
 
-		for _, want := range []string{"Traitement de 1 fichier", "a.FIT", "Terminé"} {
+		for _, want := range []string{"Processing 1 FITS file", "a.FIT", "Done"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("console output missing %q:\n%s", want, out)
 			}
@@ -1237,10 +1237,10 @@ func TestRunAnalyzeFormats(t *testing.T) {
 				t.Errorf("runAnalyze: %v", err)
 			}
 		})
-		if !strings.Contains(stdout, "Terminé") {
+		if !strings.Contains(stdout, "Done") {
 			t.Errorf("format=both did not print console output:\n%s", stdout)
 		}
-		if !strings.Contains(stdout, "Résultats CSV écrits") {
+		if !strings.Contains(stdout, "CSV results written") {
 			t.Errorf("format=both did not report the CSV write:\n%s", stdout)
 		}
 
@@ -1279,19 +1279,19 @@ func TestRunAnalyzeErrors(t *testing.T) {
 			name: "invalid format",
 			dir:  dir,
 			opts: func(o *analyzeOptions) { o.format = "json" },
-			want: `format invalide "json"`,
+			want: `invalid format "json"`,
 		},
 		{
 			name: "both without output",
 			dir:  dir,
 			opts: func(o *analyzeOptions) { o.format = "both"; o.output = "" },
-			want: "--output est requis avec --format both",
+			want: "--output is required with --format both",
 		},
 		{
 			name: "missing directory",
 			dir:  filepath.Join(dir, "absent"),
 			opts: func(*analyzeOptions) {},
-			want: "impossible de lire le dossier",
+			want: "unable to read directory",
 		},
 		{
 			name: "no FITS files",
@@ -1300,7 +1300,7 @@ func TestRunAnalyzeErrors(t *testing.T) {
 			// The flat scan is where someone pointed at the wrong level of a
 			// tree, so the message names the flag rather than only reporting an
 			// empty directory.
-			want: "utilisez -r",
+			want: "use -r",
 		},
 		{
 			name: "no FITS files, recursive",
@@ -1309,7 +1309,7 @@ func TestRunAnalyzeErrors(t *testing.T) {
 			// The message must state how deep the search actually went. Saying
 			// "nor its subdirectories" would be false under a depth cap, since
 			// frames can sit below what was searched.
-			want: "dans les 2 niveaux de sous-dossiers",
+			want: "within 2 subdirectory levels",
 		},
 	}
 
@@ -1337,7 +1337,7 @@ func TestRunAnalyzeErrors(t *testing.T) {
 		o := defaultOpts()
 		o.quiet = true
 		err := runAnalyze(nonFits, o)
-		if err == nil || !strings.Contains(err.Error(), "aucun fichier FITS trouvé") {
+		if err == nil || !strings.Contains(err.Error(), "no FITS file found") {
 			t.Errorf("error = %v, want the no-FITS-files error", err)
 		}
 	})
@@ -1355,7 +1355,7 @@ func TestRunAnalyzeErrors(t *testing.T) {
 		o.quiet = true
 
 		err := runAnalyze(frameDir, o)
-		if err == nil || !strings.Contains(err.Error(), "impossible de créer le fichier CSV") {
+		if err == nil || !strings.Contains(err.Error(), "unable to create the CSV file") {
 			t.Errorf("error = %v, want a CSV creation failure", err)
 		}
 	})
@@ -1446,7 +1446,7 @@ func TestRunAnalyzeErrorLineCarriesNoMetrics(t *testing.T) {
 
 	var errLine string
 	for _, line := range strings.Split(stdout, "\n") {
-		if strings.Contains(line, "bad.FIT") && strings.Contains(line, "ERREUR") {
+		if strings.Contains(line, "bad.FIT") && strings.Contains(line, "ERROR") {
 			errLine = line
 		}
 	}
@@ -1454,7 +1454,7 @@ func TestRunAnalyzeErrorLineCarriesNoMetrics(t *testing.T) {
 		t.Fatalf("no error line for bad.FIT:\n%s", stdout)
 	}
 
-	for _, metric := range []string{"Score=", "FWHM=", "Ecc=", "SNR=", "étoiles"} {
+	for _, metric := range []string{"Score=", "FWHM=", "Ecc=", "SNR=", "stars"} {
 		if strings.Contains(errLine, metric) {
 			t.Errorf("the error line carries %s: %q", metric, errLine)
 		}

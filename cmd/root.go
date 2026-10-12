@@ -13,11 +13,11 @@ var Version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:   "garfield",
-	Short: "Analyse de qualité d'images astro (FITS)",
-	Long: `Garfield analyse des images FITS pour évaluer leur qualité :
-étoiles détectées, FWHM, excentricité, SNR et score global.
+	Short: "Quality analysis of astro images (FITS)",
+	Long: `Garfield analyses FITS images to assess their quality:
+detected stars, FWHM, eccentricity, SNR and an overall score.
 
-Exemples :
+Examples:
   garfield analyze images/
   garfield analyze --dir images/ --min-snr 11`,
 	Version: Version,
@@ -33,7 +33,7 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "",
-		"fichier de configuration YAML (défaut : "+configRelPath+" s'il existe)")
+		"YAML configuration file (default: "+configRelPath+" if it exists)")
 
 	// Loading here rather than in each command keeps the config file invisible
 	// to them: by the time RunE runs, every flag already carries its final

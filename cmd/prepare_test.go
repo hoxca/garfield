@@ -842,7 +842,7 @@ func TestPrepareErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		err := runPrepare(prepareOptions{target: "Nope", input: root, output: t.TempDir(), quiet: true})
-		if err == nil || !strings.Contains(err.Error(), "introuvable") {
+		if err == nil || !strings.Contains(err.Error(), "not found") {
 			t.Errorf("error = %v, want a target-not-found failure", err)
 		}
 	})
@@ -850,7 +850,7 @@ func TestPrepareErrors(t *testing.T) {
 	t.Run("empty target", func(t *testing.T) {
 		root := t.TempDir()
 		err := runPrepare(prepareOptionsForTest("", root, t.TempDir()))
-		if err == nil || !strings.Contains(err.Error(), "--target est requis") {
+		if err == nil || !strings.Contains(err.Error(), "--target is required") {
 			t.Errorf("error = %v, want a missing-target failure", err)
 		}
 	})
@@ -875,7 +875,7 @@ func TestPrepareErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		err := runPrepare(prepareOptions{target: "Empty", input: root, output: t.TempDir(), quiet: true})
-		if err == nil || !strings.Contains(err.Error(), "aucune session") {
+		if err == nil || !strings.Contains(err.Error(), "no session") {
 			t.Errorf("error = %v, want a no-sessions failure", err)
 		}
 	})
@@ -889,7 +889,7 @@ func TestPrepareErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		err := runPrepare(prepareOptions{target: "File", input: root, output: t.TempDir(), quiet: true})
-		if err == nil || !strings.Contains(err.Error(), "n'est pas un dossier") {
+		if err == nil || !strings.Contains(err.Error(), "is not a directory") {
 			t.Errorf("error = %v, want a not-a-directory failure", err)
 		}
 	})

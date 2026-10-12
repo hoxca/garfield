@@ -38,7 +38,7 @@ func newAnalyzeCmd(opts *analyzeOptions, run func(dir string, o analyzeOptions) 
 	registerQualityFlags(f, &opts.qualityThresholds)
 	registerWorkerFlags(f, &opts.workers, &opts.convWorkers)
 	f.StringVarP(&opts.dir, "dir", "d", "images", "dossier contenant les FITS")
-	f.BoolVarP(&opts.recursive, "recursive", "r", false, "parcourt aussi les sous-dossiers de --dir")
+	f.BoolVarP(&opts.recursive, "recursive", "r", false, "also walk the subdirectories of --dir")
 	f.IntVar(&opts.limitComputedStars, "limit-computed-stars", 500, "")
 	f.StringVar(&opts.format, "format", "console", "")
 	f.StringVarP(&opts.output, "output", "o", "", "")
@@ -405,9 +405,9 @@ func TestPrepareCommandWiring(t *testing.T) {
 // uses, so a layout change that is not documented fails here.
 func TestPrepareLongHelpDocumentsLayout(t *testing.T) {
 	const (
-		target = "<cible>"
-		out    = "<sortie>"
-		filter = "<filtre>"
+		target = "<target>"
+		out    = "<out>"
+		filter = "<filter>"
 	)
 
 	// The help documents the shape with NN standing in for the number. Derive

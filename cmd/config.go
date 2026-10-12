@@ -73,7 +73,7 @@ func setConfigSections(cmd *cobra.Command, sections ...string) {
 func resolveConfigPath(explicit string) (string, error) {
 	if explicit != "" {
 		if _, err := os.Stat(explicit); err != nil {
-			return "", fmt.Errorf("fichier de configuration %s : %w", explicit, err)
+			return "", fmt.Errorf("config file %s: %w", explicit, err)
 		}
 		return explicit, nil
 	}
@@ -109,7 +109,7 @@ func readConfig(path string) (*viper.Viper, error) {
 	v.SetConfigFile(path)
 
 	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("lecture de la configuration %s : %w", path, err)
+		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
 	return v, nil
 }
@@ -171,7 +171,7 @@ func applySections(cmd *cobra.Command, v *viper.Viper, path string) error {
 	if len(errs) > 0 {
 		// Joined rather than reporting the first alone: a config with several
 		// bad values should be fixed in one pass, not one key per run.
-		return fmt.Errorf("configuration %s : %w", path, errors.Join(errs...))
+		return fmt.Errorf("config %s: %w", path, errors.Join(errs...))
 	}
 	return nil
 }
@@ -202,12 +202,12 @@ func warnUnknownKeys(v *viper.Viper, path string) {
 
 	if len(unknown) > 0 {
 		fmt.Fprintf(os.Stderr,
-			"avertissement : %s contient des clés inconnues ignorées : %s\n",
+			"warning: %s contains unknown keys, ignored: %s\n",
 			path, strings.Join(unknown, ", "))
 	}
 	if len(refused) > 0 {
 		fmt.Fprintf(os.Stderr,
-			"avertissement : %s contient des clés volontairement non configurables, ignorées : %s\n",
+			"warning: %s contains deliberately non-configurable keys, ignored: %s\n",
 			path, strings.Join(refused, ", "))
 	}
 }

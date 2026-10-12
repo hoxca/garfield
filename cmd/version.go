@@ -8,7 +8,7 @@ import (
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Affiche la version de garfield",
+	Short: "Print the garfield version",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("garfield %s\n", Version)
 	},

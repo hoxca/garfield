@@ -23,7 +23,7 @@ func goodFrameOpts() synthOpts {
 }
 
 // TestDecisionCascadeIsApprovedOnAGoodFrame is the baseline every gate test
-// compares against: if this stops being APPROUVEE, the individual gate tests
+// compares against: if this stops being APPROVED, the individual gate tests
 // below are measuring the wrong thing.
 func TestDecisionCascadeIsApprovedOnAGoodFrame(t *testing.T) {
 	dir := t.TempDir()
@@ -249,7 +249,7 @@ func TestFWHMGateOnDefocusedField(t *testing.T) {
 // TestNoNaNWhenNoStarIsMeasurable is the regression test for the bug where a
 // frame with detectable but unmeasurable stars divided 0/0, producing NaN
 // metrics. Because every NaN comparison is false, the NaN silently bypassed the
-// FWHM, eccentricity and scoring gates and the frame was reported APPROUVEE.
+// FWHM, eccentricity and scoring gates and the frame was reported APPROVED.
 //
 // The fixture stars sit above the detector's 25*noise floor but below the 50*sky
 // noise floor processImage requires to measure a star, so filteredCount ends up
@@ -274,7 +274,7 @@ func TestNoNaNWhenNoStarIsMeasurable(t *testing.T) {
 		r := processImage(path, opts)
 
 		if r.Decision == decisionApproved {
-			t.Errorf("minSNR=%.1f: frame with zero measurable stars was APPROUVEE "+
+			t.Errorf("minSNR=%.1f: frame with zero measurable stars was APPROVED "+
 				"(FWHM=%v ecc=%v score=%v) - the NaN guard is gone",
 				minSNR, r.AvgFWHM, r.AvgEccentricity, r.Score)
 		}

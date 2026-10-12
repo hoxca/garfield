@@ -152,14 +152,14 @@ func TestIndexDarkMastersPrefersTheLatestDate(t *testing.T) {
 		t.Fatalf("got %d warnings (%v), want both collisions reported", len(warnings), warnings)
 	}
 	for _, w := range warnings {
-		if !strings.Contains(w, "deux masters") {
+		if !strings.Contains(w, "two masters") {
 			t.Errorf("warning %q does not report a collision", w)
 		}
 	}
 	// Each replacement is reported as it happens, so an intermediate warning
 	// names a master the next one displaces. The last one records the winner.
 	const winner = "masterDark_300s_GA0_-10C_20260901.xisf"
-	if last := warnings[len(warnings)-1]; !strings.Contains(last, winner+" retenu") {
+	if last := warnings[len(warnings)-1]; !strings.Contains(last, "retaining "+winner) {
 		t.Errorf("last warning %q does not record %q as kept", last, winner)
 	}
 }
@@ -194,10 +194,10 @@ func TestIndexDarkMastersReportsAnUndecidedTie(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %v, want one collision", warnings)
 	}
-	if !strings.Contains(warnings[0], "date insuffisante") {
+	if !strings.Contains(warnings[0], "date insufficient") {
 		t.Errorf("warning %q does not say the date was insufficient", warnings[0])
 	}
-	if strings.Contains(warnings[0], "retenu") {
+	if strings.Contains(warnings[0], "retaining") {
 		t.Errorf("warning %q claims a winner the date could not pick", warnings[0])
 	}
 }

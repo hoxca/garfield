@@ -41,17 +41,17 @@ var analyzeOpts = analyzeOptions{}
 var analyzeCmd = &cobra.Command{
 	Use:     "analyze [dir]",
 	Aliases: []string{"analyse"},
-	Short:   "Analyse un dossier d'images FITS",
-	Long: `Parcourt un dossier, détecte les fichiers .fit/.fits/.fts
-et calcule FWHM, excentricité, SNR et score pour chacun.
+	Short:   "Analyse a directory of FITS images",
+	Long: `Walks a directory, detects .fit/.fits/.fts files
+and computes FWHM, eccentricity, SNR and score for each.
 
 score = snr/fwhm*(1-ecc)
 
-Exemple :
+Example:
   garfield analyze images/
   garfield analyze --dir images/ --limit-computed-stars 500
-  garfield analyze --dir images/ --format csv --output resultats.csv
-  garfield analyze --dir images/ --format both --output resultats.csv --quiet`,
+  garfield analyze --dir images/ --format csv --output results.csv
+  garfield analyze --dir images/ --format both --output results.csv --quiet`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := analyzeOpts.dir
@@ -63,15 +63,15 @@ Exemple :
 }
 
 func init() {
-	analyzeCmd.Flags().StringVarP(&analyzeOpts.dir, "dir", "d", "images", "dossier contenant les FITS")
+	analyzeCmd.Flags().StringVarP(&analyzeOpts.dir, "dir", "d", "images", "directory containing the FITS files")
 	analyzeCmd.Flags().BoolVarP(&analyzeOpts.recursive, "recursive", "r", false,
-		fmt.Sprintf("parcourt les sous-dossiers de --dir, sur %d niveaux", maxRecursiveDepth))
+		fmt.Sprintf("also walk the subdirectories of --dir, %d levels deep", maxRecursiveDepth))
 	registerWorkerFlags(analyzeCmd.Flags(), &analyzeOpts.workers, &analyzeOpts.convWorkers)
 	registerQualityFlags(analyzeCmd.Flags(), &analyzeOpts.qualityThresholds)
-	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "limite le nombre d'étoiles brillantes analysées")
-	analyzeCmd.Flags().StringVar(&analyzeOpts.format, "format", "console", "format de sortie : console, csv ou both")
-	analyzeCmd.Flags().StringVarP(&analyzeOpts.output, "output", "o", "", "fichier CSV de sortie (requis pour csv/both vers fichier)")
-	analyzeCmd.Flags().BoolVar(&analyzeOpts.quiet, "quiet", false, "évite la sortie console")
+	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "limit the number of bright stars measured")
+	analyzeCmd.Flags().StringVar(&analyzeOpts.format, "format", "console", "output format: console, csv or both")
+	analyzeCmd.Flags().StringVarP(&analyzeOpts.output, "output", "o", "", "output CSV file (required for csv/both to a file)")
+	analyzeCmd.Flags().BoolVar(&analyzeOpts.quiet, "quiet", false, "suppress console output")
 }
 
 // ImageResult holds the quality metrics for one FITS file.
@@ -91,12 +91,12 @@ type ImageResult struct {
 }
 
 const (
-	decisionApproved = "APPROUVEE"
-	decisionNoStars  = "REJETEE MANQUE ETOILES"
-	decisionEcc      = "REJETEE EXCENTRICITY"
-	decisionFWHM     = "REJETEE FWHM"
-	decisionSNR      = "REJETEE SNR"
-	decisionScoring  = "REJETEE SCORING"
+	decisionApproved = "APPROVED"
+	decisionNoStars  = "REJECTED NO STARS"
+	decisionEcc      = "REJECTED ECCENTRICITY"
+	decisionFWHM     = "REJECTED FWHM"
+	decisionSNR      = "REJECTED SNR"
+	decisionScoring  = "REJECTED SCORING"
 )
 
 func parseFilename(name string) (filter string, date string) {
@@ -137,7 +137,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 	if len(fieldStars) == 0 {
 		return ImageResult{
 			Filename: name, Filter: filter, Date: date,
-			Error: fmt.Errorf("aucune étoile trouvée"),
+			Error: fmt.Errorf("no star found"),
 		}
 	}
 
@@ -192,7 +192,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 
 	// Every star failed the per-star filters (peak signal below the noise
 	// floor, or degenerate eccentricity). The metric averages below would divide 0/0 and produce NaN, and since all NaN comparisons are false
-	// that NaN would silently bypass the FWHM/eccentricity/scoring gates and mark the frame APPROUVEE. Reject before computing any metric.
+	// that NaN would silently bypass the FWHM/eccentricity/scoring gates and mark the frame APPROVED. Reject before computing any metric.
 	if filteredCount == 0 || sumWeight <= 0 {
 		return ImageResult{
 			Filename:      name,
@@ -333,7 +333,7 @@ func discoverFITSFiles(dir string, recursive bool) ([]string, bool, error) {
 func topLevelFITSFiles(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, fmt.Errorf("impossible de lire le dossier %q : %w", dir, err)
+		return nil, fmt.Errorf("unable to read directory %q: %w", dir, err)
 	}
 
 	var fitsFiles []string
@@ -387,7 +387,7 @@ func walkFITSFiles(dir string) ([]string, bool, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, false, fmt.Errorf("impossible de lire le dossier %q : %w", dir, err)
+		return nil, false, fmt.Errorf("unable to read directory %q: %w", dir, err)
 	}
 	return fitsFiles, wasTruncated, nil
 }
@@ -433,8 +433,8 @@ func warnDuplicateBasenames(fitsFiles []string) []string {
 	warnings := make([]string, 0, len(names))
 	for _, n := range names {
 		warnings = append(warnings, fmt.Sprintf(
-			"plusieurs images portent le nom %q dans des sous-dossiers différents ; "+
-				"le rapport ne les distingue que par leur position", n))
+			"several images are named %q in different subdirectories; "+
+				"the report distinguishes them only by position", n))
 	}
 	return warnings
 }
@@ -443,10 +443,10 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	switch opts.format {
 	case "console", "csv", "both":
 	default:
-		return fmt.Errorf("format invalide %q : attendu console, csv ou both", opts.format)
+		return fmt.Errorf("invalid format %q: expected console, csv or both", opts.format)
 	}
 	if opts.format == "both" && opts.output == "" {
-		return fmt.Errorf("--output est requis avec --format both")
+		return fmt.Errorf("--output is required with --format both")
 	}
 
 	fitsFiles, truncated, err := discoverFITSFiles(dir, opts.recursive)
@@ -465,21 +465,21 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		// The flat case is where someone pointed at the wrong level of a tree,
 		// so it names the flag rather than just reporting an empty directory.
 		if opts.recursive {
-			// Not "ni dans ses sous-dossiers": with a depth cap that would be
+			// Not "nor its subdirectories": with a depth cap that would be
 			// false, since frames can sit below what was searched.
 			return fmt.Errorf(
-				"aucun fichier FITS trouvé dans %q dans les %d niveaux de sous-dossiers",
+				"no FITS file found in %q within %d subdirectory levels",
 				dir, maxRecursiveDepth)
 		}
 		return fmt.Errorf(
-			"aucun fichier FITS trouvé dans %q ; utilisez -r pour parcourir aussi les sous-dossiers", dir)
+			"no FITS file found in %q; use -r to walk the subdirectories too", dir)
 	}
 
 	// Said whenever the cap actually cut the walk short, so a bounded search is
 	// never mistaken for a complete one.
 	if truncated {
 		fmt.Fprintf(os.Stderr,
-			"  note : recherche récursive limitée à %d niveaux ; des sous-dossiers plus profonds n'ont pas été parcourus\n",
+			"  note: recursive search capped at %d levels; deeper subdirectories were not walked\n",
 			maxRecursiveDepth)
 	}
 
@@ -510,14 +510,14 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	// unique, so a flat scan cannot produce a collision.
 	if opts.recursive {
 		for _, w := range warnDuplicateBasenames(fitsFiles) {
-			fmt.Fprintf(os.Stderr, "  avertissement : %s\n", w)
+			fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
 		}
 	}
 
 	showConsole := opts.format == "console" || opts.format == "both"
 	csvToStdout := opts.format == "csv" && opts.output == ""
 	if !opts.quiet && showConsole {
-		fmt.Printf("\nTraitement de %d fichier(s) FITS dans %q (%d workers, conv=%d)...\n\n", len(fitsFiles), dir, outerWorkers, convWorkers)
+		fmt.Printf("\nProcessing %d FITS file(s) in %q (%d workers, conv=%d)...\n\n", len(fitsFiles), dir, outerWorkers, convWorkers)
 	}
 
 	results := make([]ImageResult, len(fitsFiles))
@@ -538,12 +538,12 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 				done++
 				if !opts.quiet && showConsole {
 					if r.Error != nil {
-						fmt.Printf("  [%d/%d] %s ... ERREUR: %v\n", done, len(fitsFiles), r.Filename, r.Error)
+						fmt.Printf("  [%d/%d] %s ... ERROR: %v\n", done, len(fitsFiles), r.Filename, r.Error)
 					} else {
 						// Score is printed to three decimals, like Ecc, because the
 						// score gate is the finest of the six: a frame sitting just
 						// above --min-score would render as exactly on it at two.
-						fmt.Printf("  [%d/%d] %s ... OK (%d/%d étoiles, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f, %s)\n",
+						fmt.Printf("  [%d/%d] %s ... OK (%d/%d stars, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f, %s)\n",
 							done, len(fitsFiles), r.Filename, r.StarCount, r.DetectedStars,
 							r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Score, r.Decision)
 					}
@@ -562,30 +562,30 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		if csvToStdout {
 			w := newCSVWriter(os.Stdout)
 			if err := writeResultsCSV(results, w); err != nil {
-				return fmt.Errorf("écriture CSV : %w", err)
+				return fmt.Errorf("writing CSV: %w", err)
 			}
 		} else {
 			f, err := os.Create(opts.output)
 			if err != nil {
-				return fmt.Errorf("impossible de créer le fichier CSV %q : %w", opts.output, err)
+				return fmt.Errorf("unable to create the CSV file %q: %w", opts.output, err)
 			}
 			w := newCSVWriter(f)
 			writeErr := writeResultsCSV(results, w)
 			closeErr := f.Close()
 			if writeErr != nil {
-				return fmt.Errorf("écriture CSV : %w", writeErr)
+				return fmt.Errorf("writing CSV: %w", writeErr)
 			}
 			if closeErr != nil {
-				return fmt.Errorf("fermeture CSV : %w", closeErr)
+				return fmt.Errorf("closing CSV: %w", closeErr)
 			}
 			if !opts.quiet {
-				fmt.Printf("Résultats CSV écrits dans %q (%d lignes).\n", opts.output, len(results))
+				fmt.Printf("CSV results written to %q (%d rows).\n", opts.output, len(results))
 			}
 		}
 	}
 
 	if !opts.quiet && showConsole {
-		fmt.Printf("\nTerminé : %d fichier(s) traité(s).\n", len(results))
+		fmt.Printf("\nDone: %d file(s) processed.\n", len(results))
 	}
 	return nil
 }

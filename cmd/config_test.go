@@ -32,7 +32,7 @@ func configTestAnalyzeCmd() (*cobra.Command, *analyzeOptions) {
 	registerQualityFlags(f, &opts.qualityThresholds)
 	registerWorkerFlags(f, &opts.workers, &opts.convWorkers)
 	f.StringVarP(&opts.dir, "dir", "d", "images", "dossier contenant les FITS")
-	f.BoolVarP(&opts.recursive, "recursive", "r", false, "parcourt aussi les sous-dossiers de --dir")
+	f.BoolVarP(&opts.recursive, "recursive", "r", false, "also walk the subdirectories of --dir")
 	f.StringVarP(&opts.output, "output", "o", "", "fichier CSV de sortie")
 	setConfigSections(c, sectionThresholds, sectionConcurrency, sectionAnalyze)
 	return c, opts
@@ -45,8 +45,8 @@ func configTestPrepareCmd() (*cobra.Command, *prepareOptions) {
 	f := c.Flags()
 	registerQualityFlags(f, &opts.qualityThresholds)
 	registerWorkerFlags(f, &opts.workers, &opts.convWorkers)
-	f.StringVarP(&opts.input, "input", "i", defaultPrepareInput, "racine des données d'acquisition")
-	f.StringVarP(&opts.output, "output", "o", defaultPrepareOutput, "racine de destination")
+	f.StringVarP(&opts.input, "input", "i", defaultPrepareInput, "root of the acquisition data")
+	f.StringVarP(&opts.output, "output", "o", defaultPrepareOutput, "destination root")
 	setConfigSections(c, sectionThresholds, sectionConcurrency, sectionPrepare)
 	return c, opts
 }
@@ -238,7 +238,7 @@ func TestExcludedFlagsAreIgnored(t *testing.T) {
 	// Silently dropping it would be the trap this guards against: the file says
 	// set it, so saying so is better than pretending it took effect.
 	out := captureStderr(t, func() { warnUnknownKeys(v, path) })
-	if !strings.Contains(out, "volontairement non configurables") || !strings.Contains(out, "analyze.output") {
+	if !strings.Contains(out, "deliberately non-configurable") || !strings.Contains(out, "analyze.output") {
 		t.Errorf("warning %q, want it to name analyze.output as deliberately refused", out)
 	}
 }
@@ -540,7 +540,7 @@ func setConfigPath(t *testing.T, path string) {
 
 // consoleField returns the number printed after label on the first line that
 // carries it, e.g. consoleField(t, out, "Score=") on "… SNR=27.40, Score=4.457,
-// APPROUVEE" gives "4.457".
+// APPROVED" gives "4.457".
 func consoleField(t *testing.T, out, label string) string {
 	t.Helper()
 

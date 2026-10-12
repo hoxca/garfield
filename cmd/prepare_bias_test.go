@@ -382,16 +382,16 @@ func TestIndexBiasMasters(t *testing.T) {
 					t.Fatalf("got %d warnings (%v), want %d", len(warnings), warnings, tc.wantCnt)
 				}
 				for _, w := range warnings {
-					if !strings.Contains(w, "deux masters") {
+					if !strings.Contains(w, "two masters") {
 						t.Errorf("warning %q does not report a collision", w)
 					}
 					if tc.wantTie {
 						// Presenting a retained master here would imply the date
 						// chose it.
-						if strings.Contains(w, "retenu") {
+						if strings.Contains(w, "retaining") {
 							t.Errorf("warning %q claims a winner the date could not pick", w)
 						}
-						if !strings.Contains(w, "date insuffisante") {
+						if !strings.Contains(w, "date insufficient") {
 							t.Errorf("warning %q does not say the date was insufficient", w)
 						}
 						continue
@@ -402,7 +402,7 @@ func TestIndexBiasMasters(t *testing.T) {
 				}
 				// Intermediate collisions legitimately name a master that a later
 				// one then displaces; the final warning names the one kept.
-				if last := warnings[len(warnings)-1]; !strings.Contains(last, tc.want+" retenu") {
+				if last := warnings[len(warnings)-1]; !strings.Contains(last, "retaining "+tc.want) {
 					t.Errorf("last warning %q does not record %q as kept", last, tc.want)
 				}
 			})
@@ -430,7 +430,7 @@ func TestIndexBiasMasters(t *testing.T) {
 		}
 		// The gainless file is reported for having no gain, not as a collision:
 		// it was never a candidate.
-		if len(warnings) != 1 || strings.Contains(warnings[0], "deux masters") {
+		if len(warnings) != 1 || strings.Contains(warnings[0], "two masters") {
 			t.Errorf("warnings = %v, want only the gainless-file report", warnings)
 		}
 	})
@@ -704,8 +704,8 @@ func TestPrepareReportsCopiedBiases(t *testing.T) {
 				t.Fatalf("runPrepare: %v", err)
 			}
 		})
-		if !strings.Contains(stdout, "aucun master bias") {
-			t.Errorf("no \"aucun master bias\" line in the output:\n%s", stdout)
+		if !strings.Contains(stdout, "no master bias") {
+			t.Errorf("no \"no master bias\" line in the output:\n%s", stdout)
 		}
 	})
 }
