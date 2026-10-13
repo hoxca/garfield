@@ -15,6 +15,27 @@ Two commands read files:
 Claims here are traceable to a source line or a test. The source is the
 authority; if this document and the code disagree, the code wins.
 
+**Contents**
+
+| § | |
+|---|---|
+| [1](#1-overview) | Overview and the tree at a glance |
+| [2](#2-lights) | Lights — sessions, filters, filename grammar, position angles |
+| [3](#3-flats) | Flats — layout, the seven filters, matching, borrowing |
+| [4](#4-master-biases) | Master biases |
+| [5](#5-master-darks) | Master darks |
+| [6](#6-duplicate-masters) | Duplicate masters |
+| [7](#7-regex-reference) | Every regex in one table |
+| [8](#8-extensions-and-dotfiles) | Extensions and dotfiles |
+| [9](#9-analyze-input) | `analyze` input, and its one known limitation |
+| [10](#10-output-layout) | Output layout and reports |
+| [11](#11-failure-modes) | Failure modes — fatal vs warning |
+| [12](#12-sharp-edges) | Sharp edges, ranked by how quietly they fail |
+| [Appendix](#appendix-where-the-contract-is-pinned) | Which test pins which claim |
+
+For a task-oriented summary rather than the full contract, see
+[README.md](../README.md).
+
 ---
 
 ## 1. Overview
@@ -62,7 +83,18 @@ Only `Lights/<target>` is required. A missing `Flats`, `Bias/Masters` or
 [§11 Failure modes](#11-failure-modes).
 
 Directory names are exact: `Lights`, `Flats`, `Bias`, `Darks`, `Masters`.
-These are case-sensitive, unlike file extensions.
+These are case-sensitive, unlike file extensions. So `lights/` or `masters/`
+is not found, and the run proceeds with whatever is missing — which is why a
+typo in a directory name reads as "that data was never there".
+
+Each subtree is scanned to a **fixed depth**, and nothing recurses further:
+
+| Directory | Depth | Consequence |
+|---|---|---|
+| `Lights/<target>` | 3 (`<date>/<filter>/`) | deeper nesting is not seen |
+| `Flats/` | 1 (`<date>/`) | flat filter is a filename token (§3.1) |
+| `Bias/Masters` | 0 | a bias in a subdirectory is invisible (§4) |
+| `Darks/Masters` | 1 | per-gain subdirs accepted, two levels are not (§5) |
 
 `prepare` flags that shape this tree:
 
@@ -79,7 +111,14 @@ These are case-sensitive, unlike file extensions.
 ### 2.1 What makes a session
 
 A session is a direct subdirectory of `Lights/<target>` whose name matches
-exactly :
+exactly `sessionDateRe`:
+
+```
+^\d{4}-\d{2}-\d{2}$
+```
+
+That is `YYYY-MM-DD` and nothing else. The check is lexical, so `2026-9-16` is
+not a session and neither is `2026-09-16_old` or `2026-09-16-bias`.
 
 Anything else in `Lights/<target>/` is ignored — stray files, dotfiles, a
 `masterFlat_*.fit` dropped there by mistake. Only directories are considered,
@@ -87,7 +126,7 @@ and only ones that match.
 
 **Session numbering is positional, not derived from the date.** The matching
 directories are sorted as strings and the index in that list, plus one, becomes
-the session number :
+the session number:
 
 ```
 Lights/M51/2026-01-15/   →  sorted first   →  Session_01
@@ -95,12 +134,19 @@ Lights/M51/2026-03-02/   →  sorted second  →  Session_02
 Lights/M51/2026-12-31/   →  sorted third   →  Session_03
 ```
 
-Renaming or removing a date directory renumbers everything after it. The
-`session` column in `metrics/sessions.csv` and the `date` column travel
-together, so join on the session name and read the date from there rather than
-assuming a mapping.
+So **adding, removing or renaming a date directory renumbers every later
+session** — a new night inserted mid-run shifts `Session_05` to `Session_06`,
+and everything after it. The `session` and `date` columns in
+`metrics/sessions.csv` travel together, so read the date from the row rather
+than assuming a mapping. `Session_03` is not a stable identifier (§12.4).
 
-A target with no date directories is a fatal error.
+Padding is `%02d`: `Session_01` through `Session_99`, then `Session_100` — the
+width is a minimum, not a maximum. A glob of `Session_[0-9][0-9]` therefore
+misses a hundredth session, which matters only for a target acquired over a
+hundred nights.
+
+A target with no matching date directories at all is a fatal error:
+`no session (YYYY-MM-DD directory) found in %q`.
 
 ### 2.2 The filter directory
 
@@ -124,15 +170,17 @@ to be matched (§3).
 A real frame:
 
 ```
-
-target     filter   bin       gain         time        PA
-   │         │       │   │     │       │     │          │
+target   type  filter  exp    bin    temp  gain   date      time    ms   PA     flip
+  │       │      │      │      │      │     │      │         │      │    │      │
 LBN527_LIGHT_R_300s_BIN1_-10C_GA0_20260910_021539_988_PA310_E.FIT
-         │      │         │          │             │        │
-       type    exp       temp       date           ms     flip
 ```
 
 `<target>` is the `--target` value. `<flip>` is `E` or `W` side of pier.
+
+Note the two different conventions this one name carries: the **target** comes
+first in a light but a flat leads with `FLAT_`, and the **date** is eighth here
+and sixth in a flat (§3.1). Neither is validated against the other side, so the
+same token can appear at different positions in the two grammars.
 
 **No regex validates the whole name.** Four independent regexes pluck tokens out
 of it. A frame missing a token still gets analysed and copied — the token is
@@ -145,8 +193,13 @@ simply absent from the report.
 | gain | `_(GA\d+)_`  | Not counted in the session gains; no bias copied for it |
 | exposure + gain | `_(\d+)s_BIN\d_-10C_(GA\d+)_`  | **No master dark** will be copied for this frame |
 
-Frame date, time, milliseconds and flip are not used for matching at all. 
+Frame date, time, milliseconds and flip are not used for matching at all.
 The `E`/`W` side of pier suffix is cosmetic here.
+
+Only two of these tokens change what is copied. A missing **frame date** costs a
+report column and nothing else. A missing **PA**, **gain**, or
+**exposure + gain** pair costs data: the frame is still copied into `lights/`,
+but it never reaches a flat, a bias, or a dark.
 
 ### 2.4 Position angles
 
@@ -170,6 +223,11 @@ before anything is written, so it leaves no output tree behind.
 Sessions carrying **no** angle are not part of this check. An empty `pa` can
 never match a flat, so such a session already reports a missing flat (§3.2).
 
+This is the strictest rule in the input contract, and it is strict on purpose:
+a session's flats are matched against one angle (§3.2), so there is no
+calibration to apply if the angle is ambiguous. Rejecting the target is more
+honest than picking one angle and producing a session that looks fine.
+
 ---
 
 ## 3. Flats
@@ -180,65 +238,97 @@ never match a flat, so such a session already reports a missing flat (§3.2).
 subdirectory. The filter is a filename token instead. The scan is
 non-recursive.
 
-A real flat:
+A real flat, annotated token by token:
 
 ```
-
-   filter     bin        gain            time       PA
-     │         │          │                │         │  
 FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT
-         │           │            │             │    
-        exp        temp          date           ms   
+     │     │     │     │     │      │      │    │     │
+     │     │     │     │     │      │      │    │     └── PA310   _PA(\d+)
+     │     │     │     │     │      │      │    └──────── ms      808
+     │     │     │     │     │      │      └───────────── time    071758
+     │     │     │     │     │      └──────────────────── date    20260916
+     │     │     │     │     └─────────────────────────── gain    GA2750
+     │     │     │     └──────────────────────────────── temp    -10C
+     │     │     └────────────────────────────────────── bin     BIN1
+     │     └──────────────────────────────────────────── exp     67.02s
+     └────────────────────────────────────────────────── filter  S
 ```
 
-Filter and PA must match or the file is skipped without comment:
+Two tokens are load-bearing and three of the rest are not:
 
-The filter must be one of seven known colour filters, and the PA must be
-present, or the file is dropped with a warning naming it.
+| Token | Regex | If absent |
+|---|---|---|
+| filter | `^FLAT_([LRGBSHO])_` | file dropped, with a warning naming it (§3.1.1) |
+| PA | `_PA(\d+)` | file dropped, with a warning naming it |
 
-`flatFilterRe` is **anchored on the `FLAT_` prefix** and its group is a
-character class over `knownFilters`. `FLATL_41s_..._PA310.FIT` does not match,
-because after `FLAT` comes `L` rather than `_`. Neither does a
-`masterFlat_...` file or any light frame.
+Exposure, binning, setpoint, gain, date, time and milliseconds are **never read**
+on the flat side. `67.02s` and `GA2750` in the name above are decoration: no flat
+is ever matched to a light by exposure or gain. That is the opposite of the dark
+side, where both are part of the key (§5).
+
+### 3.1.1 The seven known filters
+
+`flatFilterRe` is **anchored on the `FLAT_` prefix**, and its group is a
+character class spliced from `knownFilters`:
+
+```
+^FLAT_([LRGBSHO])_
+```
+
+`FLATL_41s_..._PA310.FIT` does not match, because after `FLAT` comes `L` rather
+than `_`. Neither does a `masterFlat_...` file or any light frame.
 
 The recognised set is **exactly one character** from `LRGBSHO` — L, R, G, B,
 S, H, O:
 
 ```
-FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT   → S   matched
-FLAT_Ha_41.4s_BIN1_PA310.FIT                                 → nil no known filter
-FLAT_OIII_41.4s_BIN1_PA310.FIT                               → nil no known filter
-FLAT_L2_41.4s_BIN1_PA310.FIT                                 → nil no known filter
+FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT   → S     indexed at S@310
+FLAT_Ha_41.4s_BIN1_PA310.FIT                                  → nil   no known filter
+FLAT_OIII_41.4s_BIN1_PA310.FIT                                → nil   no known filter
+FLAT_L2_41.4s_BIN1_PA310.FIT                                  → nil   no known filter
 ```
 
 Two consequences:
 
 - **Narrowband does not parse.** `Ha`, `OIII`, `SII`, `L2` and anything else
   outside the seven are dropped until their letters are added to `knownFilters`.
+- **Multi-character tokens cannot match by accident.** Because the group is a
+  character class rather than an alternation, `Ha` cannot be read as `H` — the
+  `_` that must follow the group is missing. A file whose filter is `H` is
+  indexed; one whose filter is `Ha` is not, and never half-matched.
 
-A file is *reported* rather than silently dropped when it carries the `FLAT_`
-prefix but fails the filter test — that is how a newly added filter announces
-itself. A name without the prefix (`FLATL_...`, a light frame, a master) is a
-different kind of frame sharing the directory and is left alone. The prefix
-test is deliberately looser than the token test, so a plainly malformed
-`FLAT_-weird_name.FIT` is named rather than discarded.
-- **Multi-character tokens cannot match by accident.** 
+### 3.1.2 Reported, not silently dropped
 
-`knownFilters` is written in band order for readability. 
-
-### 3.2 Matching
-
-Flats are indexed by `filter@PA`, e.g. `S@310`,
-and matched against the session's filter directories and session PA:
+A file is **reported** rather than quietly discarded when it carries the `FLAT_`
+prefix but fails the filter test:
 
 ```
-session 2026-09-16, filter S, PA310  →  Flats/2026-09-16/  file starting FLAT_S_ and containing _PA310
+Flats/2026-09-16: "FLAT_Ha_41.4s_BIN1_PA310.FIT" has no known filter (LRGBSHO), ignored
 ```
+
+That is deliberate: it is how a newly added filter announces itself before
+anyone extends `knownFilters`. A file *without* the prefix (`FLATL_...`, a light
+frame, a master) is a different kind of frame sharing the directory, so it is
+left alone — calling it a broken flat would be misleading.
+
+The prefix test is deliberately **looser** than the token test, so a plainly
+malformed `FLAT_-weird_name.FIT` is named rather than discarded.
+
+`knownFilters` is written in band order (L, R, G, B, S, H, O) for readability
+rather than in ASCII order, which is what it would otherwise be.
 
 ### 3.2 Matching, and borrowing across nights
 
 Flats are indexed by `filter@PA`, e.g. `S@310`, and matched against the
-session's filter directories and session PA.
+session's filter directories and session PA:
+
+```
+session 2026-09-16, filter S, PA310
+  →  Flats/2026-09-16/  file starting FLAT_S_ and containing _PA310
+```
+
+Note the date is the **session's**, not the frame date (§12.5): sessions cross
+midnight, so the `20260916` inside the filename usually names the next day.
 
 How many a session collects is set by `--flat-count` (config key
 `prepare.flat-count`):
@@ -296,19 +386,18 @@ fail to open.
 ### 3.3 Why the session date, not the frame date
 
 Flats are matched on the **session directory date**, never the date embedded in
-the light filenames. Sessions run past midnight, so for most nights the two disagree by a day;
-only the directory name lines up with `Flats/`. Borrowing (§3.2) reaches only
-into other *session directory* dates, never into a frame-date.
+the light filenames. Sessions run past midnight, so for most nights the two
+disagree by a day; only the directory name lines up with `Flats/`. Borrowing
+(§3.2) reaches only into other *session directory* dates, never into a
+frame-date.
 
-This is why `frameDateMin` and `frameDateMax` are reported separately from `date` in `sessions.csv`.
+Concretely, a session directory named `2026-09-16` holding frames stamped
+`20260917` looks for flats in `Flats/2026-09-16/`. Moving the session directory
+to the frame date would break it.
 
-### 3.3 Why the session date, not the frame date
-
-Flats are matched on the **session directory date**, never the date embedded in
-the light filenames. Sessions run past midnight, so for most nights the two disagree by a day;
-only the directory name lines up with `Flats/`.
-
-This is why `frameDateMin` and `frameDateMax` are reported separately from `date` in `sessions.csv`.
+This is why `frameDateMin` and `frameDateMax` are reported separately from `date`
+in `sessions.csv` (§10.1) — `date` is the one that matched flats, and the frame
+dates are a range for reference. Pinned by `TestFramesCSVUsesSessionDateNotFrameDate`.
 
 ---
 
@@ -318,21 +407,32 @@ This is why `frameDateMin` and `frameDateMax` are reported separately from `date
 <input>/Bias/Masters/*.xisf
 ```
 
-The scan of master bias directory is **non-recursive** — subdirectories are skipped
+The scan of the master bias directory is **non-recursive** — subdirectories are
+skipped. A bias held in `Bias/Masters/G0/` is invisible.
 
 ```
-           gain     frames 
-            │         │
 masterBias_GA0_-10C_257f_20251117.xisf
-                 │           │
-               temp         date
+         │     │      │      │
+         │     │      │      └──── date    20251117
+         │     │      └─────────── frames  257f      (not read, see §6)
+         │     └────────────────── temp    -10C      (not read)
+         └──────────────────────── gain    GA0       (the key)
 ```
 
 - Keyed by **gain**, taken from the filename via `_(GA\d+)_`.
 - The frame count (`257f`) is **not read** — see §6.
-- The date suffix must be eight digits directly before `.xisf`.
-- A file with no gain token is skipped with a warning. 
+- The setpoint (`-10C`) is **not read** here either: a bias matches a gain,
+  not a gain and a temperature. Only `lightComboRe` on the *light* side has the
+  setpoint in its pattern (§5.2).
+- The date suffix must be eight digits directly before `.xisf`. A master with
+  no parseable date cannot be tiebroken, so it loses to any dated rival (§6).
+- A file with no gain token is skipped with a warning.
 - Only **one** master bias is copied per gain, for the whole target.
+
+The asymmetry with darks is deliberate and worth knowing before it surprises
+you: `Bias/Masters/` is flat, while `Darks/Masters/` accepts one level of
+per-gain subdirectories (§5). Dark masters are organised by gain on disk;
+biases are not.
 
 ---
 
@@ -347,8 +447,10 @@ masterBias_GA0_-10C_257f_20251117.xisf
 └── masterDark_120s_GA0_-10C_20251119.xisf     ← also accepted
 ```
 
-The scan recurses **exactly one level**.
-Files directly under `Masters/` are accepted alongside per-gain subdirectories.
+The scan recurses **exactly one level**: files directly under `Masters/` are
+accepted alongside per-gain subdirectories, and a directory two levels down
+(`Darks/Masters/G0/30s/`) is not visited at all. That cap is what keeps the raw
+calibration frames out of the index.
 
 ### 5.1 The key is the filename, not the directory
 
@@ -367,9 +469,18 @@ The key renders as `GA2750/600s`.
 
 A light's needed dark is computed with `lightComboRe`:
 
-`-10C` is **hardcoded**. The setpoint must appear literally, between the binning
-token and the gain. A light taken at a different sensor temperature matches no
-dark, and the only symptom is a warning listing the darks that *were* found.
+```
+_(\d+)s_BIN\d_-10C_(GA\d+)_
+```
+
+`-10C` is **hardcoded** into that pattern. The setpoint must appear literally,
+between the binning token and the gain. A light taken at a different sensor
+temperature matches no dark, and the only symptom is a warning listing the darks
+that *were* found — which makes this a quiet failure, not a loud one.
+
+Note this is a narrower pattern than `gainRe` (`_(GA\d+)_`), which has no
+setpoint requirement. So a frame at the wrong temperature still contributes its
+gain to the bias set, but contributes no dark.
 
 Note this is a narrower pattern than `gainRe` (`_(GA\d+)_`), which has no
 setpoint requirement. So a frame at the wrong temperature still contributes its
@@ -391,19 +502,28 @@ no master dark for GA2750/600s in "..." (available: GA0/300s GA0/600s), affected
 
 ## 6. Duplicate masters
 
-Two masters for one key is an anomaly worth surfacing whichever way it resolves
+Two masters for one key is an anomaly worth surfacing whichever way it resolves.
 
 **Only the trailing date decides.** The frame count in a bias name (`257f`,
-`129f`) is deliberately not read — more frames is not better than a more recent calibration.
+`129f`) is deliberately not read — more frames is not better than a more recent
+calibration, and preferring a larger count would quietly reward whichever
+directory was scanned last.
 
 | Situation | Outcome | Warning |
 |---|---|---|
-| Candidate date newer | Candidate wins | collision — both named, kept one named |
-| Candidate date older | Held master kept | collision — both named, kept one named |
-| Same date | **First in sorted order** kept | tie — explicitly says the date could not decide |
+| Candidate date newer | Candidate wins | `two masters for GA0 (a and b), retaining b` |
+| Candidate date older | Held master kept | `two masters for GA0 (b and a), retaining b` |
+| Same date | **First in sorted order** kept | `... at the same date (a and b), date insufficient to decide, kept a by name order` |
+
+Both collisions and ties are reported, never resolved silently. The wording
+differs on purpose: the collision message says "retaining", implying the date
+chose; the tie message says "date insufficient to decide", because it did not.
+A reader can tell from the message alone whether the choice was earned.
 
 An undecided tie is deterministic only because candidates are visited in sorted
-order, which is why it is reported as a tie rather than a choice.
+order, which is why it is reported as a tie rather than a choice. A tie is
+therefore reproducible across machines and runs — it is arbitrary, but it does
+not wander.
 
 Biases and darks are indexed independently, so both can live in the same
 directory without colliding.
@@ -416,20 +536,30 @@ All in `cmd/prepare.go` unless noted.
 
 | Var | Pattern | Line | Keys |
 |---|---|---|---|
-| `sessionDateRe` | `^\d{4}-\d{2}-\d{2}$` | 102 | which directories are sessions |
-| `paRe` | `_PA(\d+)` | 105 | session angle; flat index — a session must yield exactly one (§2.4) |
-| `flatFilterRe` | `^FLAT_([LRGBSHO])_` | see §3.1 | flat index — **anchored at start**, set from `knownFilters` |
-| `frameDateRe` | `_(\d{8})_\d{6}_\d+_PA` | 113 | report only |
-| `gainRe` | `_(GA\d+)_` | 125 | session gains; bias index |
-| `lightComboRe` | `_(\d+)s_BIN\d_-10C_(GA\d+)_` | 130 | light → dark — **`-10C` hardcoded** |
-| `darkComboRe` | `masterDark_(\d+)s_(GA\d+)_` | 133 | dark index — **filename, not directory** |
-| `masterDateRe` | `_(\d{8})\.xisf$` | 137 | duplicate-master tiebreak |
+| `sessionDateRe` | `^\d{4}-\d{2}-\d{2}$` | 103 | which directories are sessions |
+| `paRe` | `_PA(\d+)` | 106 | session angle; flat index — a session must yield exactly one (§2.4) |
+| `flatFilterRe` | `^FLAT_([LRGBSHO])_` | 139 | flat index — **anchored at start**, spliced from `knownFilters` (§3.1.1) |
+| `frameDateRe` | `_(\d{8})_\d{6}_\d+_PA` | 143 | report only |
+| `gainRe` | `_(GA\d+)_` | 155 | session gains; bias index |
+| `lightComboRe` | `_(\d+)s_BIN\d_-10C_(GA\d+)_` | 160 | light → dark — **`-10C` hardcoded** |
+| `darkComboRe` | `masterDark_(\d+)s_(GA\d+)_` | 163 | dark index — **filename, not directory** |
+| `masterDateRe` | `_(\d{8})\.xisf$` | 167 | duplicate-master tiebreak |
+
+`flatFilterRe` is assembled from `flatNamePrefix` and `knownFilters` rather than
+written out, so extending the filter set (§3.1.1) changes the pattern
+automatically and cannot drift from the constant the directory check uses. The
+group **must stay capturing** — the filter is `mf[1]`, and an alternation or a
+non-capturing group would return `nil` from every lookup while still compiling.
+
+The line numbers are accurate as of this revision and will drift; the patterns
+are what matters and each is pinned by a test in the appendix.
 
 ---
 
 ## 8. Extensions and dotfiles
 
-Two distinct extension sets, kept apart because masters are in PixInsight's format : 
+Two distinct extension sets, kept apart because the masters are in PixInsight's
+XISF format rather than FITS:
 
 | Set | Extensions | Used for |
 |---|---|---|
@@ -466,13 +596,14 @@ Much looser. Any directory of FITS frames works.
 **Flat by default.** Only files directly in `--dir`. Descending is opt-in so a
 stray frame below the chosen directory cannot quietly join the report.
 
-**With `-r`, the walk stops at depth 2** 
-This is sized for the acquisition layout, where a frame
-sits two levels below `Lights/<target>`:
+**With `-r`, the walk stops at depth 2.** The scan root counts as depth 0. This
+is sized for the acquisition layout, where a frame sits two levels below
+`Lights/<target>`:
 
 ```
 Lights/<target>/2026-09-10/S/frame.FIT
-                    ←1→   ←2→
+            ←1→    ←2→    ←3→
+   root   target  date  filter
 ```
 
 The cap cuts on **directory** depth, not file depth, so a directory at depth 3
@@ -487,21 +618,70 @@ subdirectories are warned about.
 
 ### 9.1 Known limitation: the filter and date columns
 
-`parseFilename` is separate from `prepare`'s regexes and
-much dumber — it splits on `_` and takes positional fields:
+`parseFilename` is separate from `prepare`'s regexes and much dumber — it splits
+on `_` and takes two fixed positions, `parts[2]` and `parts[7]`:
 
-So the third `_`-separated field is the filter and the eighth is the date. This
-holds for light and flat names but **not** for a generated master name:
+```go
+parts := strings.Split(strings.TrimSuffix(name, filepath.Ext(name)), "_")
+if len(parts) >= 3 { filter = parts[2] }
+if len(parts) >= 8 { date = raw[:4] + "-" + raw[4:6] + "-" + raw[6:8] }
+```
 
-A master dropped into an `analyze` directory reports its dimensions as a filter.
-This is a known limitation, pinned by `TestParseFilenameMasterFlat`.
+Those indices are counted on the light grammar, where they are correct:
+
+```
+LBN527_LIGHT_R_300s_BIN1_-10C_GA0_20260910_021539_988_PA310_E.FIT
+          parts[2]=R        parts[7]=20260910   →  filter "R", date "2026-09-10"
+```
+
+The flat grammar puts the target token in front, which shifts both by one, so
+the same indices land on the wrong fields:
+
+```
+FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT
+      parts[2]=67.02s  parts[7]=071758          →  filter "67.02s", date ""
+```
+
+The date is empty because `071758` is six characters and the parser requires
+eight before slicing. So `analyze` pointed at a `Flats/` directory reports every
+flat's filter as its exposure and its date as blank.
+
+This does not affect `prepare`, which never calls `parseFilename` and uses the
+anchored regexes of §2.3 and §3.1 instead. It is visible only in the `filter`
+and `date` columns of an `analyze` CSV, and only when that CSV is the point of
+the run rather than a tuning pass.
+
+A generated master name is worse, because the positions do not merely shift but
+land on data:
+
+```
+masterFlat_BIN-1_9576x6388_FILTER-S_mono_SESSION-1.fit
+                   parts[2] = 9576x6388      ← reported as the filter
+```
+
+A master dropped into an `analyze` directory reports its sensor dimensions as a
+filter. This is a known limitation, pinned by `TestParseFilenameMasterFlat`
+(`cmd/analyze_csv_test.go:128`), so that the current output stays visible and a
+future fix reads as a deliberate change rather than a surprise.
 
 ---
 
 ## 10. Output layout
 
-Written under `<output>/<target>/`. Exactly three directories at the target
-root — pinned by `TestPrepareRealTreeShape` (`cmd/prepare_test.go:349`).
+Written under `<output>/<target>/`. Three directories may appear at the target
+root, and one of them is conditional:
+
+| Directory | Created when |
+|---|---|
+| `metrics/` | always |
+| `Sessions/` | always |
+| `rejected/` | **only if at least one frame was rejected** |
+
+So a clean run leaves two, not three. `rejected/` is created lazily by the
+first quarantine copy — an empty `rejected/Session_01/` would imply a session
+failed when it did not. Pinned by `TestPrepareRealTreeShape`
+(`cmd/prepare_test.go:2603`) for the shape and by `TestPrepareSessionLayoutIsSymmetric`
+(`cmd/prepare_test.go:1082`) for the absence.
 
 ```
 <output>/<target>/
@@ -515,16 +695,20 @@ root — pinned by `TestPrepareRealTreeShape` (`cmd/prepare_test.go:349`).
 │   │   └── flats/<FILTER>/*.FIT       ← matched flats
 │   ├── Session_02/
 │   │   └── ...
-│   ├── bias/                          ← shared, one file per gain
+│   ├── bias/                          ← shared, one file per gain, if found
 │   │   └── masterBias_GA0_-10C_257f_20251117.xisf
-│   └── darks/                         ← shared, one file per gain+exposure
+│   └── darks/                         ← shared, per gain+exposure, if found
 │       └── masterDark_300s_GA0_-10C_20251118.xisf
 │
-└── rejected/                          ← NOT under Sessions/
+└── rejected/                          ← NOT under Sessions/; only if non-empty
     └── Session_01/<FILTER>/*.FIT
 ```
 
-Four things worth knowing:
+`bias/` and `darks/` are conditional for the same reason: they appear only when
+a master the run actually needs was found. A target with no darks on hand gets
+`Sessions/Session_01/` and nothing beside it, plus a warning (§11).
+
+Five things worth knowing:
 
 - **Filenames are never changed.** `copyFITS` is a plain buffered stream copy.
 - **`bias/` and `darks/` are siblings of `Session_NN`, not inside it.** A master
@@ -540,20 +724,39 @@ Four things worth knowing:
 
 ### 10.1 Reports
 
-Both CSVs use `;` as separator, matching
-the reference PixInsight tool's export format.
+Both CSVs use `;` as separator, matching the reference PixInsight tool's export
+format, so garfield output can be read alongside it directly.
 
-`metrics/sessions.csv`:
+`metrics/sessions.csv` — one row per session, plus a trailing summary row in
+some runs:
 
 ```
 session;date;pa;filters;lightCount;approvedCount;rejectedCount;flatCount;missingFlats;frameDateMin;frameDateMax;gains;darks
 Session_01;2026-09-16;PA310;S;2;2;0;2;;2026-09-16;2026-09-17;GA0;GA0/300s
+Session_02;2026-09-20;PA310;O;1;1;0;1;H;;2026-09-20;2026-09-20;GA0;GA0/300s
 ```
+
+| Column | Meaning |
+|---|---|
+| `session` | **Bare** name (`Session_01`), never a path — join on this |
+| `date` | the session **directory** date, the one flats matched on (§3.3) |
+| `pa` | the session position angle |
+| `filters` | filter directories the session actually holds |
+| `lightCount` / `approvedCount` / `rejectedCount` | frames analysed, and how they split |
+| `flatCount` | flats **copied**, including borrowed ones (§3.2) |
+| `missingFlats` | filters with lights but no flats at all |
+| `frameDateMin` / `frameDateMax` | range of the dates **inside** the light filenames |
+| `gains` | distinct gains among the approved frames |
+| `darks` | `(gain/exposure)` keys a dark was copied for |
+
+`date` and `frameDateMin` disagree on most nights, and that is correct: sessions
+cross midnight. `date` is the one that matched flats.
 
 `flatCount` counts every flat copied for the session, **including any borrowed
 from a neighbouring date** (§3.2), so it does not imply the flats came from
 that night. The source dates are recorded per flat in the plan but are not
-written to the CSV.
+written to the CSV — if you need to know where a flat came from, read the
+filename's date field, since it is never rewritten (§10).
 
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
@@ -561,8 +764,8 @@ written to the CSV.
 session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error
 ```
 
-The `decision` column holds one of six values, which are **data, not messages** 
-Anything parsing this file must match on them:
+`decision` holds one of six values, which are **data, not messages** — anything
+parsing this file must match on them, and the strings are part of the contract:
 
 | Value | Meaning |
 |---|---|
@@ -606,8 +809,10 @@ by `analyze`, so the two commands' CSVs cannot disagree.
 | No master dark for a `(gain, exposure)` an approved frame needs |
 | Two masters for one key (collision or tie) |
 | Master filename carries no gain token |
-| Multiple PA values in one session |
 | `analyze -r` stopped at the depth cap |
+
+Multiple PA values in one session is **not** in this table: it is fatal (§2.4),
+and an earlier revision of this document listed it in both places.
 
 A session missing its masters is still usable data; calibration can be supplied
 later in PixInsight.
@@ -672,7 +877,8 @@ Layout claims in this document are enforced by tests, not just documented:
 | Behaviour | Test |
 |---|---|
 | only `YYYY-MM-DD` directories are sessions | `TestPrepareOnlyAcceptsDateDirs` |
-| full output tree shape, 3 dirs at root | `TestPrepareRealTreeShape` |
+| full output tree shape at the target root | `TestPrepareRealTreeShape` |
+| no `rejected/` tree when nothing was rejected | `TestPrepareSessionLayoutIsSymmetric` |
 | `Session_%02d` numbering and padding | `TestPrepareSessionDirPadding` |
 | session dirs live under `Sessions/` | `TestPrepareSessionsLiveUnderSessionsDir` |
 | darks keyed on filename not directory | `TestIndexDarkMastersKeysOnFilenameNotDirectory` |
