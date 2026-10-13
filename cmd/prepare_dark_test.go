@@ -308,7 +308,7 @@ func TestIndexDarkMastersRejectsNonMasters(t *testing.T) {
 		// A .xisf carrying no recognisable pair is reported rather than dropped
 		// in silence.
 		if len(warnings) == 0 {
-			t.Error("no warning for the files carrying no exposure/gain pair")
+			t.Error("no warning for the files carrying no exposure/gain/setpoint")
 		}
 	})
 }
@@ -614,9 +614,9 @@ func TestLightDarkKeyRe(t *testing.T) {
 		{"LBN527_LIGHT_B_300s_BIN1_-10C_GA0_20260914_045755_638_PA310_E.FIT", "GA0", 300, "-10C"},
 		{"M87_LIGHT_H_60s_BIN1_-10C_GA0_20260101_010101_000_PA000_W.FIT", "GA0", 60, "-10C"},
 		{"M87_LIGHT_H_30s_BIN1_-10C_GA0_20260101_010101_000_PA000_W.FIT", "GA0", 30, "-10C"},
-		// The setpoint is read, not assumed. These are the frames that used to
-		// extract nothing at all, because the pattern hardcoded "-10C" and the
-		// run then reported no dark and carried on.
+		// The sensor temperature setpoint is read, not assumed. These are the
+		// frames that used to extract nothing at all, because the pattern
+		// hardcoded "-10C" and the run then reported no dark and carried on.
 		{"M31_LIGHT_B_300s_BIN1_0C_GA0_20260910_220000_000_PA310_E.FIT", "GA0", 300, "0C"},
 		{"M31_LIGHT_H_600s_BIN1_+5C_GA2750_20260910_220000_000_PA310_E.FIT", "GA2750", 600, "+5C"},
 		{"M31_LIGHT_H_60s_BIN1_-20C_GA0_20260910_220000_000_PA310_E.FIT", "GA0", 60, "-20C"},
@@ -746,9 +746,10 @@ func TestDarkComboReGroupOrderDiffersFromLight(t *testing.T) {
 	}
 }
 
-// TestPrepareMixedTemperatureTargetNeedsTwoDarks is the reason the setpoint is in
-// the key at all. One target, two nights, two setpoints -- a season at a remote
-// site can straddle a change of cooling. Each night must draw its own dark.
+// TestPrepareMixedTemperatureTargetNeedsTwoDarks is the reason the sensor
+// temperature setpoint is in the key at all. One target, two nights, two
+// setpoints -- a season at a remote site can straddle a change of cooling. Each
+// night must draw its own dark.
 func TestPrepareMixedTemperatureTargetNeedsTwoDarks(t *testing.T) {
 	const target = "M31"
 	root := t.TempDir()
@@ -797,8 +798,9 @@ func TestPrepareMixedTemperatureTargetNeedsTwoDarks(t *testing.T) {
 }
 
 // TestPrepareDoesNotBorrowADarkAtTheWrongTemperature is the silent-failure case
-// the setpoint guards. A -10C light with only a 0C dark on hand must report the
-// gap rather than quietly calibrate with the wrong-temperature master.
+// the sensor temperature setpoint guards. A -10C light with only a 0C dark on
+// hand must report the gap rather than quietly calibrate with the
+// wrong-temperature master.
 func TestPrepareDoesNotBorrowADarkAtTheWrongTemperature(t *testing.T) {
 	const target = "NGC7000"
 	root := t.TempDir()

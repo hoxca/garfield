@@ -258,8 +258,8 @@ Global Flags:
 4. **Route** each frame: `APPROVED` to `lights/<filter>/`, everything else to
    the target-level `rejected/` tree.
 5. **Match flats** by filter *and* angle, on the session's date.
-6. **Copy masters**: biases by gain, darks by gain and exposure, only those the
-   approved frames actually need.
+6. **Copy masters**: biases by gain, darks by gain, exposure *and* sensor
+   temperature setpoint, only those the approved frames actually need.
 7. **Write** `metrics/sessions.csv` and `metrics/frames.csv`.
 
 Start with `--dry-run`. It prints the whole plan without copying, and it costs
@@ -367,11 +367,15 @@ holding `masterDark_600s_GA2750_...` works. A file named `G2750` instead of
 `GA2750` matches no light and **no dark is ever copied** — the sharpest edge in
 the input contract, and it fails quietly.
 
-**`-10C` is hardcoded** in the light-to-dark match. A frame taken at a different
-sensor temperature gets a bias (that regex has no setpoint) but no dark.
+**A dark must match the sensor temperature setpoint it was shot at.** Exposure,
+gain and setpoint together identify the dark a light needs — a `-10C` dark does
+not calibrate a `0C` light, so a target spanning two setpoints draws one dark per
+setpoint. Bias is keyed on gain alone, and flats are not matched on temperature
+at all.
 
 **Masters must be `.xisf`.** A `.fit` master is rejected. The raw calibration
-frames under `Darks/-10C/G0/30s/*.FIT` are doubly out of scope.
+frames under `Darks/-10C/G0/30s/*.FIT` are doubly out of scope — two levels deep,
+and not `.xisf`.
 
 ---
 
@@ -391,7 +395,7 @@ frames under `Darks/-10C/G0/30s/*.FIT` are doubly out of scope.
 │   │   └── ...
 │   ├── bias/                          ← shared, one per gain
 │   │   └── masterBias_GA0_-10C_257f_20251117.xisf
-│   └── darks/                         ← shared, per gain+exposure
+│   └── darks/                         ← shared, per gain+exposure+setpoint
 │       └── masterDark_300s_GA0_-10C_20251118.xisf
 │
 └── rejected/                          ← NOT under Sessions/
@@ -424,7 +428,7 @@ Four things to know about the shape:
 
 ```
 session;date;pa;filters;lightCount;approvedCount;rejectedCount;flatCount;missingFlats;frameDateMin;frameDateMax;gains;darks
-Session_01;2026-09-10;PA310;S;2;2;0;2;;2026-09-10;2026-09-10;GA0;GA0/300s
+Session_01;2026-09-10;PA310;S;2;2;0;2;;2026-09-10;2026-09-10;GA0;GA0/300s/-10C
 ```
 
 `date` is the session **directory** date — the one flats matched on.
@@ -461,7 +465,7 @@ Warnings — the run continues, and the data is still usable:
 | `Flats`, `Bias/Masters` or `Darks/Masters` missing |
 | No flats for a filter that has lights |
 | Fewer than `--flat-count` flats, when that flag is positive |
-| No master bias for a gain in use; no master dark for a needed gain+exposure |
+| No master bias for a gain in use; no master dark for a needed gain+exposure+setpoint |
 | Two masters for one key — resolved by date, or reported as an undecided tie |
 | `analyze -r` stopped at its depth cap, so the search was bounded |
 
@@ -474,8 +478,8 @@ Ranked by how quietly they fail. The full list is
 
 1. **A misnamed dark file means no dark, ever.** The gain comes from the
    filename, never the directory. A misnamed *directory* costs nothing.
-2. **`-10C` is hardcoded** in the light-to-dark match. A different setpoint
-   matches no dark, and the only symptom is a warning.
+2. **A dark at the wrong setpoint is not silently substituted.** It is reported
+   instead, with the masters that *were* found, so a near miss is visible.
 3. **A rotated target cannot be prepared at all** — fatal, not approximated.
 4. **Session numbers are positional.** Insert a date directory and everything
    after it renumbers.

@@ -188,10 +188,10 @@ func lightNameGainExp(target, filter, date, time, ms, pa, gain, exposure string)
 	return lightNameFull(target, filter, date, time, ms, pa, gain, exposure, "-10C")
 }
 
-// lightNameFull is the only builder that writes the setpoint token. The ones
-// above fix it at -10C because that is the temperature the acquisition actually
-// uses; this one exists so a fixture can put two setpoints in one target, which
-// is the case the setpoint-in-the-key change is about.
+// lightNameFull is the only builder that writes the sensor temperature setpoint
+// token. The ones above fix it at -10C because that is the temperature the
+// acquisition actually uses; this one exists so a fixture can put two setpoints
+// in one target, which is the case the setpoint-in-the-key change is about.
 func lightNameFull(target, filter, date, time, ms, pa, gain, exposure, temp string) string {
 	return fmt.Sprintf("%s_LIGHT_%s_%s_BIN1_%s_%s_%s_%s_%s_PA%s_E.FIT",
 		target, filter, exposure, temp, gain, date, time, ms, pa)
@@ -202,10 +202,10 @@ func flatName(filter, dur, date, time, ms, pa string) string {
 	return flatNameTemp(filter, dur, date, time, ms, pa, "-10C")
 }
 
-// flatNameTemp builds a flat at an explicit setpoint. Temperature is not part of
-// how a flat is matched -- only filter and angle are -- so this exists to prove
-// that: a fixture can put a 0C flat under a -10C session and the flat is still
-// collected.
+// flatNameTemp builds a flat at an explicit sensor temperature setpoint. The
+// setpoint is not part of how a flat is matched -- only filter and angle are --
+// so this exists to prove that: a fixture can put a 0C flat under a -10C session
+// and the flat is still collected.
 func flatNameTemp(filter, dur, date, time, ms, pa, temp string) string {
 	return fmt.Sprintf("FLAT_%s_%ss_BIN1_%s_GA2750_%s_%s_%s_PA%s.FIT",
 		filter, dur, temp, date, time, ms, pa)

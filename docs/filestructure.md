@@ -205,19 +205,20 @@ simply absent from the report.
 | frame date | `_(\d{8})_\d{6}_\d+_PA`  | `frameDateMin/Max` stay empty in `sessions.csv` |
 | PA | `_PA(\d+)`  | Session PA is empty; **no flats will match** |
 | gain | `_(GA\d+)_`  | Not counted in the session gains; no bias copied for it |
-| exposure + gain | `_(\d+)s_BIN\d_-10C_(GA\d+)_`  | **No master dark** will be copied for this frame |
+| exposure + setpoint + gain | `_(\d+)s_BIN\d_([-+]?\d+C)_(GA\d+)_`  | **No master dark** will be copied for this frame |
 
 Frame date, time, milliseconds and flip are not used for matching at all.
 The `E`/`W` side of pier suffix is cosmetic here.
 
-Never read at all: **filter**, exposure, binning, setpoint, and the `LIGHT`
-type marker. The filter is the wheel (§2.2); the rest either feed a report or
-are decoration.
+Never read at all: **filter**, exposure, binning, and the `LIGHT` type marker.
+The filter is the wheel (§2.2); the rest either feed a report or are decoration.
+The sensor temperature setpoint *is* read, but only to pair a light with its dark
+(§5.2) — it never affects this frame's own routing.
 
 Only two of the four read tokens change what is copied. A missing **frame date**
 costs a report column and nothing else. A missing **PA**, **gain**, or
-**exposure + gain** pair costs data: the frame is still copied into `lights/`,
-but it never reaches a flat, a bias, or a dark.
+**exposure + setpoint + gain** triple costs data: the frame is still copied into
+`lights/`, but it never reaches a flat, a bias, or a dark.
 
 ### 2.4 Position angles
 
@@ -279,7 +280,8 @@ Two tokens are load-bearing and three of the rest are not:
 | filter | `^FLAT_([LRGBSHO])_` | file dropped, with a warning naming it (§3.1.1) |
 | PA | `_PA(\d+)` | file dropped, with a warning naming it |
 
-Exposure, binning, setpoint, gain, date, time and milliseconds are **never read**
+Exposure, binning, sensor temperature setpoint, gain, date, time and
+milliseconds are **never read**
 on the flat side. `67.02s` and `GA2750` in the name above are decoration: no flat
 is ever matched to a light by exposure or gain. That is the opposite of the dark
 side, where both are part of the key (§5).
@@ -463,9 +465,10 @@ masterBias_GA0_-10C_257f_20251117.xisf
 
 - Keyed by **gain**, taken from the filename via `_(GA\d+)_`.
 - The frame count (`257f`) is **not read** — see §6.
-- The setpoint (`-10C`) is **not read** here either: a bias matches a gain,
-  not a gain and a temperature. Only `lightComboRe` on the *light* side has the
-  setpoint in its pattern (§5.2).
+- The sensor temperature setpoint (`-10C`) is **not read** here either: a bias
+  matches a gain, not a gain and a temperature. Only `lightComboRe` on the
+  *light* side carries a setpoint, and only to pair a light with its dark
+  (§5.2).
 - The date suffix must be eight digits directly before `.xisf`. A master with
   no parseable date cannot be tiebroken, so it loses to any dated rival (§6).
 - A file with no gain token is skipped with a warning.
@@ -505,9 +508,9 @@ input contract. A dark in a directory whose name suggests gain `G2750` but
 whose file says `GA2750` works; a dark in a directory named `GA2750` whose file
 says `GA2750` also works, because the directory is never read.
 
-The key renders as `GA2750/600s`.
+The key renders as `GA2750/600s/-10C`.
 
-### 5.2 The setpoint is part of the dark key
+### 5.2 The sensor temperature setpoint is part of the dark key
 
 A light's needed dark is computed with `lightComboRe`:
 
@@ -515,14 +518,15 @@ A light's needed dark is computed with `lightComboRe`:
 _(\d+)s_BIN\d_([-+]?\d+C)_(GA\d+)_
 ```
 
-Exposure, setpoint and gain — the three properties that together make a dark
-necessary. A dark is **thermal**, so a `-10C` dark does not calibrate a `0C`
-light, and the setpoint is therefore part of the key rather than an assumption
-about the instrument.
+Exposure, sensor temperature setpoint and gain — the three properties that
+together make a dark necessary. A dark is **thermal**, so a `-10C` dark does not
+calibrate a `0C` light, and the setpoint is therefore part of the key rather than
+an assumption about the instrument. The full term is used on first mention and
+"setpoint" after that, since it is the only setpoint any of these patterns reads.
 
 The setpoint used to be hardcoded as `-10C` in that pattern, which meant a target
 shot at any other temperature matched no dark at all and the run said nothing
-useful. A target may also mix temperatures across its sessions — a season can
+useful. A target may also mix setpoints across its sessions — a season can
 straddle a change of cooling — so each session draws its own dark:
 
 ```
@@ -533,11 +537,14 @@ no master dark for GA0/300s/0C in ".../Darks/Masters"
 The `available:` list is what makes a near miss diagnosable: the operator sees
 that the right exposure and gain are on hand at the wrong temperature.
 
-#### What the setpoint does *not* key
+#### What the sensor temperature setpoint does *not* key
 
-Only the dark side reads a setpoint. It is easy to over-apply this, so explicitly:
+Only the dark side reads a setpoint. "Setpoint" here means sensor temperature
+throughout — the filter wheel has positions (§3.1.3) and a rotator has angles, so
+the unqualified word is genuinely ambiguous in this document. It is easy to
+over-apply the rule, so explicitly:
 
-| Pairing | Keyed on | Setpoint? |
+| Pairing | Keyed on | Sensor temperature setpoint? |
 |---|---|---|
 | light → dark | exposure + gain + **setpoint** | yes |
 | light → bias | gain | **no** — `indexBiasMasters` reads no setpoint |
@@ -546,7 +553,8 @@ Only the dark side reads a setpoint. It is easy to over-apply this, so explicitl
 A **flat** is a shuttered frame of sky, so its dark current is negligible and the
 setpoint does not change what it corrects. A flat shot at `0C` calibrates a
 `-10C` light perfectly well, and matching them on temperature would reject good
-flats for no physical reason. Pins: `TestFlatsAreNotFilteredByTemperature`.
+flats for no physical reason. Pinned by
+`TestFlatsAreNotFilteredByTemperature`.
 
 A **bias** is keyed on gain alone even though `masterBias_GA0_-10C_...` carries a
 setpoint. Bias is a much weaker function of temperature than a dark, and reading
@@ -583,7 +591,7 @@ Missing masters are warnings, not errors — the frames are still usable data an
 the dark can be supplied later:
 
 ```
-no master dark for GA2750/600s in "..." (available: GA0/300s GA0/600s), affected sessions: Session_01
+no master dark for GA2750/600s/-10C in "..." (available: GA0/300s/-10C GA0/600s/-10C), affected sessions: Session_01
 ```
 
 ---
@@ -629,8 +637,8 @@ All in `cmd/prepare.go` unless noted.
 | `flatFilterRe` | `^FLAT_([LRGBSHO])_` | 139 | flat index — **anchored at start**, spliced from `knownFilters` (§3.1.1) |
 | `frameDateRe` | `_(\d{8})_\d{6}_\d+_PA` | 143 | report only |
 | `gainRe` | `_(GA\d+)_` | 155 | session gains; bias index |
-| `lightComboRe` | `_(\d+)s_BIN\d_-10C_(GA\d+)_` | 160 | light → dark — **`-10C` hardcoded** |
-| `darkComboRe` | `masterDark_(\d+)s_(GA\d+)_` | 163 | dark index — **filename, not directory** |
+| `lightComboRe` | `_(\d+)s_BIN\d_([-+]?\d+C)_(GA\d+)_` | 175 | light → dark — exp, **setpoint**, gain (§5.2) |
+| `darkComboRe` | `masterDark_(\d+)s_(GA\d+)_([-+]?\d+C)_` | 181 | dark index — **filename, not directory**; group order reversed |
 | `masterDateRe` | `_(\d{8})\.xisf$` | 167 | duplicate-master tiebreak |
 
 `flatFilterRe` is assembled from `flatNamePrefix` and `knownFilters` rather than
@@ -786,7 +794,7 @@ failed when it did not. Pinned by `TestPrepareRealTreeShape`
 │   │   └── ...
 │   ├── bias/                          ← shared, one file per gain, if found
 │   │   └── masterBias_GA0_-10C_257f_20251117.xisf
-│   └── darks/                         ← shared, per gain+exposure, if found
+│   └── darks/                         ← shared, per gain+exposure+setpoint, if found
 │       └── masterDark_300s_GA0_-10C_20251118.xisf
 │
 └── rejected/                          ← NOT under Sessions/; only if non-empty
@@ -821,8 +829,8 @@ some runs:
 
 ```
 session;date;pa;filters;lightCount;approvedCount;rejectedCount;flatCount;missingFlats;frameDateMin;frameDateMax;gains;darks
-Session_01;2026-09-16;PA310;S;2;2;0;2;;2026-09-16;2026-09-17;GA0;GA0/300s
-Session_02;2026-09-20;PA310;O;1;1;0;1;H;;2026-09-20;2026-09-20;GA0;GA0/300s
+Session_01;2026-09-16;PA310;S;2;2;0;2;;2026-09-16;2026-09-17;GA0;GA0/300s/-10C
+Session_02;2026-09-20;PA310;O;1;1;0;1;H;;2026-09-20;2026-09-20;GA0;GA0/300s/-10C
 ```
 
 | Column | Meaning |
@@ -836,7 +844,7 @@ Session_02;2026-09-20;PA310;O;1;1;0;1;H;;2026-09-20;2026-09-20;GA0;GA0/300s
 | `missingFlats` | filters with lights but no flats at all |
 | `frameDateMin` / `frameDateMax` | range of the dates **inside** the light filenames |
 | `gains` | distinct gains among the approved frames |
-| `darks` | `(gain/exposure)` keys a dark was copied for |
+| `darks` | `gain/exposure/setpoint` keys a dark was copied for (§5.2) |
 
 `date` and `frameDateMin` disagree on most nights, and that is correct: sessions
 cross midnight. `date` is the one that matched flats.
@@ -895,7 +903,7 @@ by `analyze`, so the two commands' CSVs cannot disagree.
 | No flats for a filter that has lights, after borrowing (§3.2) |
 | Fewer than `--flat-count` flats for a filter, after borrowing (§3.2) — only when that flag is positive |
 | No master bias for a gain the lights use |
-| No master dark for a `(gain, exposure)` an approved frame needs |
+| No master dark for a `(gain, exposure, setpoint)` an approved frame needs |
 | Two masters for one key (collision or tie) |
 | Master filename carries no gain token |
 | `analyze -r` stopped at the depth cap |
@@ -918,9 +926,13 @@ Things that will bite, ranked by how quietly they fail:
    instead of `GA2750`) means no dark is ever copied. Symmetrically, `Bias/`
    files with the legacy `G0` spelling are skipped with a warning.
 
-2. **`-10C` is hardcoded** in `lightComboRe`. A different sensor setpoint
-   silently matches no dark. The gain regex has no such requirement, so a frame
-   at the wrong temperature still gets a bias but no dark.
+2. **A dark is thermal, so the setpoint is part of its key.** A `-10C` dark does
+   not calibrate a `0C` light, and one is not silently substituted for the other —
+   the mismatch is reported, naming the masters that *were* found so a near miss
+   is visible (§5.2). The gain regex carries no such requirement, so a frame at
+   the wrong temperature still gets a bias but no dark. This was the reverse
+   before the setpoint entered the key: a light at `0C` matched no dark at all,
+   whatever was on disk.
 
 3. **Rotated targets cannot be prepared.** One target means one angle, chosen
    upfront (§2.4). A session with two angles, or sessions of one target at
@@ -976,7 +988,12 @@ Layout claims in this document are enforced by tests, not just documented:
 | `.fit` masters rejected | `TestIndexDarkMastersRejectsNonMasters` |
 | duplicate dark resolved by date; tie reported | `TestIndexDarkMastersPrefersTheLatestDate`, `TestIndexDarkMastersReportsAnUndecidedTie` |
 | gain token shape, legacy `G0` must **not** match | `TestGainReMatchesAcquisitionNames` |
-| light→dark exposure/gain extraction | `TestLightDarkKeyRe`, `TestDarkComboRe` |
+| light→dark exposure/setpoint/gain extraction | `TestLightDarkKeyRe`, `TestDarkComboRe` |
+| the two patterns' group order is reversed | `TestDarkComboReGroupOrderDiffersFromLight` |
+| `-0C` and `0C` are one key; other signs stay distinct | `TestNormaliseTempCollapsesSignedZero`, `TestDarkKeysMatchAcrossSignedZero` |
+| a target spanning two setpoints draws one dark each | `TestPrepareMixedTemperatureTargetNeedsTwoDarks` |
+| a dark at the wrong setpoint is reported, not substituted | `TestPrepareDoesNotBorrowADarkAtTheWrongTemperature` |
+| flats are not matched on setpoint | `TestFlatsAreNotFilteredByTemperature` |
 | non-master files and dotfiles skipped in bias dir | `TestPrepareSkipsNonMasterFilesInBiasDir` |
 | biases shared across sessions | `TestPrepareBiasIsSharedAcrossSessions` |
 | darks shared across sessions | `TestPrepareDarksSharedAcrossSessions` |
