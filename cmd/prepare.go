@@ -36,7 +36,7 @@ const (
 )
 
 // sessionLightsDir and sessionFlatsDir are the subdirectories of a prepared
-// session. 
+// session.
 const (
 	sessionLightsDir = "lights"
 	sessionFlatsDir  = "flats"
@@ -50,7 +50,7 @@ const (
 const biasOutDir = "bias"
 
 // darksOutDir holds the master darks, for the same reason and with the same
-// shape as biasOutDir. 
+// shape as biasOutDir.
 const darksOutDir = "darks"
 
 // biasMastersDir and darksMastersDir are the acquisition-side directories
@@ -178,6 +178,11 @@ type prepareOptions struct {
 	skipExisting bool
 	quiet        bool
 
+	// targetFlats is how many flats a session wants per filter and angle. Zero
+	// means no goal at all: the session keeps whatever its own date holds and
+	// never reaches into a neighbour.
+	targetFlats int
+
 	// workers and convWorkers control the quality pass; they mirror analyze's
 	// flags and the mrs.ConvWorkers global.
 	workers     int
@@ -221,6 +226,8 @@ func init() {
 	prepareCmd.Flags().StringVarP(&prepareOpts.output, "output", "o", defaultPrepareOutput, "destination root")
 	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "show the plan without copying")
 	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "do not overwrite existing files")
+	prepareCmd.Flags().IntVar(&prepareOpts.targetFlats, "flat-count", 0,
+		"flats to collect per filter and angle; 0 = the session's own date only")
 	prepareCmd.Flags().BoolVar(&prepareOpts.quiet, "quiet", false, "suppress console output")
 
 	registerQualityFlags(prepareCmd.Flags(), &prepareOpts.qualityThresholds)
@@ -236,8 +243,9 @@ type sessionPlan struct {
 	// filters holds the light filenames per filter, keyed by the Lights
 	// filter subdirectory name.
 	filters map[string][]string
-	// flats holds the matching flat filenames per filter.
-	flats map[string][]string
+	// flats holds the flats matched per filter, each recording the date
+	// directory it was found in, which is not always the session's own.
+	flats map[string][]flatRef
 	// verdicts holds the quality decision per light filename, filled in by the
 	// assessment pass before any copying happens.
 	verdicts map[string]ImageResult
@@ -302,6 +310,11 @@ func runPrepare(opts prepareOptions) error {
 	if opts.output == "" {
 		return fmt.Errorf("--output cannot be empty")
 	}
+	// Rejected rather than clamped: a negative count is a typo, and treating it
+	// as zero would quietly turn borrowing off instead of saying so.
+	if opts.targetFlats < 0 {
+		return fmt.Errorf("--flat-count cannot be negative, got %d", opts.targetFlats)
+	}
 
 	lightsRoot := filepath.Join(opts.input, lightsDir, opts.target)
 	info, err := os.Stat(lightsRoot)
@@ -317,7 +330,7 @@ func runPrepare(opts prepareOptions) error {
 
 	targetOut := filepath.Join(opts.output, opts.target)
 
-	sessions, warnings, err := planSessions(lightsRoot, filepath.Join(opts.input, flatsDir), opts.target)
+	sessions, warnings, err := planSessions(lightsRoot, filepath.Join(opts.input, flatsDir), opts.target, opts.targetFlats)
 	if err != nil {
 		return err
 	}
@@ -326,7 +339,7 @@ func runPrepare(opts prepareOptions) error {
 	}
 
 	// Indexed once for the whole target: the masters are shared by every
-	// session, so this is not per-session work. 
+	// session, so this is not per-session work.
 	// A missing directory is not an error
 	var masters map[string]biasMaster
 	biasRoot := filepath.Join(opts.input, biasDir, biasMastersDir)
@@ -464,6 +477,16 @@ func runPrepare(opts prepareOptions) error {
 		return err
 	}
 	return writeFramesCSV(targetOut, sessions)
+}
+
+// flatRef is one flat frame together with the date directory it was found in,
+// which is not necessarily the session's own: a session short of flats borrows
+// from a neighbouring night. The copy resolves its source from the recorded
+// date, since rebuilding it from the session date would look in the wrong
+// directory and fail to open.
+type flatRef struct {
+	date string
+	name string
 }
 
 func dryRunSuffix(dry bool) string {
@@ -659,7 +682,7 @@ var errMixedAngles = errors.New("mixed angles")
 // In the second case each session would still be matched to its own date's
 // flats, so every session would look internally consistent and the report
 // would carry several different angles with nothing explaining why.
-func planSessions(lightsRoot, flatsRoot, target string) ([]sessionPlan, []string, error) {
+func planSessions(lightsRoot, flatsRoot, target string, targetFlats int) ([]sessionPlan, []string, error) {
 	entries, err := os.ReadDir(lightsRoot)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to read %q: %w", lightsRoot, err)
@@ -681,7 +704,7 @@ func planSessions(lightsRoot, flatsRoot, target string) ([]sessionPlan, []string
 	)
 
 	for i, date := range dates {
-		s, warns, err := planSession(filepath.Join(lightsRoot, date), filepath.Join(flatsRoot, date), i+1, date)
+		s, warns, err := planSession(filepath.Join(lightsRoot, date), flatsRoot, i+1, date, dates, targetFlats)
 		if err != nil {
 			// A fault in the data is collected and reported with the others; a
 			// directory that could not be read is not, since planning on from
@@ -740,12 +763,22 @@ func mixedAnglesAcrossSessions(sessions []sessionPlan, target string) string {
 }
 
 // planSession builds the plan for a single session directory.
-func planSession(sessionDir, flatDir string, number int, date string) (sessionPlan, []string, error) {
+//
+// flatsRoot is the Flats directory of the acquisition tree, not this session's
+// flat directory: a session short of flats borrows from its neighbours, so the
+// neighbouring dates have to be reachable. targetDates is every date directory
+// this target acquired on, in order, and bounds where a borrowed flat may come
+// from -- only dates the target itself observed.
+//
+// targetFlats is how many flats the session wants per filter and angle. At zero
+// there is no goal: the session keeps its own date's frames, reaches into no
+// neighbour, and is never reported short.
+func planSession(sessionDir, flatsRoot string, number int, date string, targetDates []string, targetFlats int) (sessionPlan, []string, error) {
 	s := sessionPlan{
 		number:  number,
 		date:    date,
 		filters: map[string][]string{},
-		flats:   map[string][]string{},
+		flats:   map[string][]flatRef{},
 	}
 
 	filterDirs, filterWarns, err := filterSubdirs(sessionDir)
@@ -811,24 +844,112 @@ func planSession(sessionDir, flatDir string, number int, date string) (sessionPl
 	// Flats are matched on the session date, not the date embedded in the
 	// light filenames: sessions run past midnight, so the two disagree for
 	// most nights and only the directory name lines up with Flats/.
-	flatIndex, flatWarns := indexFlats(flatDir)
-	warnings = append(warnings, flatWarns...)
-
 	for _, filter := range s.filterNames() {
-		key := flatKey(filter, s.pa)
-		matched := flatIndex[key]
-		if len(matched) == 0 {
+		matched, searched := collectFlats(flatsRoot, date, s.pa, filter, targetDates, targetFlats)
+		switch {
+		case len(matched) == 0:
 			s.missingFlats = append(s.missingFlats, filter)
 			warnings = append(warnings, fmt.Sprintf(
-				"session %s (%s): no flat for filter %s (PA%s) in %q",
-				s.sessionDir(), date, filter, s.pa, flatDir))
-			continue
+				"session %s (%s): no flat for filter %s (PA%s), searched %s",
+				s.sessionDir(), date, filter, s.pa, strings.Join(searched, ", ")))
+		case targetFlats > 0 && len(matched) < targetFlats:
+			// Short rather than absent: the frames are usable, so this warns
+			// and continues. Naming the dates searched matters, because a
+			// shortfall is otherwise indistinguishable from a night that
+			// simply held fewer flats. Only reachable with a goal set -- at zero
+			// there is no target to fall short of.
+			warnings = append(warnings, fmt.Sprintf(
+				"session %s (%s): %d flat(s) for filter %s (PA%s), want %d, searched %s",
+				s.sessionDir(), date, len(matched), filter, s.pa, targetFlats,
+				strings.Join(searched, ", ")))
 		}
 		s.flats[filter] = matched
 		s.flatCount += len(matched)
 	}
 
 	return s, warnings, nil
+}
+
+// collectFlats gathers up to target flats for one filter and angle,
+// starting on the session's own date and then walking outward through the
+// target's dates -- previous first, then next -- until the count is reached or
+// the list runs out. The first session has no previous date, so the walk starts
+// at the following one.
+//
+// Every candidate is keyed on filter and angle, so flats shot at another angle
+// or for another filter are never borrowed. The returned dates are the ones
+// actually consulted, for the shortfall warning to name.
+//
+// A target of zero means no goal at all, not a goal of zero: the session keeps
+// its own date's frames and no neighbour is consulted. That distinction is
+// carried explicitly in the two guards below. Testing len(matched) >= target
+// unguarded would be true immediately at zero and hand back no flats at all,
+// which would look like a night that shot none rather than a run that declined
+// to borrow.
+func collectFlats(flatRoot, date, pa, filter string, targetDates []string, target int) ([]flatRef, []string) {
+	var (
+		matched  []flatRef
+		searched []string
+	)
+
+	pos := -1
+	for i, d := range targetDates {
+		if d == date {
+			pos = i
+			break
+		}
+	}
+	if pos < 0 {
+		// The session's own date is not in the target's list, so there is
+		// nothing to walk outward from. Reported as searched-but-empty.
+		return nil, nil
+	}
+
+	// The session's own date first, then each neighbour in turn. Distance
+	// grows while direction alternates back, next, back, next, so a night
+	// missing flats does not stop the search at the first empty neighbour.
+	for _, i := range flatSearchOrder(len(targetDates), pos) {
+		d := targetDates[i]
+		if target > 0 {
+			searched = append(searched, d)
+		}
+		index, _ := indexFlats(filepath.Join(flatRoot, d))
+		for _, name := range index[flatKey(filter, pa)] {
+			if target > 0 && len(matched) >= target {
+				break
+			}
+			matched = append(matched, flatRef{date: d, name: name})
+		}
+		// Stop once the goal is met, or immediately after the session's own
+		// date when there is no goal at all. Without the second clause a zero
+		// target would keep walking the neighbours and return every flat they
+		// hold, which is borrowing by accident.
+		if target <= 0 || len(matched) >= target {
+			break
+		}
+	}
+
+	return matched, searched
+}
+
+// flatSearchOrder lists the positions of the session's own date followed by its
+// neighbours, in the order they should be consulted: previous first, then next,
+// stepping outward. For the first session there is no previous, so the walk
+// begins at the next date.
+func flatSearchOrder(n, pos int) []int {
+	order := make([]int, 0, n)
+	order = append(order, pos)
+	for dist := 1; dist < n; dist++ {
+		// Back before forward, so a session borrows from the night it followed
+		// in preference to the one it precedes.
+		if back := pos - dist; back >= 0 {
+			order = append(order, back)
+		}
+		if fwd := pos + dist; fwd < n {
+			order = append(order, fwd)
+		}
+	}
+	return order
 }
 
 // trackFrameDate widens the recorded range of acquisition dates found in the
@@ -893,9 +1014,7 @@ func flatKey(filter, pa string) string {
 // on FLAT_ at all -- FLATL_H_..., a light frame, a master -- is a different
 // kind of frame that happens to share the directory, and naming it as a broken
 // flat would be misleading. A name that is anchored on FLAT_ but whose filter
-// is outside the known set is a flat garfield cannot use, so it is reported:
-// that is how a newly added narrowband filter announces itself before anyone
-// has extended knownFilters.
+// is outside the known set is a flat garfield cannot use, so it is reported.
 func indexFlats(flatDir string) (map[string][]string, []string) {
 	index := map[string][]string{}
 	var warnings []string
@@ -1008,15 +1127,19 @@ func prepareSession(s sessionPlan, targetOut string, opts prepareOptions) (int, 
 		if len(matched) == 0 {
 			continue
 		}
-		srcDir := filepath.Join(opts.input, flatsDir, s.date)
-		for _, name := range matched {
-			dst := filepath.Join(flatRoot, filter, name)
+		for _, ref := range matched {
+			dst := filepath.Join(flatRoot, filter, ref.name)
 			if !opts.dryRun {
 				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 					return lights, flats, fmt.Errorf("unable to create %q: %w", filepath.Dir(dst), err)
 				}
 			}
-			n, err := copyFITS(filepath.Join(srcDir, name), dst, opts)
+			// From the date the flat was collected, which is not necessarily
+			// the session's own: a session short of flats borrows from a
+			// neighbour, and rebuilding this from s.date would look there and
+			// fail to open.
+			src := filepath.Join(opts.input, flatsDir, ref.date, ref.name)
+			n, err := copyFITS(src, dst, opts)
 			if err != nil {
 				return lights, flats, err
 			}

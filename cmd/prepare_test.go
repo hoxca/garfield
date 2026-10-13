@@ -420,8 +420,11 @@ func TestPrepareCopiesFlatsIntoSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read flats dir: %v", err)
 	}
+	// The default --flat-count is 0, so the session keeps only the flat its own
+	// date held. Borrowing is opt-in; TestPrepareBorrowsFlatsAndCopiesThem
+	// covers the other case.
 	if len(files) != 1 {
-		t.Fatalf("got %d flats, want 1", len(files))
+		t.Fatalf("got %d flats, want 1 (the session's own date only)", len(files))
 	}
 	if !strings.HasPrefix(files[0].Name(), "FLAT_H_") {
 		t.Errorf("flat = %q, want a FLAT_H_ name", files[0].Name())
@@ -432,6 +435,7 @@ func TestPrepareCopiesFlatsIntoSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Contents must match the source, confirming a real copy.
 	got, err := os.ReadFile(filepath.Join(dir, files[0].Name()))
 	if err != nil {
 		t.Fatal(err)
@@ -685,7 +689,7 @@ func TestPrepareDryRunStillAssesses(t *testing.T) {
 	}
 
 	lightsRoot := filepath.Join(root, lightsDir, target)
-	sessions, _, err := planSessions(lightsRoot, filepath.Join(root, flatsDir), target)
+	sessions, _, err := planSessions(lightsRoot, filepath.Join(root, flatsDir), target, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -980,7 +984,8 @@ func TestPrepareSessionsCSV(t *testing.T) {
 		t.Errorf("flatCount = %q, want 1", row[7])
 	}
 
-	// Session 02 has two lights but no flats that night.
+	// Session 02 has two lights and no flats of its own that night. With the
+	// default --flat-count of 0 nothing is borrowed, so it is recorded missing.
 	row = recs[2]
 	if row[4] != "2" || row[5] != "2" || row[6] != "0" {
 		t.Errorf("counts = light %q approved %q rejected %q, want 2/2/0", row[4], row[5], row[6])
@@ -2129,6 +2134,434 @@ func TestFilterSubdirsSkipsUnknownFilters(t *testing.T) {
 	}
 }
 
+// TestCollectFlatsZeroTargetKeepsOnlyTheSessionDate pins the default.
+//
+// Zero means "no goal", not "a goal of zero". Testing len(matched) >= target
+// without guarding on a positive target is true immediately, so the function
+// would hand back no flats at all -- which reads as a night that shot none,
+// rather than a run that declined to borrow. This is the default path, so it
+// is the one that must not be quietly wrong.
+func TestCollectFlatsZeroTargetKeepsOnlyTheSessionDate(t *testing.T) {
+	root := t.TempDir()
+	buildFlatDirs(t, root, map[string][]string{
+		"2026-09-09": flatSet("S", "2026-09-09", "310", 20),
+		"2026-09-10": flatSet("S", "2026-09-10", "310", 3),
+		"2026-09-11": flatSet("S", "2026-09-11", "310", 20),
+	})
+	dates := []string{"2026-09-09", "2026-09-10", "2026-09-11"}
+	flatRoot := filepath.Join(root, flatsDir)
+
+	matched, searched := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, 0)
+
+	if len(matched) != 3 {
+		t.Fatalf("got %d flats, want the session's own 3 (not none, not borrowed)", len(matched))
+	}
+	for _, m := range matched {
+		if m.date != "2026-09-10" {
+			t.Errorf("borrowed from %q, want no borrowing at a target of 0", m.date)
+		}
+	}
+	// No goal, so nothing was searched beyond the session's own date and there
+	// is no shortfall to report.
+	if len(searched) != 0 {
+		t.Errorf("searched = %v, want empty at a target of 0", searched)
+	}
+}
+
+// TestPrepareZeroFlatCountWarnsNothing checks the default run is quiet about
+// flats: three own-date frames is a complete session when no target is set, so
+// neither a shortfall warning nor a missingFlats entry is warranted.
+func TestPrepareZeroFlatCountWarnsNothing(t *testing.T) {
+	const target = "TEST"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {"S": {
+					lightName(target, "S", "20260910", "220000", "000", "310"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": flatSet("S", "2026-09-10", "310", 3),
+		},
+	}
+	f.build(t, root)
+
+	sessions, warnings, err := planSessions(
+		filepath.Join(root, lightsDir, target), filepath.Join(root, flatsDir), target, 0)
+	if err != nil {
+		t.Fatalf("planSessions: %v", err)
+	}
+
+	joined := strings.Join(warnings, "\n")
+	if strings.Contains(joined, "want 14") || strings.Contains(joined, "flat(s) for filter") {
+		t.Errorf("warnings %q report a shortfall against a target that was never set", joined)
+	}
+	if len(sessions[0].missingFlats) != 0 {
+		t.Errorf("missingFlats = %v, want empty when the session has flats", sessions[0].missingFlats)
+	}
+	if got := len(sessions[0].flats["S"]); got != 3 {
+		t.Errorf("flats for S = %d, want the session's own 3", got)
+	}
+}
+
+// TestPrepareRejectsNegativeFlatCount checks a mistyped count is refused rather
+// than clamped. Clamping would silently turn borrowing off, which is a
+// behaviour change the operator never asked for.
+func TestPrepareRejectsNegativeFlatCount(t *testing.T) {
+	root := t.TempDir()
+	opts := prepareOptionsForTest("TEST", root, t.TempDir())
+	opts.targetFlats = -1
+
+	err := runPrepare(opts)
+	if err == nil {
+		t.Fatal("runPrepare accepted a negative --flat-count, want an error")
+	}
+	if !strings.Contains(err.Error(), "--flat-count") {
+		t.Errorf("error %q does not name the flag", err)
+	}
+}
+
+// TestFlatCountIsAConfigKey checks the flag is drivable from the config file.
+// knownConfigKeys walks the command's flags, so a new prepare flag must show up
+// as a known key rather than being reported as an unknown one.
+func TestFlatCountIsAConfigKey(t *testing.T) {
+	if !knownConfigKeys()["prepare.flat-count"] {
+		t.Error("prepare.flat-count is not a known config key")
+	}
+	path := writeConfig(t, "prepare:\n  flat-count: 9\n")
+
+	cmd, _ := configTestPrepareCmd()
+	if err := applySections(cmd, mustReadConfig(t, path), path); err != nil {
+		t.Fatalf("applySections: %v", err)
+	}
+	if got := cmd.Flags().Lookup("flat-count").Value.String(); got != "9" {
+		t.Errorf("flat-count from config = %q, want %q", got, "9")
+	}
+}
+
+// flatTarget is the --flat-count the borrowing tests ask for. Production reads
+// it from the flag rather than a constant, so the tests state it explicitly.
+const flatTarget = 14
+
+// flatSet builds n flat names for one filter and angle on a date.
+func flatSet(filter, date string, pa string, n int) []string {
+	out := make([]string, 0, n)
+	for i := range n {
+		out = append(out, flatName(filter, "41.4", strings.ReplaceAll(date, "-", ""),
+			fmt.Sprintf("07%04d", i), "000", pa))
+	}
+	return out
+}
+
+// buildFlatDirs writes flat sets keyed by date, for the collectFlats tests.
+func buildFlatDirs(t *testing.T, root string, byDate map[string][]string) {
+	t.Helper()
+	for date, names := range byDate {
+		dir := filepath.Join(root, flatsDir, date)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range names {
+			writeStub(t, filepath.Join(dir, n))
+		}
+	}
+}
+
+// TestFlatSearchOrder pins the consultation order: own date, then previous
+// before next, stepping outward. The first session has no previous, so its walk
+// starts at the following date, which is what makes borrowing possible at all
+// for the opening night.
+func TestFlatSearchOrder(t *testing.T) {
+	tests := []struct {
+		name string
+		n    int
+		pos  int
+		want string
+	}{
+		{"only session", 1, 0, "0"},
+		{"first session", 3, 0, "0 1 2"},
+		{"middle session", 5, 2, "2 1 3 0 4"},
+		{"last session", 3, 2, "2 1 0"},
+		{"second session", 2, 1, "1 0"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := flatSearchOrder(tc.n, tc.pos)
+			var parts []string
+			for _, i := range got {
+				parts = append(parts, fmt.Sprint(i))
+			}
+			if strings.Join(parts, " ") != tc.want {
+				t.Errorf("flatSearchOrder(%d, %d) = %v, want [%s]",
+					tc.n, tc.pos, parts, tc.want)
+			}
+		})
+	}
+}
+
+// TestCollectFlatsBorrowsFromPreviousDate covers topping a short session up
+// from the night before, and stopping as soon as the target is reached.
+func TestCollectFlatsBorrowsFromPreviousDate(t *testing.T) {
+	root := t.TempDir()
+	buildFlatDirs(t, root, map[string][]string{
+		"2026-09-09": flatSet("S", "2026-09-09", "310", 20),
+		"2026-09-10": flatSet("S", "2026-09-10", "310", 5),
+		"2026-09-11": flatSet("S", "2026-09-11", "310", 20),
+	})
+	dates := []string{"2026-09-09", "2026-09-10", "2026-09-11"}
+	flatRoot := filepath.Join(root, flatsDir)
+
+	matched, _ := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget)
+
+	if len(matched) != flatTarget {
+		t.Fatalf("got %d flats, want %d", len(matched), flatTarget)
+	}
+	// Own five first, then the previous night, and no further: the search stops
+	// once the target is met rather than taking every flat it can find.
+	own := 0
+	for _, m := range matched {
+		switch m.date {
+		case "2026-09-10":
+			own++
+		case "2026-09-09":
+		default:
+			t.Errorf("borrowed from %q, want only the own or previous date", m.date)
+		}
+	}
+	if own != 5 {
+		t.Errorf("own-date flats = %d, want 5", own)
+	}
+}
+
+// TestCollectFlatsFirstSessionBorrowsFromNextDate covers the opening session,
+// which has no previous date and must reach forward instead.
+func TestCollectFlatsFirstSessionBorrowsFromNextDate(t *testing.T) {
+	root := t.TempDir()
+	buildFlatDirs(t, root, map[string][]string{
+		"2026-09-09": flatSet("S", "2026-09-09", "310", 3),
+		"2026-09-10": flatSet("S", "2026-09-10", "310", 20),
+	})
+	dates := []string{"2026-09-09", "2026-09-10"}
+	flatRoot := filepath.Join(root, flatsDir)
+
+	matched, searched := collectFlats(flatRoot, "2026-09-09", "310", "S", dates, flatTarget)
+
+	if len(matched) != flatTarget {
+		t.Fatalf("got %d flats, want %d", len(matched), flatTarget)
+	}
+	if matched[0].date != "2026-09-09" {
+		t.Errorf("first flat from %q, want the session's own date", matched[0].date)
+	}
+	borrowed := false
+	for _, m := range matched {
+		if m.date == "2026-09-10" {
+			borrowed = true
+		}
+		if m.date != "2026-09-09" && m.date != "2026-09-10" {
+			t.Errorf("borrowed from %q, want only the own or next date", m.date)
+		}
+	}
+	if !borrowed {
+		t.Error("the first session did not borrow from the following date")
+	}
+	if len(searched) == 0 || searched[0] != "2026-09-09" {
+		t.Errorf("searched = %v, want the own date first", searched)
+	}
+}
+
+// TestCollectFlatsWalksPastAnEmptyNeighbour covers the rained-out night: the
+// immediately previous date holds nothing usable, so the search must reach
+// further rather than stop at the first neighbour that does not help.
+func TestCollectFlatsWalksPastAnEmptyNeighbour(t *testing.T) {
+	root := t.TempDir()
+	buildFlatDirs(t, root, map[string][]string{
+		// Previous date has flats, but only for another angle.
+		"2026-09-09": flatSet("S", "2026-09-09", "240", 20),
+		"2026-09-10": flatSet("S", "2026-09-10", "310", 2),
+		"2026-09-11": flatSet("S", "2026-09-11", "310", 20),
+	})
+	dates := []string{"2026-09-09", "2026-09-10", "2026-09-11"}
+	flatRoot := filepath.Join(root, flatsDir)
+
+	matched, _ := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget)
+
+	// Two own-date frames plus twelve from two nights on: the angle is part of
+	// the key, so the PA240 flats are not candidates.
+	if len(matched) != flatTarget {
+		t.Fatalf("got %d flats, want %d", len(matched), flatTarget)
+	}
+	for _, m := range matched {
+		if m.date == "2026-09-09" {
+			t.Errorf("took a flat from the previous date, which holds only PA240")
+		}
+	}
+	if matched[len(matched)-1].date != "2026-09-11" {
+		t.Errorf("last flat from %q, want the walk to reach 2026-09-11",
+			matched[len(matched)-1].date)
+	}
+}
+
+// TestCollectFlatsNeverBorrowsAForeignDate pins the scoping: only dates the
+// target itself acquired on are searched, so a flat directory belonging to
+// another target is never reached into.
+func TestCollectFlatsNeverBorrowsAForeignDate(t *testing.T) {
+	root := t.TempDir()
+	buildFlatDirs(t, root, map[string][]string{
+		"2026-09-08": flatSet("S", "2026-09-08", "310", 20), // another target's night
+		"2026-09-10": flatSet("S", "2026-09-10", "310", 20),
+	})
+	// The target only ever acquired on 2026-09-10.
+	dates := []string{"2026-09-10"}
+	flatRoot := filepath.Join(root, flatsDir)
+
+	matched, _ := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget)
+
+	for _, m := range matched {
+		if m.date != "2026-09-10" {
+			t.Errorf("borrowed from %q, which the target never acquired on", m.date)
+		}
+	}
+	if len(matched) != flatTarget {
+		t.Errorf("got %d flats, want %d", len(matched), flatTarget)
+	}
+}
+
+// TestCollectFlatsReportsAShortfall covers the case where every date the target
+// observed has been searched and the target cannot be met: the caller warns
+// and continues rather than failing.
+func TestCollectFlatsReportsAShortfall(t *testing.T) {
+	root := t.TempDir()
+	buildFlatDirs(t, root, map[string][]string{
+		"2026-09-09": flatSet("S", "2026-09-09", "310", 2),
+		"2026-09-10": flatSet("S", "2026-09-10", "310", 3),
+	})
+	dates := []string{"2026-09-09", "2026-09-10"}
+	flatRoot := filepath.Join(root, flatsDir)
+
+	matched, searched := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget)
+
+	// Three on the session's own date plus two on the previous, and nothing more
+	// to find: the search is exhausted rather than truncated by the target.
+	const want = 5
+	if len(matched) != want {
+		t.Fatalf("got %d flats, want %d", len(matched), want)
+	}
+	if len(matched) >= flatTarget {
+		t.Fatalf("got %d flats, want fewer than the target %d", len(matched), flatTarget)
+	}
+	// Every date is named, so a shortfall says what was available rather than
+	// leaving the operator to wonder whether the search was bounded.
+	if len(searched) != 2 {
+		t.Errorf("searched = %v, want both dates", searched)
+	}
+}
+
+// TestPrepareBorrowsFlatsAndCopiesThem is the end-to-end guard for the refactor:
+// a flat collected from a neighbouring date must actually be copied from that
+// date. Resolving the source from the session date instead would compile and
+// plan perfectly, then fail at copy time.
+func TestPrepareBorrowsFlatsAndCopiesThem(t *testing.T) {
+	const target = "TEST"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {"S": {
+					lightName(target, "S", "20260910", "220000", "000", "310"),
+				}},
+				"2026-09-11": {"S": {
+					lightName(target, "S", "20260911", "220000", "000", "310"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": flatSet("S", "2026-09-10", "310", 2),
+			"2026-09-11": flatSet("S", "2026-09-11", "310", 6),
+		},
+	}
+	f.build(t, root)
+	out := t.TempDir()
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.targetFlats = flatTarget
+	if err := runPrepare(opts); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+
+	for _, sess := range []string{"Session_01", "Session_02"} {
+		dir := filepath.Join(sessionOutDir(filepath.Join(out, target), sess), "flats", "S")
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("%s flats: %v", sess, err)
+		}
+		// Eight available across the two nights, short of the target of 14.
+		if len(files) != 8 {
+			t.Errorf("%s copied %d flats, want 8 (own plus borrowed)", sess, len(files))
+		}
+		for _, file := range files {
+			// The copy must be readable and non-empty: a mis-resolved source
+			// would have failed the run outright, and a zero-byte stub here
+			// would mean the wrong file was read.
+			got, err := os.ReadFile(filepath.Join(dir, file.Name()))
+			if err != nil {
+				t.Fatalf("%s/%s: %v", sess, file.Name(), err)
+			}
+			if len(got) == 0 {
+				t.Errorf("%s/%s is empty", sess, file.Name())
+			}
+		}
+	}
+}
+
+// TestPrepareWarnsWhenShortOfFlats checks the shortfall warning names the count
+// and the dates searched, which is the only way to tell a genuinely short
+// session from one that was never looked for properly.
+func TestPrepareWarnsWhenShortOfFlats(t *testing.T) {
+	const target = "TEST"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {"S": {
+					lightName(target, "S", "20260910", "220000", "000", "310"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": flatSet("S", "2026-09-10", "310", 3),
+		},
+	}
+	f.build(t, root)
+
+	sessions, warnings, err := planSessions(
+		filepath.Join(root, lightsDir, target), filepath.Join(root, flatsDir), target, flatTarget)
+	if err != nil {
+		t.Fatalf("planSessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{"3 flat(s)", "want 14", "2026-09-10"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings %q do not mention %q", joined, want)
+		}
+	}
+	// Short is not missing: the frames are usable.
+	if len(sessions[0].missingFlats) != 0 {
+		t.Errorf("missingFlats = %v, want empty when flats were borrowed", sessions[0].missingFlats)
+	}
+	if got := len(sessions[0].flats["S"]); got != 3 {
+		t.Errorf("flats for S = %d, want 3", got)
+	}
+}
+
 func TestPrepareFormatFrameDate(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"20260910", "2026-09-10"},
@@ -2470,7 +2903,7 @@ func TestPlanSessionLeavesAngleUnsetOnMixedAngles(t *testing.T) {
 	f.build(t, root)
 
 	s, _, err := planSession(filepath.Join(root, lightsDir, target, "2026-09-10"),
-		filepath.Join(root, flatsDir, "2026-09-10"), 1, "2026-09-10")
+		filepath.Join(root, flatsDir), 1, "2026-09-10", []string{"2026-09-10"}, 0)
 	if err == nil {
 		t.Fatal("planSession succeeded on a mixed-angle session, want a failure")
 	}

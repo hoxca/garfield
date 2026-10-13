@@ -21,10 +21,16 @@ concurrency:
   workers: 0
   conv-workers: 0
 
-# Default directories for prepare.
+# Default directories for prepare, and how many flats each session collects.
 prepare:
   input: /Volumes/Dyno/Kosmodrom
   output: /Volumes/T7/Workspace
+
+  # Flats wanted per filter and angle, 0 = the session's own date only.
+  # A session rarely holds this many of its own, so a positive value tops it
+  # up from the target's neighbouring nights, previous date first. Set to 0 to
+  # keep a session strictly to the flats it shot that night.
+  flat-count: 0
 
 # Default directory for analyze.
 #

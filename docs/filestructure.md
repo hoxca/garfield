@@ -42,7 +42,7 @@ session tree that can be imported into WBPP (PixInsight) in one step.
 ├── Flats/                     ← note: NO filter level, unlike Lights
 │   ├── 2026-09-10/
 │   │   └── FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT
-│   └── 2026-09-16/
+│   └── 2026-09-16/            ← may be read to top up another session (--flat-count)
 │
 ├── Bias/
 │   └── Masters/               ← flat, one file per gain
@@ -63,6 +63,14 @@ Only `Lights/<target>` is required. A missing `Flats`, `Bias/Masters` or
 
 Directory names are exact: `Lights`, `Flats`, `Bias`, `Darks`, `Masters`.
 These are case-sensitive, unlike file extensions.
+
+`prepare` flags that shape this tree:
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--flat-count` | `0` | Flats per filter and angle. `0` keeps a session to its own date; `N` tops it up from neighbouring nights (§3.2). |
+
+`conf/garfield.yaml` ships `flat-count: 0`, so borrowing is opt-in.
 
 ---
 
@@ -227,8 +235,72 @@ and matched against the session's filter directories and session PA:
 session 2026-09-16, filter S, PA310  →  Flats/2026-09-16/  file starting FLAT_S_ and containing _PA310
 ```
 
-A filter with lights but no matching flats is recorded in `missingFlats`, warned about, and **not** copied. 
-Flats for a filter with no lights are never copied either.
+### 3.2 Matching, and borrowing across nights
+
+Flats are indexed by `filter@PA`, e.g. `S@310`, and matched against the
+session's filter directories and session PA.
+
+How many a session collects is set by `--flat-count` (config key
+`prepare.flat-count`):
+
+| Value | Behaviour |
+|---|---|
+| **`0` (default)** | The session's own date only. No borrowing, no shortfall warning. |
+| `N > 0` | Up to `N` per filter and angle, topped up from neighbouring nights. |
+
+`conf/garfield.yaml` ships `flat-count: 0`, so borrowing is opt-in: a run that
+does not ask for it behaves exactly as garfield did before borrowing existed.
+A negative value is rejected rather than clamped, since a typo would otherwise
+silently turn borrowing off.
+
+With a positive target, the session's own date rarely holds enough, so it is
+topped up from the target's neighbouring nights:
+
+1. flats from the session's own date, up to `N`;
+2. if still short, walk outward through the target's dates — **previous first,
+   then next**, stepping back, forward, back — until `N` are held or the list
+   runs out.
+
+The first session has no previous date, so its walk begins at the **following**
+one. That falls out of the same ordering rather than needing a special case.
+
+Borrowing is bounded to the dates **this target acquired on**. A `Flats/`
+directory belonging to another target is never reached into, so a session
+cannot be completed from data the target never saw.
+
+Every candidate is keyed on filter *and* angle, so flats shot at another angle
+are never borrowed — a neighbour holding only PA240 contributes nothing to a
+PA310 session, and the search moves past it rather than stopping there.
+
+```
+session Session_03 (2026-09-14): 6 flats for filter S (PA310), want 14;
+searched 2026-09-10, 2026-09-11, 2026-09-15, 2026-09-16
+```
+
+A shortfall warns and the run continues: the frames are usable, and being short
+is not the same as having none. The warning only appears when a target is set —
+at `0` there is nothing to fall short of. It names the count and every date
+consulted, so a shortfall is distinguishable from a session that was never
+properly searched.
+
+A filter with lights but **no** flats at all is recorded in `missingFlats`,
+warned about, and not copied, at any `--flat-count`. Flats for a filter with no
+lights are never copied either.
+
+Each planned flat records the date directory it was found in, not just its
+name. `flats/<filter>/` in the output can therefore mix nights, and the copy
+resolves its source from that recorded date rather than from the session's own
+— otherwise a borrowed flat would be looked for in the wrong directory and
+fail to open.
+
+### 3.3 Why the session date, not the frame date
+
+Flats are matched on the **session directory date**, never the date embedded in
+the light filenames. Sessions run past midnight, so for most nights the two disagree by a day;
+only the directory name lines up with `Flats/`. Borrowing (§3.2) reaches only
+into other *session directory* dates, never into a frame-date.
+
+This is why `frameDateMin` and `frameDateMax` are reported separately from `date` in `sessions.csv`.
 
 ### 3.3 Why the session date, not the frame date
 
@@ -478,6 +550,11 @@ session;date;pa;filters;lightCount;approvedCount;rejectedCount;flatCount;missing
 Session_01;2026-09-16;PA310;S;2;2;0;2;;2026-09-16;2026-09-17;GA0;GA0/300s
 ```
 
+`flatCount` counts every flat copied for the session, **including any borrowed
+from a neighbouring date** (§3.2), so it does not imply the flats came from
+that night. The source dates are recorded per flat in the plan but are not
+written to the CSV.
+
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
@@ -510,6 +587,7 @@ by `analyze`, so the two commands' CSVs cannot disagree.
 |---|---|
 | `--target` missing | `--target is required` |
 | `--input` or `--output` empty | `... cannot be empty` |
+| `--flat-count` negative | `--flat-count cannot be negative, got %d` |
 | `Lights/<target>` absent | `target %q not found in %q` |
 | No date directories | `no session (YYYY-MM-DD directory) found in %q` |
 | More than one angle in a session | `mixed angles: session ... multiple angles ...` (§2.4) |
@@ -522,7 +600,8 @@ by `analyze`, so the two commands' CSVs cannot disagree.
 | Condition |
 |---|
 | `Bias/Masters` or `Darks/Masters` directory absent |
-| No flats for a filter that has lights |
+| No flats for a filter that has lights, after borrowing (§3.2) |
+| Fewer than `--flat-count` flats for a filter, after borrowing (§3.2) — only when that flag is positive |
 | No master bias for a gain the lights use |
 | No master dark for a `(gain, exposure)` an approved frame needs |
 | Two masters for one key (collision or tie) |
@@ -560,10 +639,14 @@ Things that will bite, ranked by how quietly they fail:
    every later session. Never treat `Session_03` as a stable identifier — join
    on the `date` column.
 
-5. **Flats must live under the session's date directory**, matching the
-   *directory* date. Because sessions cross midnight, the frame date inside the
-   filenames will usually differ. Both are reported; use `date`, not
-   `frameDateMin`.
+5. **Flats must live under a session date directory of the same target**,
+   matching the *directory* date. Because sessions cross midnight, the frame
+   date inside the filenames will usually differ. Both are reported; use `date`,
+   not `frameDateMin`. With `--flat-count 0`, the default, a session keeps
+   only what its own date held — so a flats directory with a few frames, or
+   none, is entirely normal and never warned about beyond `missingFlats`. With
+   a positive count a session short of its target borrows from its neighbours
+   (§3.2), and borrowing never crosses into another target's dates.
 
 6. **Only seven filters are known**, on both sides: L, R, G, B, S, H, O. A flat
    with any other filter is dropped with a warning, and a light subdirectory
@@ -603,6 +686,16 @@ Layout claims in this document are enforced by tests, not just documented:
 | only needed biases copied | `TestPrepareCopiesOnlyTheBiasesNeeded` |
 | only approved frames draw a dark | `TestPrepareDarksOnlyForApprovedFrames` |
 | flats keyed on the **session** date | `TestPrepareUsesSessionDateForFlats`, `TestFramesCSVUsesSessionDateNotFrameDate` |
+| flats topped up to 14 from the previous night | `TestCollectFlatsBorrowsFromPreviousDate` |
+| first session borrows from the following night | `TestCollectFlatsFirstSessionBorrowsFromNextDate` |
+| search walks past a neighbour with no match | `TestCollectFlatsWalksPastAnEmptyNeighbour` |
+| borrowing never crosses to another target | `TestCollectFlatsNeverBorrowsAForeignDate` |
+| shortfall reported with count and dates | `TestCollectFlatsReportsAShortfall`, `TestPrepareWarnsWhenShortOfFlats` |
+| `--flat-count 0` keeps the session's own date | `TestCollectFlatsZeroTargetKeepsOnlyTheSessionDate`, `TestPrepareZeroFlatCountWarnsNothing` |
+| negative `--flat-count` rejected | `TestPrepareRejectsNegativeFlatCount` |
+| `prepare.flat-count` is a config key | `TestFlatCountIsAConfigKey` |
+| a borrowed flat is copied from its own date | `TestPrepareBorrowsFlatsAndCopiesThem` |
+| consultation order, first session included | `TestFlatSearchOrder` |
 | mixed angles within a session are fatal | `TestPrepareMixedAnglesIsFatal`, `TestPlanSessionLeavesAngleUnsetOnMixedAngles` |
 | sessions at different angles are fatal | `TestPrepareMixedAnglesAcrossSessionsIsFatal`, `TestMixedAnglesAcrossSessions` |
 | every offending session reported at once | `TestPrepareReportsEveryMixedAngleAtOnce` |

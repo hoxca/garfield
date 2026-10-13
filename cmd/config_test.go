@@ -47,6 +47,8 @@ func configTestPrepareCmd() (*cobra.Command, *prepareOptions) {
 	registerWorkerFlags(f, &opts.workers, &opts.convWorkers)
 	f.StringVarP(&opts.input, "input", "i", defaultPrepareInput, "root of the acquisition data")
 	f.StringVarP(&opts.output, "output", "o", defaultPrepareOutput, "destination root")
+	f.IntVar(&opts.targetFlats, "flat-count", 0,
+		"flats to collect per filter and angle; 0 = the session's own date only")
 	setConfigSections(c, sectionThresholds, sectionConcurrency, sectionPrepare)
 	return c, opts
 }
