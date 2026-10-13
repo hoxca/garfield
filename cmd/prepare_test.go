@@ -25,9 +25,9 @@ type prepareFixture struct {
 	// biases maps gain token -> master filename. Empty means the fixture writes
 	// no Bias/Masters directory at all.
 	biases map[string]string
-	// darks maps "GA2750/600s" to a master filename. The file is written under
-	// a per-gain subdirectory, mirroring the acquisition. Empty means no
-	// Darks/Masters directory at all.
+	// darks maps a darkKey rendering, "GA2750/600s/-10C", to a master filename.
+	// The file is written under a per-gain subdirectory, mirroring the
+	// acquisition. Empty means no Darks/Masters directory at all.
 	darks map[string]string
 }
 
@@ -74,10 +74,11 @@ func (f prepareFixture) build(t *testing.T, root string) {
 		for key, n := range f.darks {
 			// The acquisition splits darks by gain into subdirectories named
 			// "G0" and "G2750" whose spelling disagrees with the GA0/GA2750
-			// inside the filenames.
+			// inside the filenames. Only the leading gain is needed here; the
+			// subdirectory carries no setpoint.
 			gain, _, found := strings.Cut(key, "/")
 			if !found {
-				t.Fatalf("dark key %q is not <gain>/<exposure>", key)
+				t.Fatalf("dark key %q is not <gain>/<exposure>/<temp>", key)
 			}
 			subdir := filepath.Join(dir, "G"+strings.TrimPrefix(gain, "GA"))
 			if err := os.MkdirAll(subdir, 0o755); err != nil {
@@ -184,14 +185,30 @@ func lightNameGain(target, filter, date, time, ms, pa, gain string) string {
 // exposure, which is what lets a fixture need two different master darks in one
 // session. exposure carries its own "s" suffix, as the acquisition spells it.
 func lightNameGainExp(target, filter, date, time, ms, pa, gain, exposure string) string {
-	return fmt.Sprintf("%s_LIGHT_%s_%s_BIN1_-10C_%s_%s_%s_%s_PA%s_E.FIT",
-		target, filter, exposure, gain, date, time, ms, pa)
+	return lightNameFull(target, filter, date, time, ms, pa, gain, exposure, "-10C")
+}
+
+// lightNameFull is the only builder that writes the setpoint token. The ones
+// above fix it at -10C because that is the temperature the acquisition actually
+// uses; this one exists so a fixture can put two setpoints in one target, which
+// is the case the setpoint-in-the-key change is about.
+func lightNameFull(target, filter, date, time, ms, pa, gain, exposure, temp string) string {
+	return fmt.Sprintf("%s_LIGHT_%s_%s_BIN1_%s_%s_%s_%s_%s_PA%s_E.FIT",
+		target, filter, exposure, temp, gain, date, time, ms, pa)
 }
 
 // flatName builds a flat frame filename.
 func flatName(filter, dur, date, time, ms, pa string) string {
-	return fmt.Sprintf("FLAT_%s_%ss_BIN1_-10C_GA2750_%s_%s_%s_PA%s.FIT",
-		filter, dur, date, time, ms, pa)
+	return flatNameTemp(filter, dur, date, time, ms, pa, "-10C")
+}
+
+// flatNameTemp builds a flat at an explicit setpoint. Temperature is not part of
+// how a flat is matched -- only filter and angle are -- so this exists to prove
+// that: a fixture can put a 0C flat under a -10C session and the flat is still
+// collected.
+func flatNameTemp(filter, dur, date, time, ms, pa, temp string) string {
+	return fmt.Sprintf("FLAT_%s_%ss_BIN1_%s_GA2750_%s_%s_%s_PA%s.FIT",
+		filter, dur, temp, date, time, ms, pa)
 }
 
 // simpleFixture is two nights, one filter, matching flats.
@@ -997,12 +1014,13 @@ func TestPrepareSessionsCSV(t *testing.T) {
 		t.Errorf("missingFlats = %q, want %q", row[8], "B")
 	}
 	// lightName writes the GA0 token at 300s, so the session records that gain
-	// and needs that master dark.
+	// and needs that master dark. The key carries the setpoint as well: a dark
+	// is thermal, so "GA0/300s" alone would name two different masters.
 	if row[11] != "GA0" {
 		t.Errorf("gains = %q, want %q", row[11], "GA0")
 	}
-	if row[12] != "GA0/300s" {
-		t.Errorf("darks = %q, want %q", row[12], "GA0/300s")
+	if row[12] != "GA0/300s/-10C" {
+		t.Errorf("darks = %q, want %q", row[12], "GA0/300s/-10C")
 	}
 }
 

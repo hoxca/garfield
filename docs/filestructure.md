@@ -507,26 +507,72 @@ says `GA2750` also works, because the directory is never read.
 
 The key renders as `GA2750/600s`.
 
-### 5.2 The `-10C` hardcode
+### 5.2 The setpoint is part of the dark key
 
 A light's needed dark is computed with `lightComboRe`:
 
 ```
-_(\d+)s_BIN\d_-10C_(GA\d+)_
+_(\d+)s_BIN\d_([-+]?\d+C)_(GA\d+)_
 ```
 
-`-10C` is **hardcoded** into that pattern. The setpoint must appear literally,
-between the binning token and the gain. A light taken at a different sensor
-temperature matches no dark, and the only symptom is a warning listing the darks
-that *were* found — which makes this a quiet failure, not a loud one.
+Exposure, setpoint and gain — the three properties that together make a dark
+necessary. A dark is **thermal**, so a `-10C` dark does not calibrate a `0C`
+light, and the setpoint is therefore part of the key rather than an assumption
+about the instrument.
 
-Note this is a narrower pattern than `gainRe` (`_(GA\d+)_`), which has no
-setpoint requirement. So a frame at the wrong temperature still contributes its
-gain to the bias set, but contributes no dark.
+The setpoint used to be hardcoded as `-10C` in that pattern, which meant a target
+shot at any other temperature matched no dark at all and the run said nothing
+useful. A target may also mix temperatures across its sessions — a season can
+straddle a change of cooling — so each session draws its own dark:
 
-Note this is a narrower pattern than `gainRe` (`_(GA\d+)_`), which has no
-setpoint requirement. So a frame at the wrong temperature still contributes its
-gain to the bias set, but contributes no dark.
+```
+no master dark for GA0/300s/0C in ".../Darks/Masters"
+  (available: GA0/300s/-10C), affected sessions: Session_02
+```
+
+The `available:` list is what makes a near miss diagnosable: the operator sees
+that the right exposure and gain are on hand at the wrong temperature.
+
+#### What the setpoint does *not* key
+
+Only the dark side reads a setpoint. It is easy to over-apply this, so explicitly:
+
+| Pairing | Keyed on | Setpoint? |
+|---|---|---|
+| light → dark | exposure + gain + **setpoint** | yes |
+| light → bias | gain | **no** — `indexBiasMasters` reads no setpoint |
+| light → flat | filter + angle | **no** — never read on either side |
+
+A **flat** is a shuttered frame of sky, so its dark current is negligible and the
+setpoint does not change what it corrects. A flat shot at `0C` calibrates a
+`-10C` light perfectly well, and matching them on temperature would reject good
+flats for no physical reason. Pins: `TestFlatsAreNotFilteredByTemperature`.
+
+A **bias** is keyed on gain alone even though `masterBias_GA0_-10C_...` carries a
+setpoint. Bias is a much weaker function of temperature than a dark, and reading
+it would double the bias key and the copy count for no stated need.
+
+#### Group order differs between the two sides
+
+The tokens appear in **opposite orders**, which is easy to get wrong when reading
+one pattern and writing the other:
+
+```
+light:  ..._300s_BIN1_-10C_GA0_...      exp, setpoint, gain   → m[1] m[2] m[3]
+dark:   masterDark_300s_GA0_-10C_...    exp, gain, setpoint   → m[1] m[2] m[3]
+```
+
+Copying a group index from the light side to the dark side reads the setpoint as
+a gain and indexes every master under a key nothing can match — quietly, since
+the only symptom is a missing dark. Pinned by
+`TestDarkComboReGroupOrderDiffersFromLight`.
+
+#### `-0C` and `0C` are one key
+
+`normaliseTemp` collapses a signed zero to `0C`, so a light at `-0C` finds a dark
+named `0C`. Zero is the only value where the sign is ambiguous; `-10C` and `10C`
+are twenty degrees apart and stay distinct keys, because collapsing them would
+substitute a dark shot warm.
 
 ### 5.3 Which darks get copied
 

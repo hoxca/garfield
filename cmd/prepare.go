@@ -159,13 +159,43 @@ var masterExts = map[string]bool{".XISF": true}
 // directly: "..._-10C_GA0_20260914_..." against "masterBias_GA0_-10C_...".
 var gainRe = regexp.MustCompile(`_(GA\d+)_`)
 
-// lightComboRe extracts the exposure and gain of a light frame, which together
-// identify the master dark needed to calibrate it. The exposure is spelled the
-// same way on both sides: "_600s_BIN1_..." against "masterDark_600s_...".
-var lightComboRe = regexp.MustCompile(`_(\d+)s_BIN\d_-10C_(GA\d+)_`)
+// lightComboRe extracts the exposure, setpoint and gain of a light frame, which
+// together identify the master dark needed to calibrate it. The exposure is
+// spelled the same way on both sides: "_600s_BIN1_..." against
+// "masterDark_600s_...".
+//
+// The setpoint is matched, not assumed. It used to be hardcoded to "-10C",
+// which meant a target shot at any other temperature -- 0C is the obvious one --
+// matched no dark at all, silently. A target may also mix temperatures across
+// its sessions, so the setpoint is part of the key rather than an assumption
+// about the instrument.
+//
+// Note the token order differs from the dark side: here it is
+// exposure/setpoint/gain, there exposure/gain/setpoint.
+var lightComboRe = regexp.MustCompile(`_(\d+)s_BIN\d_([-+]?\d+C)_(GA\d+)_`)
 
-// darkComboRe extracts the exposure and gain from a master dark filename.
-var darkComboRe = regexp.MustCompile(`masterDark_(\d+)s_(GA\d+)_`)
+// darkComboRe extracts the exposure, gain and setpoint from a master dark
+// filename. The group order is exposure, gain, setpoint -- the reverse of
+// lightComboRe, because the acquisition names the two kinds of frame
+// differently. Compare m[1] with care against the light side.
+var darkComboRe = regexp.MustCompile(`masterDark_(\d+)s_(GA\d+)_([-+]?\d+C)_`)
+
+// normaliseTemp canonicalises a setpoint token for use as a key component, so
+// that "-0C" and "0C" -- the same temperature, signed two ways -- are one key
+// rather than two that can never meet. Zero is the only value where the sign is
+// ambiguous; elsewhere "-10C" and "10C" are genuinely different temperatures and
+// must stay apart.
+//
+// Only zero is collapsed. Any other token is returned as written, so the key
+// carries the acquisition's own spelling rather than a reconstruction of it.
+func normaliseTemp(token string) string {
+	digits := strings.TrimSuffix(strings.TrimLeft(token, "+-"), "C")
+	n, err := strconv.Atoi(digits)
+	if err != nil || n != 0 {
+		return token
+	}
+	return "0C"
+}
 
 // masterDateRe extracts the trailing date suffix a master carries, so the most
 // recently made master of a kind can be preferred when there are several.
@@ -1320,18 +1350,29 @@ func prepareBias(targetOut string, gains []string, masters map[string]biasMaster
 	return copied, warnings, nil
 }
 
-// darkKey identifies a master dark by the two properties that make one
-// necessary: the gain setting and the exposure time. Both are needed because a
-// target can mix them freely -- SH2-54 takes 30s and 60s frames at GA0 and 600s
-// frames at GA2750, and the night of 2026-07-16 holds two of those at once.
+// darkKey identifies a master dark by the three properties that make one
+// necessary: the gain setting, the exposure time, and the sensor setpoint. A
+// target can mix all three freely -- SH2-54 takes 30s and 60s frames at GA0 and
+// 600s frames at GA2750, and the night of 2026-07-16 holds two of those at
+// once, and a season can span two setpoints.
+//
+// The setpoint is part of the key because a dark is thermal: a -10C dark does
+// not calibrate a 0C light. Leaving it out silently substitutes a dark shot at
+// the wrong temperature, which is worse than supplying none.
+//
+// temp is stored as the acquisition spelled it, after normaliseTemp so that
+// "-0C" and "0C" collide on purpose rather than by accident.
 type darkKey struct {
 	gain     string
 	exposure int
+	temp     string
 }
 
-// String renders the pair the way the acquisition names it, "GA2750/600s".
+// String renders the triple the way the acquisition names it, "GA2750/600s/-10C".
+// This is what the sessions.csv darks column and the missing-dark warning both
+// show, so the third field is what tells two otherwise identical darks apart.
 func (k darkKey) String() string {
-	return fmt.Sprintf("%s/%ds", k.gain, k.exposure)
+	return fmt.Sprintf("%s/%ds/%s", k.gain, k.exposure, k.temp)
 }
 
 // darkMaster is one master dark file and the combination it serves.
@@ -1391,8 +1432,11 @@ func indexDarkMasters(root string) (map[darkKey]darkMaster, []string, error) {
 				"%s: %q ignored, no exposure/gain pair in the name", root, base))
 			continue
 		}
+		// Group order here is exposure, gain, setpoint -- the reverse of
+		// lightComboRe. Copying an index across from there would key every
+		// master on the setpoint as its gain.
 		exposure, _ := strconv.Atoi(m[1])
-		key := darkKey{gain: m[2], exposure: exposure}
+		key := darkKey{gain: m[2], exposure: exposure, temp: normaliseTemp(m[3])}
 
 		date := masterDate(base)
 
@@ -1476,7 +1520,9 @@ func tieWarning(dir, key, held, candidate string) string {
 }
 
 // lightDarkKey returns the master dark combination a light frame needs, and
-// whether the filename carried one at all.
+// whether the filename carried one at all. The three tokens come out in a
+// different order from darkComboRe's, so the groups are read here rather than
+// shared: m[1] exposure, m[2] setpoint, m[3] gain.
 func lightDarkKey(name string) (darkKey, bool) {
 	m := lightComboRe.FindStringSubmatch(name)
 	if m == nil {
@@ -1486,7 +1532,7 @@ func lightDarkKey(name string) (darkKey, bool) {
 	if err != nil {
 		return darkKey{}, false
 	}
-	return darkKey{gain: m[2], exposure: exposure}, true
+	return darkKey{gain: m[3], exposure: exposure, temp: normaliseTemp(m[2])}, true
 }
 
 // collectDarkKeys records, per session, the master darks for its approved frames.
@@ -1540,11 +1586,18 @@ func targetDarkKeys(sessions []sessionPlan) ([]darkKey, map[darkKey][]string) {
 	for k := range need {
 		keys = append(keys, k)
 	}
+	// Temperature is the last comparison, and it has to be here at all: without
+	// it two keys differing only in setpoint tie, and sort.Slice is not stable,
+	// so the darks column of the report and the available list of a missing-dark
+	// warning would come out in a different order from one run to the next.
 	sort.Slice(keys, func(a, b int) bool {
 		if keys[a].gain != keys[b].gain {
 			return keys[a].gain < keys[b].gain
 		}
-		return keys[a].exposure < keys[b].exposure
+		if keys[a].exposure != keys[b].exposure {
+			return keys[a].exposure < keys[b].exposure
+		}
+		return keys[a].temp < keys[b].temp
 	})
 	return keys, need
 }

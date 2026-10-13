@@ -31,8 +31,8 @@ func darkFixture(target string) prepareFixture {
 			},
 		},
 		darks: map[string]string{
-			"GA0/300s":    "masterDark_300s_GA0_-10C_20251118.xisf",
-			"GA2750/600s": "masterDark_600s_GA2750_-10C_20251120.xisf",
+			"GA0/300s/-10C":    "masterDark_300s_GA0_-10C_20251118.xisf",
+			"GA2750/600s/-10C": "masterDark_600s_GA2750_-10C_20251120.xisf",
 		},
 	}
 }
@@ -72,8 +72,10 @@ func TestPrepareCopiesBothDarksForMixedExposureSession(t *testing.T) {
 	}
 
 	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
-	if got := recs[1][12]; got != "GA0/300s GA2750/600s" {
-		t.Errorf("darks column = %q, want %q", got, "GA0/300s GA2750/600s")
+	// The setpoint is part of the rendered key, so a reader of this column can
+	// tell which temperature each dark was shot at.
+	if got := recs[1][12]; got != "GA0/300s/-10C GA2750/600s/-10C" {
+		t.Errorf("darks column = %q, want %q", got, "GA0/300s/-10C GA2750/600s/-10C")
 	}
 }
 
@@ -102,8 +104,8 @@ func TestIndexDarkMastersKeysOnFilenameNotDirectory(t *testing.T) {
 		t.Fatalf("got %d masters, want 2 (one per gain): %v", len(masters), masters)
 	}
 	for _, key := range []darkKey{
-		{gain: "GA0", exposure: 300},
-		{gain: "GA2750", exposure: 300},
+		{gain: "GA0", exposure: 300, temp: "-10C"},
+		{gain: "GA2750", exposure: 300, temp: "-10C"},
 	} {
 		m, ok := masters[key]
 		if !ok {
@@ -141,7 +143,7 @@ func TestIndexDarkMastersPrefersTheLatestDate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("indexDarkMasters: %v", err)
 	}
-	key := darkKey{gain: "GA0", exposure: 300}
+	key := darkKey{gain: "GA0", exposure: 300, temp: "-10C"}
 	if got := masters[key].name; got != "masterDark_300s_GA0_-10C_20260901.xisf" {
 		t.Errorf("resolved to %q, want the latest date 20260901", got)
 	}
@@ -188,7 +190,7 @@ func TestIndexDarkMastersReportsAnUndecidedTie(t *testing.T) {
 		t.Fatalf("indexDarkMasters: %v", err)
 	}
 	const held = "masterDark_300s_GA0_-10C_20251117_a.xisf"
-	if got := masters[darkKey{gain: "GA0", exposure: 300}].name; got != held {
+	if got := masters[darkKey{gain: "GA0", exposure: 300, temp: "-10C"}].name; got != held {
 		t.Errorf("resolved to %q, want %q", got, held)
 	}
 	if len(warnings) != 1 {
@@ -300,7 +302,7 @@ func TestIndexDarkMastersRejectsNonMasters(t *testing.T) {
 		if len(masters) != 1 {
 			t.Errorf("got %d masters (%v), want only the one real dark", len(masters), masters)
 		}
-		if _, ok := masters[darkKey{gain: "GA0", exposure: 300}]; !ok {
+		if _, ok := masters[darkKey{gain: "GA0", exposure: 300, temp: "-10C"}]; !ok {
 			t.Error("the real master was not indexed")
 		}
 		// A .xisf carrying no recognisable pair is reported rather than dropped
@@ -357,7 +359,7 @@ func TestPrepareDarksOnlyForApprovedFrames(t *testing.T) {
 				}}},
 			},
 			flats: map[string][]string{"2026-09-10": {flatName("B", "41.4", "20260910", "070000", "000", "310")}},
-			darks: map[string]string{"GA0/300s": "masterDark_300s_GA0_-10C_20251118.xisf"},
+			darks: map[string]string{"GA0/300s/-10C": "masterDark_300s_GA0_-10C_20251118.xisf"},
 		}
 		f.build(t, root)
 
@@ -388,8 +390,8 @@ func TestPrepareDarksSharedAcrossSessions(t *testing.T) {
 		lights: map[string]map[string]map[string][]string{},
 		flats:  map[string][]string{},
 		darks: map[string]string{
-			"GA0/300s":    "masterDark_300s_GA0_-10C_20251118.xisf",
-			"GA2750/600s": "masterDark_600s_GA2750_-10C_20251120.xisf",
+			"GA0/300s/-10C":    "masterDark_300s_GA0_-10C_20251118.xisf",
+			"GA2750/600s/-10C": "masterDark_600s_GA2750_-10C_20251120.xisf",
 		},
 	}
 	const nights = 5
@@ -429,7 +431,7 @@ func TestPrepareWarnsOnMissingDark(t *testing.T) {
 	root := t.TempDir()
 
 	f := darkFixture(target)
-	f.darks = map[string]string{"GA0/300s": "masterDark_300s_GA0_-10C_20251118.xisf"}
+	f.darks = map[string]string{"GA0/300s/-10C": "masterDark_300s_GA0_-10C_20251118.xisf"}
 	f.build(t, root)
 	out := t.TempDir()
 
@@ -440,7 +442,9 @@ func TestPrepareWarnsOnMissingDark(t *testing.T) {
 	})
 
 	// Naming the combination alone is not enough to act on; the sessions are.
-	for _, want := range []string{"GA2750/600s", "Session_01"} {
+	// The key names the setpoint too, since the missing master could be the
+	// right exposure and gain shot at the wrong temperature.
+	for _, want := range []string{"GA2750/600s/-10C", "Session_01"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr %q does not mention %s", stderr, want)
 		}
@@ -500,7 +504,7 @@ func TestPrepareReportsCopiedDarks(t *testing.T) {
 	if !strings.Contains(line, "2 master dark") {
 		t.Errorf("line %q does not report a count of 2", line)
 	}
-	for _, want := range []string{"GA0/300s", "GA2750/600s"} {
+	for _, want := range []string{"GA0/300s/-10C", "GA2750/600s/-10C"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("line %q does not name %s", line, want)
 		}
@@ -557,11 +561,11 @@ func TestFixtureLightNamesAreParseable(t *testing.T) {
 		want darkKey
 	}{
 		{"lightName", lightName(target, "B", "20260910", "220000", "000", "310"),
-			darkKey{gain: "GA0", exposure: 300}},
+			darkKey{gain: "GA0", exposure: 300, temp: "-10C"}},
 		{"lightNameGain", lightNameGain(target, "B", "20260910", "220000", "000", "310", "GA2750"),
-			darkKey{gain: "GA2750", exposure: 300}},
+			darkKey{gain: "GA2750", exposure: 300, temp: "-10C"}},
 		{"lightNameGainExp 60s", lightNameGainExp(target, "B", "20260910", "220000", "000", "310", "GA0", "60s"),
-			darkKey{gain: "GA0", exposure: 60}},
+			darkKey{gain: "GA0", exposure: 60, temp: "-10C"}},
 	} {
 		key, ok := lightDarkKey(tc.got)
 		if !ok {
@@ -581,9 +585,13 @@ func TestFixtureLightNamesAreParseable(t *testing.T) {
 // sessions.csv column both use.
 func TestDarkKeyString(t *testing.T) {
 	tests := map[darkKey]string{
-		{gain: "GA0", exposure: 30}:     "GA0/30s",
-		{gain: "GA0", exposure: 300}:    "GA0/300s",
-		{gain: "GA2750", exposure: 600}: "GA2750/600s",
+		{gain: "GA0", exposure: 30, temp: "-10C"}:     "GA0/30s/-10C",
+		{gain: "GA0", exposure: 300, temp: "-10C"}:    "GA0/300s/-10C",
+		{gain: "GA2750", exposure: 600, temp: "-10C"}: "GA2750/600s/-10C",
+		// Two darks that differ only in setpoint must be distinguishable in
+		// the report and in a warning; that is the whole reason the setpoint
+		// is in the key.
+		{gain: "GA0", exposure: 300, temp: "0C"}: "GA0/300s/0C",
 	}
 	for key, want := range tests {
 		if got := key.String(); got != want {
@@ -599,12 +607,19 @@ func TestLightDarkKeyRe(t *testing.T) {
 		name string
 		gain string
 		exp  int
+		temp string
 	}{
-		{"LBN527_LIGHT_H_600s_BIN1_-10C_GA2750_20260902_014447_431_PA310_W.FIT", "GA2750", 600},
-		{"IC63_LIGHT_H_300s_BIN1_-10C_GA2750_20251108_224543_735_PA230_W.FIT", "GA2750", 300},
-		{"LBN527_LIGHT_B_300s_BIN1_-10C_GA0_20260914_045755_638_PA310_E.FIT", "GA0", 300},
-		{"M87_LIGHT_H_60s_BIN1_-10C_GA0_20260101_010101_000_PA000_W.FIT", "GA0", 60},
-		{"M87_LIGHT_H_30s_BIN1_-10C_GA0_20260101_010101_000_PA000_W.FIT", "GA0", 30},
+		{"LBN527_LIGHT_H_600s_BIN1_-10C_GA2750_20260902_014447_431_PA310_W.FIT", "GA2750", 600, "-10C"},
+		{"IC63_LIGHT_H_300s_BIN1_-10C_GA2750_20251108_224543_735_PA230_W.FIT", "GA2750", 300, "-10C"},
+		{"LBN527_LIGHT_B_300s_BIN1_-10C_GA0_20260914_045755_638_PA310_E.FIT", "GA0", 300, "-10C"},
+		{"M87_LIGHT_H_60s_BIN1_-10C_GA0_20260101_010101_000_PA000_W.FIT", "GA0", 60, "-10C"},
+		{"M87_LIGHT_H_30s_BIN1_-10C_GA0_20260101_010101_000_PA000_W.FIT", "GA0", 30, "-10C"},
+		// The setpoint is read, not assumed. These are the frames that used to
+		// extract nothing at all, because the pattern hardcoded "-10C" and the
+		// run then reported no dark and carried on.
+		{"M31_LIGHT_B_300s_BIN1_0C_GA0_20260910_220000_000_PA310_E.FIT", "GA0", 300, "0C"},
+		{"M31_LIGHT_H_600s_BIN1_+5C_GA2750_20260910_220000_000_PA310_E.FIT", "GA2750", 600, "+5C"},
+		{"M31_LIGHT_H_60s_BIN1_-20C_GA0_20260910_220000_000_PA310_E.FIT", "GA0", 60, "-20C"},
 	}
 	for _, tc := range tests {
 		key, ok := lightDarkKey(tc.name)
@@ -612,8 +627,8 @@ func TestLightDarkKeyRe(t *testing.T) {
 			t.Errorf("no combination extracted from %q", tc.name)
 			continue
 		}
-		if key.gain != tc.gain || key.exposure != tc.exp {
-			t.Errorf("%q -> %s, want %s/%ds", tc.name, key, tc.gain, tc.exp)
+		if key.gain != tc.gain || key.exposure != tc.exp || key.temp != tc.temp {
+			t.Errorf("%q -> %s, want %s/%ds/%s", tc.name, key, tc.gain, tc.exp, tc.temp)
 		}
 	}
 
@@ -629,24 +644,225 @@ func TestLightDarkKeyRe(t *testing.T) {
 	}
 }
 
+// TestNormaliseTempCollapsesSignedZero pins the one normalisation the key
+// applies. "-0C" and "0C" are the same temperature, so treating them as two keys
+// would leave a light unable to find a dark that is sitting right there.
+//
+// Only zero collapses. "-10C" and "10C" are different temperatures and must stay
+// apart -- collapsing them would substitute a dark shot twenty degrees warm.
+func TestNormaliseTempCollapsesSignedZero(t *testing.T) {
+	tests := map[string]string{
+		"-0C":  "0C",
+		"0C":   "0C",
+		"+0C":  "0C",
+		"-10C": "-10C",
+		"+5C":  "+5C",
+		"-20C": "-20C",
+	}
+	for in, want := range tests {
+		if got := normaliseTemp(in); got != want {
+			t.Errorf("normaliseTemp(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestDarkKeysMatchAcrossSignedZero is the case the normalisation exists for: a
+// light at "-0C" and a dark named "0C" must be one key, or the run reports a
+// missing master that is present on disk.
+func TestDarkKeysMatchAcrossSignedZero(t *testing.T) {
+	const (
+		negZero = "LBN527_LIGHT_B_300s_BIN1_-0C_GA0_20260910_220000_000_PA310_E.FIT"
+		plain   = "masterDark_300s_GA0_0C_20251118.xisf"
+	)
+	light, ok := lightDarkKey(negZero)
+	if !ok {
+		t.Fatalf("no key extracted from %q", negZero)
+	}
+	m := darkComboRe.FindStringSubmatch(plain)
+	if m == nil {
+		t.Fatalf("darkComboRe does not match %q", plain)
+	}
+	dark := darkKey{gain: m[2], exposure: 300, temp: normaliseTemp(m[3])}
+
+	if light != dark {
+		t.Errorf("light %s and dark %s are different keys, so the dark will not be found", light, dark)
+	}
+}
+
 // TestDarkComboRe pins the master-side pattern on the real filenames.
 func TestDarkComboRe(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		gain string
 		exp  int
+		temp string
 	}{
-		{"masterDark_300s_GA0_-10C_20251118.xisf", "GA0", 300},
-		{"masterDark_600s_GA2750_-10C_20251120.xisf", "GA2750", 600},
-		{"masterDark_30s_GA0_-10C_20260901.xisf", "GA0", 30},
+		{"masterDark_300s_GA0_-10C_20251118.xisf", "GA0", 300, "-10C"},
+		{"masterDark_600s_GA2750_-10C_20251120.xisf", "GA2750", 600, "-10C"},
+		{"masterDark_30s_GA0_-10C_20260901.xisf", "GA0", 30, "-10C"},
+		{"masterDark_300s_GA0_0C_20251118.xisf", "GA0", 300, "0C"},
+		{"masterDark_600s_GA2750_+5C_20251120.xisf", "GA2750", 600, "+5C"},
 	} {
 		m := darkComboRe.FindStringSubmatch(tc.name)
 		if m == nil {
 			t.Errorf("darkComboRe does not match %q", tc.name)
 			continue
 		}
+		// Every group is asserted, not just the gain. The order here is
+		// exposure, gain, setpoint -- the reverse of lightComboRe -- so a group
+		// index copied across from the light side would read the setpoint as a
+		// gain and quietly index every master under the wrong key.
 		if m[2] != tc.gain {
 			t.Errorf("%q gain = %q, want %q", tc.name, m[2], tc.gain)
 		}
+		if m[3] != tc.temp {
+			t.Errorf("%q setpoint = %q, want %q", tc.name, m[3], tc.temp)
+		}
+	}
+}
+
+// TestDarkComboReGroupOrderDiffersFromLight pins the asymmetry the previous test
+// cannot catch on its own: the two patterns use the same three tokens in opposite
+// orders, so the same index means different things on each side.
+func TestDarkComboReGroupOrderDiffersFromLight(t *testing.T) {
+	const light = "LBN527_LIGHT_B_300s_BIN1_-10C_GA0_20260910_220000_000_PA310_E.FIT"
+	const dark = "masterDark_300s_GA0_-10C_20251118.xisf"
+
+	lm := lightComboRe.FindStringSubmatch(light)
+	dm := darkComboRe.FindStringSubmatch(dark)
+	if lm == nil || dm == nil {
+		t.Fatal("a pattern did not match its filename")
+	}
+
+	// On the light side the setpoint is the second group and the gain the third.
+	if lm[2] != "-10C" || lm[3] != "GA0" {
+		t.Errorf("light groups = [%s %s %s], want exposure then -10C then GA0", lm[1], lm[2], lm[3])
+	}
+	// On the dark side it is the other way round. If this ever matches, the two
+	// are no longer interchangeable and indexDarkMasters is reading the wrong
+	// column.
+	if dm[2] != "GA0" || dm[3] != "-10C" {
+		t.Errorf("dark groups = [%s %s %s], want exposure then GA0 then -10C", dm[1], dm[2], dm[3])
+	}
+}
+
+// TestPrepareMixedTemperatureTargetNeedsTwoDarks is the reason the setpoint is in
+// the key at all. One target, two nights, two setpoints -- a season at a remote
+// site can straddle a change of cooling. Each night must draw its own dark.
+func TestPrepareMixedTemperatureTargetNeedsTwoDarks(t *testing.T) {
+	const target = "M31"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {"B": {
+					lightNameFull(target, "B", "20260910", "220000", "000", "310", "GA0", "300s", "-10C"),
+				}},
+				"2026-09-20": {"B": {
+					lightNameFull(target, "B", "20260920", "220000", "000", "310", "GA0", "300s", "0C"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": {flatName("B", "41.4", "20260910", "070000", "000", "310")},
+			"2026-09-20": {flatName("B", "41.4", "20260920", "070000", "000", "310")},
+		},
+		darks: map[string]string{
+			"GA0/300s/-10C": "masterDark_300s_GA0_-10C_20251118.xisf",
+			"GA0/300s/0C":   "masterDark_300s_GA0_0C_20251120.xisf",
+		},
+	}
+	f.build(t, root)
+	out := t.TempDir()
+
+	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+
+	got := fileNames(t, darkOutDir(out, target))
+	if len(got) != 2 {
+		t.Fatalf("darks dir holds %v, want both setpoints copied", got)
+	}
+
+	// Both nights report their own key, and the two are distinct.
+	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
+	if len(recs) != 3 {
+		t.Fatalf("got %d records, want header plus two sessions", len(recs))
+	}
+	if recs[1][12] != "GA0/300s/-10C" || recs[2][12] != "GA0/300s/0C" {
+		t.Errorf("darks columns = %q, %q; want the setpoint each night was shot at",
+			recs[1][12], recs[2][12])
+	}
+}
+
+// TestPrepareDoesNotBorrowADarkAtTheWrongTemperature is the silent-failure case
+// the setpoint guards. A -10C light with only a 0C dark on hand must report the
+// gap rather than quietly calibrate with the wrong-temperature master.
+func TestPrepareDoesNotBorrowADarkAtTheWrongTemperature(t *testing.T) {
+	const target = "NGC7000"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {"B": {
+					lightNameFull(target, "B", "20260910", "220000", "000", "310", "GA0", "300s", "-10C"),
+				}},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": {flatName("B", "41.4", "20260910", "070000", "000", "310")},
+		},
+		// Right exposure, right gain, wrong temperature. A key of gain and
+		// exposure alone would match this and copy it.
+		darks: map[string]string{
+			"GA0/300s/0C": "masterDark_300s_GA0_0C_20251118.xisf",
+		},
+	}
+	f.build(t, root)
+	out := t.TempDir()
+
+	stderr := captureStderr(t, func() {
+		if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
+			t.Errorf("runPrepare returned an error for a missing dark: %v", err)
+		}
+	})
+
+	if !strings.Contains(stderr, "GA0/300s/-10C") {
+		t.Errorf("stderr %q does not report the -10C dark as missing", stderr)
+	}
+	// And it says what it does have, so the operator can see the near miss
+	// rather than wonder.
+	if !strings.Contains(stderr, "GA0/300s/0C") {
+		t.Errorf("stderr %q does not name the 0C master it found", stderr)
+	}
+	// Asserting the directory is absent rather than empty: nothing qualified,
+	// so the copy step never ran and never created it. Listing it would fail on
+	// a missing directory, which is the wrong signal here.
+	if _, err := os.Stat(darkOutDir(out, target)); !os.IsNotExist(err) {
+		t.Errorf("darks dir exists, want nothing copied at the wrong setpoint (stat err = %v)", err)
+	}
+}
+
+// TestFlatsAreNotFilteredByTemperature pins the other half of the rule. A flat
+// is a shuttered frame of sky: its dark current is negligible and the setpoint
+// does not change what it corrects, so a flat is matched on filter and angle
+// only. Requiring the temperatures to agree would reject good flats for no
+// physical reason.
+func TestFlatsAreNotFilteredByTemperature(t *testing.T) {
+	root := t.TempDir()
+	// The session's lights are at -10C; the only flats are at 0C.
+	buildFlatDirs(t, root, map[string][]string{
+		"2026-09-10": {
+			flatNameTemp("S", "41.4", "20260910", "070000", "000", "310", "0C"),
+			flatNameTemp("S", "41.4", "20260910", "070100", "000", "310", "+5C"),
+		},
+	})
+	dates := []string{"2026-09-10"}
+
+	matched, _ := collectFlats(filepath.Join(root, flatsDir), "2026-09-10", "310", "S", dates, 0)
+	if len(matched) != 2 {
+		t.Fatalf("got %d flats, want both despite the setpoint differing from the lights", len(matched))
 	}
 }

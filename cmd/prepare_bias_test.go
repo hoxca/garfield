@@ -90,8 +90,8 @@ func TestPrepareCopiesBothBiasesForMixedGainSession(t *testing.T) {
 	if got := recs[1][11]; got != "GA0 GA2750" {
 		t.Errorf("gains column = %q, want %q", got, "GA0 GA2750")
 	}
-	if got := recs[1][12]; got != "GA0/300s GA2750/300s" {
-		t.Errorf("darks column = %q, want %q", got, "GA0/300s GA2750/300s")
+	if got := recs[1][12]; got != "GA0/300s/-10C GA2750/300s/-10C" {
+		t.Errorf("darks column = %q, want %q", got, "GA0/300s/-10C GA2750/300s/-10C")
 	}
 }
 
@@ -496,7 +496,7 @@ func TestIndexBiasMasters(t *testing.T) {
 		}
 
 		biasDate := biases["GA0"].date
-		darkDate := darks[darkKey{gain: "GA0", exposure: 300}].date
+		darkDate := darks[darkKey{gain: "GA0", exposure: 300, temp: "-10C"}].date
 		if biasDate != darkDate {
 			t.Errorf("bias kept date %q, dark kept %q; the two rules have diverged", biasDate, darkDate)
 		}
