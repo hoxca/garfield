@@ -161,9 +161,18 @@ acquisition does not use.
 
 Dotfile directories are skipped without comment.
 
-The filter is a *directory* for lights and a *filename token* for flats.
-The two must agree, and both are validated against the same set, for a flat
-to be matched (§3).
+The filter is a *directory* for lights and a *filename token* for flats. The two
+are matched against each other, and each is validated against the same set
+(`knownFilters`), for a flat to be picked up (§3). Neither the directory name nor
+the flat's token is checked against **the other side's** spelling — a light in
+`lights/S/` is matched to `FLAT_S_`, and the light's own filename token is never
+read.
+
+That is deliberate, and the acquisition makes it safe: the filter letter and the
+directory name are two transcriptions of one filter-wheel setting, so they agree
+by construction and there is nothing to compare. The wheel position does not
+appear in a filename at all, so no cross-check is available even in principle.
+The set is the wheel (§3.1.3).
 
 ### 2.3 Light filename grammar
 
@@ -179,8 +188,13 @@ LBN527_LIGHT_R_300s_BIN1_-10C_GA0_20260910_021539_988_PA310_E.FIT
 
 Note the two different conventions this one name carries: the **target** comes
 first in a light but a flat leads with `FLAT_`, and the **date** is eighth here
-and sixth in a flat (§3.1). Neither is validated against the other side, so the
-same token can appear at different positions in the two grammars.
+and sixth in a flat (§3.1). The grammars are independent — no position is
+cross-checked against the other — so a token can sit at a different index in each.
+
+There is a **fifth** token here that garfield never reads: the `filter` field. It
+is transcribed from the same wheel setting as the filter directory, which is the
+authoritative one (§2.2), so it carries no information the run does not already
+have.
 
 **No regex validates the whole name.** Four independent regexes pluck tokens out
 of it. A frame missing a token still gets analysed and copied — the token is
@@ -196,8 +210,12 @@ simply absent from the report.
 Frame date, time, milliseconds and flip are not used for matching at all.
 The `E`/`W` side of pier suffix is cosmetic here.
 
-Only two of these tokens change what is copied. A missing **frame date** costs a
-report column and nothing else. A missing **PA**, **gain**, or
+Never read at all: **filter**, exposure, binning, setpoint, and the `LIGHT`
+type marker. The filter is the wheel (§2.2); the rest either feed a report or
+are decoration.
+
+Only two of the four read tokens change what is copied. A missing **frame date**
+costs a report column and nothing else. A missing **PA**, **gain**, or
 **exposure + gain** pair costs data: the frame is still copied into `lights/`,
 but it never reaches a flat, a bias, or a dark.
 
@@ -291,7 +309,8 @@ FLAT_L2_41.4s_BIN1_PA310.FIT                                  → nil   no known
 Two consequences:
 
 - **Narrowband does not parse.** `Ha`, `OIII`, `SII`, `L2` and anything else
-  outside the seven are dropped until their letters are added to `knownFilters`.
+  outside the seven are dropped. There is no pending change that would accept
+  them — the set is the wheel (§3.1.3).
 - **Multi-character tokens cannot match by accident.** Because the group is a
   character class rather than an alternation, `Ha` cannot be read as `H` — the
   `_` that must follow the group is missing. A file whose filter is `H` is
@@ -306,16 +325,39 @@ prefix but fails the filter test:
 Flats/2026-09-16: "FLAT_Ha_41.4s_BIN1_PA310.FIT" has no known filter (LRGBSHO), ignored
 ```
 
-That is deliberate: it is how a newly added filter announces itself before
-anyone extends `knownFilters`. A file *without* the prefix (`FLATL_...`, a light
-frame, a master) is a different kind of frame sharing the directory, so it is
-left alone — calling it a broken flat would be misleading.
+That is deliberate: it separates "a flat garfield cannot use" from "some other
+kind of frame sharing the directory". A file *without* the prefix (`FLATL_...`,
+a light frame, a master) is left alone, because calling it a broken flat would
+be misleading. Given the wheel (§3.1.3) the case that fires in practice is an
+operator error rather than a filter garfield has yet to learn.
 
 The prefix test is deliberately **looser** than the token test, so a plainly
 malformed `FLAT_-weird_name.FIT` is named rather than discarded.
 
-`knownFilters` is written in band order (L, R, G, B, S, H, O) for readability
-rather than in ASCII order, which is what it would otherwise be.
+### 3.1.3 The set is the wheel
+
+`knownFilters` is **the filter wheel's inventory**, not a design choice. The
+wheel has seven positions and all seven are occupied — L, R, G, B, S, H, O, in
+that order — on a remote site whose wheel is full. `LRGBSHO` is therefore
+complete, and it will not grow: narrowband would need a different wheel, not a
+different constant. Extending `knownFilters` for its own sake would describe a
+filter the instrument cannot take.
+
+Two consequences for anyone reading the constant:
+
+- **The order is the wheel.** `L R G B S H O` is positions 1–7, not ASCII order
+  and not an arbitrary tidy. Nothing in the code depends on it — `flatFilterRe`
+  splices it into a character class, which is order-independent — so the sequence
+  carries information nothing else does. Do not sort it.
+- **The filter check is a safety net, not routine filtering.** Since every
+  position is in the set, a legitimate filter directory never trips it.
+  `isKnownFilter` only fires on an operator error: a hand-made `calibration`
+  directory, a typo, an `Ha` folder copied in by hand.
+
+The same set governs the light side (§2.2), where the filter letter in the
+filename is transcribed from the same wheel setting as the directory. That is why
+the light filename's filter token is never read — there is nothing to check it
+against, and the wheel position is not in the name.
 
 ### 3.2 Matching, and borrowing across nights
 
@@ -546,10 +588,11 @@ All in `cmd/prepare.go` unless noted.
 | `masterDateRe` | `_(\d{8})\.xisf$` | 167 | duplicate-master tiebreak |
 
 `flatFilterRe` is assembled from `flatNamePrefix` and `knownFilters` rather than
-written out, so extending the filter set (§3.1.1) changes the pattern
-automatically and cannot drift from the constant the directory check uses. The
-group **must stay capturing** — the filter is `mf[1]`, and an alternation or a
-non-capturing group would return `nil` from every lookup while still compiling.
+written out, so the pattern cannot drift from the constant the directory check
+uses. The two sides read one source of truth, which matters because the set is
+the wheel (§3.1.3) rather than something a run can vary. The group **must stay
+capturing** — the filter is `mf[1]`, and an alternation or a non-capturing group
+would return `nil` from every lookup while still compiling.
 
 The line numbers are accurate as of this revision and will drift; the patterns
 are what matters and each is pinned by a test in the appendix.
@@ -856,9 +899,11 @@ Things that will bite, ranked by how quietly they fail:
 6. **Only seven filters are known**, on both sides: L, R, G, B, S, H, O. A flat
    with any other filter is dropped with a warning, and a light subdirectory
    that is not one of the seven is skipped with a warning rather than becoming
-   a phantom filter that then reports a missing flat. **Narrowband needs
-   `knownFilters` extended** — `FLAT_Ha_` and `FLAT_OIII_` do not parse until
-   then (§3.1).
+   a phantom filter that then reports a missing flat. **Narrowband is not a
+   pending code change** — the wheel holds seven filters and all seven positions
+   are filled, so `LRGBSHO` is the whole inventory; `FLAT_Ha_` and `FLAT_OIII_`
+   need a different wheel to parse at all, not an extended constant
+   (§3.1.3).
 
 7. **Masters must be `.xisf`.** A `.fit` master is rejected by the extension
    check *and* excluded by the directory structure — the raw calibration frames

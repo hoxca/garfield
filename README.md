@@ -341,14 +341,18 @@ a session, nor is `2026-09-16_old`. Session numbers are positional: add a night
 mid-run and every later session renumbers. `Session_03` is not an identifier —
 join on `date` in the CSV.
 
-**Filters are exactly `LRGBSHO`** — L, R, G, B, S, H, O — on both sides. The
-directory name is used verbatim, no normalisation. A directory outside the set
-is skipped with a warning; a flat outside the set is dropped with a warning
-naming the file. **Narrowband does not parse**: `FLAT_Ha_` and `FLAT_OIII_` are
-rejected until the set is extended in `knownFilters`.
+**Filters are exactly `LRGBSHO`** — L, R, G, B, S, H, O — on both sides. That
+set is the filter wheel: seven positions, all occupied, and it will not grow.
+A directory outside the set is skipped with a warning; a flat outside the set is
+dropped with a warning naming the file. In practice that only fires on operator
+error — a hand-made directory, a typo — because every real position is in the
+set. **Narrowband does not parse**: `FLAT_Ha_` and `FLAT_OIII_` need a different
+wheel to be acquired at all, not a code change.
 
 **The filter is a directory for lights and a filename token for flats.**
-`Lights/<target>/<date>/S/` needs `FLAT_S_...`, not `FLAT_H_...`.
+`Lights/<target>/<date>/S/` needs `FLAT_S_...`, not `FLAT_H_...`. The light's own
+filename token is never read — both spellings come from the same wheel setting,
+so they agree by construction.
 
 **One position angle per target.** More than one angle within a session, or
 different angles across a target's sessions, is fatal. The failure happens
@@ -475,7 +479,8 @@ Ranked by how quietly they fail. The full list is
 3. **A rotated target cannot be prepared at all** — fatal, not approximated.
 4. **Session numbers are positional.** Insert a date directory and everything
    after it renumbers.
-5. **Only seven filters are known.** Narrowband needs `knownFilters` extended.
+5. **Only seven filters are known** — the wheel's full inventory, so this is not
+   a pending limitation. Narrowband needs different hardware.
 6. **Masters must be `.xisf`.**
 
 ---

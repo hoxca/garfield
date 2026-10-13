@@ -106,14 +106,19 @@ var sessionDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var paRe = regexp.MustCompile(`_PA(\d+)`)
 
 // knownFilters are the colour filters the acquisition names, in a flat's
-// filter token and in a light filter subdirectory. Written in band order for
-// readability; it is a membership set, not a display order, since filters are
-// reported alphabetically. The token is a single character, so the set doubles
-// as a character class for flatFilterRe below.
+// filter token and in a light filter subdirectory. It is a membership set, not a
+// display order, since filters are reported alphabetically. The token is a
+// single character, so the set doubles as a character class for flatFilterRe
+// below.
 //
-// Narrowband filters are the obvious extension: FLAT_Ha_ and FLAT_OIII_ do not
-// match until their letters are added here, and until then every session warns
-// that it has no flats for them.
+// The set is the filter wheel's inventory: seven positions, all occupied, in
+// this order. Do not sort it. Nothing here depends on the sequence -- a
+// character class is order-independent -- so the order is the only record of
+// which physical position each letter names.
+//
+// Narrowband is therefore not a pending extension. FLAT_Ha_ and FLAT_OIII_ would
+// need a different wheel to be acquired at all, not a letter added here, and
+// the wheel is full at a remote site.
 const knownFilters = "LRGBSHO"
 
 // isKnownFilter reports whether f names one of the recognised colour filters.

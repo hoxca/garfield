@@ -1957,9 +1957,15 @@ func TestPrepareParsesLightNames(t *testing.T) {
 // isKnownFilter gates both the flat filename token and the light filter
 // subdirectory name, so an entry that drifts out of step with knownFilters
 // would silently stop indexing that filter's flats.
+//
+// The comparison is on the whole string, not per-letter, because the order is
+// not cosmetic: it is the wheel's positions 1 to 7, and flatFilterRe splices
+// the set into a character class that ignores order. So this equality is the
+// only thing recording that sequence, and a well-meaning sort would pass every
+// behavioural test while losing it.
 func TestKnownFilters(t *testing.T) {
 	if knownFilters != "LRGBSHO" {
-		t.Errorf("knownFilters = %q, want %q (band order)", knownFilters, "LRGBSHO")
+		t.Errorf("knownFilters = %q, want %q (filter wheel, positions 1-7)", knownFilters, "LRGBSHO")
 	}
 
 	for _, f := range []string{"L", "R", "G", "B", "S", "H", "O"} {
