@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="garfield.png" alt="garfield" width="180">
-
 # garfield
 
 Quality analysis and session preparation for FITS acquisition trees.
