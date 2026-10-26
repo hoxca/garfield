@@ -144,8 +144,10 @@ const flatNamePrefix = "FLAT_"
 var flatFilterRe = regexp.MustCompile(`^` + flatNamePrefix + `(` + `[` + knownFilters + `]` + `)_`)
 
 // frameDateRe extracts the YYYYMMDD acquisition date embedded in a frame
-// filename.
-var frameDateRe = regexp.MustCompile(`_(\d{8})_\d{6}_\d+_PA`)
+// filename. It deliberately does not require the _PA token that follows on a C3
+// frame: a G4 frame has no angle, and the date is the same field in both
+// grammars. No profile branch is needed.
+var frameDateRe = regexp.MustCompile(`_(\d{8})_\d{6}_\d+`)
 
 // fitsExts are the filename extensions treated as FITS frames.
 var fitsExts = map[string]bool{".FIT": true, ".FITS": true, ".FTS": true}
@@ -201,6 +203,173 @@ func normaliseTemp(token string) string {
 // recently made master of a kind can be preferred when there are several.
 var masterDateRe = regexp.MustCompile(`_(\d{8})\.xisf$`)
 
+// g4FlatFilterRe extracts the filter from a Moravian G4 flat, whose name carries
+// an unused prefix before _FLAT_. The prefix is required (".+"), which is what
+// keeps it from matching a C3 flat: those begin with FLAT_, so they contain no
+// "_FLAT_" substring at all.
+var g4FlatFilterRe = regexp.MustCompile(`^.+_FLAT_([` + knownFilters + `])_`)
+
+// g4LightComboRe extracts the exposure and setpoint of a G4 light. The third
+// group is a frame index where a C3 frame carries its gain; it is captured only
+// because it terminates the setpoint token, and is otherwise unread.
+var g4LightComboRe = regexp.MustCompile(`_(\d+)s_BIN\d_([-+]?\d+C)_(\d+)_`)
+
+// g4DarkComboRe extracts the exposure and setpoint of a G4 master dark. There is
+// no gain token, and no per-gain subdirectory on disk either: a CCD has one
+// gain setting, so it is not part of the name or the key.
+var g4DarkComboRe = regexp.MustCompile(`masterDark_(\d+)s_([-+]?\d+C)_`)
+
+// g4BiasKeyRe extracts the setpoint that keys a G4 master bias. A C3 bias is
+// keyed by gain instead; the two patterns cannot match each other's names,
+// because each requires its token immediately after "masterBias_".
+var g4BiasKeyRe = regexp.MustCompile(`masterBias_([-+]?\d+C)_`)
+
+// cameraProfile is the filename convention and matching policy of one
+// acquisition camera. The two are genuinely different instruments -- a C3 has a
+// rotator and a gain setting, the G4 that preceded it has neither -- so the
+// differences are selected here once rather than branched on at every call site.
+//
+// The patterns are deliberately disjoint: a file belonging to the other camera
+// does not parse under the active profile and is left alone, which is the right
+// outcome when both cameras' data share one acquisition tree.
+type cameraProfile struct {
+	name    string
+	hasPA   bool // position angle in filenames, and used to match flats
+	hasGain bool // gain token in filenames, and used to key masters
+
+	// flatFilterRe extracts a flat's filter token as sub-match 1.
+	flatFilterRe *regexp.Regexp
+	// isFlat reports whether a name carries this camera's flat prefix. Used
+	// only to decide whether a rejected name is worth reporting: a name that is
+	// some other kind of frame should be left alone silently.
+	isFlat func(name string) bool
+
+	// lightDark returns the master dark key a light frame needs.
+	lightDark func(name string) (darkKey, bool)
+	// darkMaster returns the key a master dark file is indexed under.
+	darkMaster func(base string) (darkKey, bool)
+	// biasKey returns the key a master bias file is indexed under.
+	biasKey func(name string) (string, bool)
+}
+
+// c3Camera is the Moravian C3: a rotator and a gain setting, both named in the
+// filename and both used for matching.
+var c3Camera = cameraProfile{
+	name:         "c3",
+	hasPA:        true,
+	hasGain:      true,
+	flatFilterRe: flatFilterRe,
+	isFlat:       func(name string) bool { return strings.HasPrefix(name, flatNamePrefix) },
+	lightDark: func(name string) (darkKey, bool) {
+		m := lightComboRe.FindStringSubmatch(name)
+		if m == nil {
+			return darkKey{}, false
+		}
+		exposure, err := strconv.Atoi(m[1])
+		if err != nil {
+			return darkKey{}, false
+		}
+		return darkKey{gain: m[3], exposure: exposure, temp: normaliseTemp(m[2])}, true
+	},
+	darkMaster: func(base string) (darkKey, bool) {
+		m := darkComboRe.FindStringSubmatch(base)
+		if m == nil {
+			return darkKey{}, false
+		}
+		exposure, err := strconv.Atoi(m[1])
+		if err != nil {
+			return darkKey{}, false
+		}
+		return darkKey{gain: m[2], exposure: exposure, temp: normaliseTemp(m[3])}, true
+	},
+	biasKey: func(name string) (string, bool) {
+		m := gainRe.FindStringSubmatch(name)
+		if m == nil {
+			return "", false
+		}
+		return m[1], true
+	},
+}
+
+// g4Camera is the Moravian G4: a CCD with no rotator and no gain setting. Its
+// position angle is fixed by the imaging train, so every light and flat matches
+// regardless of angle and none is read; its master calibration is keyed on the
+// sensor temperature setpoint alone (plus exposure, for darks).
+var g4Camera = cameraProfile{
+	name:         "g4",
+	hasPA:        false,
+	hasGain:      false,
+	flatFilterRe: g4FlatFilterRe,
+	isFlat:       func(name string) bool { return strings.Contains(name, "_FLAT_") },
+	lightDark: func(name string) (darkKey, bool) {
+		m := g4LightComboRe.FindStringSubmatch(name)
+		if m == nil {
+			return darkKey{}, false
+		}
+		exposure, err := strconv.Atoi(m[1])
+		if err != nil {
+			return darkKey{}, false
+		}
+		return darkKey{exposure: exposure, temp: normaliseTemp(m[2])}, true
+	},
+	darkMaster: func(base string) (darkKey, bool) {
+		m := g4DarkComboRe.FindStringSubmatch(base)
+		if m == nil {
+			return darkKey{}, false
+		}
+		exposure, err := strconv.Atoi(m[1])
+		if err != nil {
+			return darkKey{}, false
+		}
+		return darkKey{exposure: exposure, temp: normaliseTemp(m[2])}, true
+	},
+	biasKey: func(name string) (string, bool) {
+		m := g4BiasKeyRe.FindStringSubmatch(name)
+		if m == nil {
+			return "", false
+		}
+		return normaliseTemp(m[1]), true
+	},
+}
+
+// cameraProfiles maps the --camera values to their profiles. Order is not
+// meaningful; the map is only a lookup.
+var cameraProfiles = map[string]cameraProfile{
+	"c3": c3Camera,
+	"g4": g4Camera,
+}
+
+// cameraProfileFor resolves a --camera value. An unknown value is rejected
+// rather than falling back to a default: silently preparing a target with the
+// wrong matching rules would match flats across angles that never shared them,
+// or find no calibration at all.
+func cameraProfileFor(name string) (cameraProfile, error) {
+	p, ok := cameraProfiles[name]
+	if !ok {
+		return cameraProfile{}, fmt.Errorf("unknown --camera %q, want c3 or g4", name)
+	}
+	return p, nil
+}
+
+// biasKeyNoun names what this camera keys a master bias on, for messages. The
+// distinction matters: telling a G4 operator that a gain is missing would name
+// a setting the camera does not have.
+// gainNoun returns " and gain" for a camera whose dark key includes one, so a
+// message on a CCD does not ask for a setting it does not have.
+func (p cameraProfile) gainNoun() string {
+	if p.hasGain {
+		return "/gain"
+	}
+	return ""
+}
+
+func (p cameraProfile) biasKeyNoun() string {
+	if p.hasGain {
+		return "gain setting"
+	}
+	return "sensor temperature setpoint"
+}
+
 type prepareOptions struct {
 	// Quality thresholds are shared with analyze, so a light frame is approved
 	// here on exactly the criteria analyze would apply.
@@ -209,6 +378,7 @@ type prepareOptions struct {
 	target       string
 	input        string
 	output       string
+	camera       string // "c3" or "g4"; see cameraProfile
 	dryRun       bool
 	skipExisting bool
 	quiet        bool
@@ -261,6 +431,8 @@ func init() {
 	prepareCmd.Flags().StringVarP(&prepareOpts.output, "output", "o", defaultPrepareOutput, "destination root")
 	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "show the plan without copying")
 	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "do not overwrite existing files")
+	prepareCmd.Flags().StringVar(&prepareOpts.camera, "camera", "c3",
+		"camera the filenames come from: c3 (rotator and gain) or g4 (fixed angle, no gain)")
 	prepareCmd.Flags().IntVar(&prepareOpts.targetFlats, "flat-count", 0,
 		"flats to collect per filter and angle; 0 = the session's own date only")
 	prepareCmd.Flags().BoolVar(&prepareOpts.quiet, "quiet", false, "suppress console output")
@@ -293,8 +465,13 @@ type sessionPlan struct {
 	missingFlats []string
 	// gains lists the camera gain settings the session's light frames were
 	// taken at, sorted. Filters pair to gains in the acquisition, so a night
-	// covering both a B/G/L/R set and an O/S set records two.
+	// covering both a B/G/L/R set and an O/S set records two. Empty for a
+	// camera that has no gain setting.
 	gains []string
+	// biasKeys lists what the session needs a master bias for: a gain on the
+	// C3, a sensor temperature setpoint on the G4. Kept apart from gains
+	// because the two coincide only on the C3.
+	biasKeys []string
 	// darksNeeded lists the master darks the session's approved frames need,
 	// sorted by gain then exposure. Filled in after the assessment, since it
 	// depends on which frames were approved.
@@ -306,6 +483,38 @@ type sessionPlan struct {
 	rejectedCount int
 	// rejectReasons counts frames per decision, for the console summary.
 	rejectReasons map[string]int
+}
+
+// cameraMismatchWarning reports lights that contradict the chosen --camera.
+//
+// A wrong --camera already fails loudly in the sense that nothing matches, but
+// the individual warnings name filters and masters rather than the cause. This
+// says the cause once, and names the likely fix.
+func cameraMismatchWarning(sessions []sessionPlan, profile cameraProfile) string {
+	var withPA, without int
+	for _, s := range sessions {
+		for _, filter := range s.filterNames() {
+			for _, name := range s.filters[filter] {
+				if paRe.MatchString(name) {
+					withPA++
+				} else {
+					without++
+				}
+			}
+		}
+	}
+	if profile.hasPA {
+		if without > 0 && withPA == 0 {
+			return fmt.Sprintf("--camera %s expects a position angle but none of the %d light frame(s) carry one; is this G4 data?",
+				profile.name, without)
+		}
+		return ""
+	}
+	if withPA > 0 && without == 0 {
+		return fmt.Sprintf("--camera %s ignores position angles but all %d light frame(s) carry one; is this C3 data?",
+			profile.name, withPA)
+	}
+	return ""
 }
 
 // approved reports whether a light frame passed the quality check.
@@ -350,6 +559,10 @@ func runPrepare(opts prepareOptions) error {
 	if opts.targetFlats < 0 {
 		return fmt.Errorf("--flat-count cannot be negative, got %d", opts.targetFlats)
 	}
+	profile, err := cameraProfileFor(opts.camera)
+	if err != nil {
+		return err
+	}
 
 	lightsRoot := filepath.Join(opts.input, lightsDir, opts.target)
 	info, err := os.Stat(lightsRoot)
@@ -365,12 +578,15 @@ func runPrepare(opts prepareOptions) error {
 
 	targetOut := filepath.Join(opts.output, opts.target)
 
-	sessions, warnings, err := planSessions(lightsRoot, filepath.Join(opts.input, flatsDir), opts.target, opts.targetFlats)
+	sessions, warnings, err := planSessions(lightsRoot, filepath.Join(opts.input, flatsDir), opts.target, opts.targetFlats, profile)
 	if err != nil {
 		return err
 	}
 	if len(sessions) == 0 {
 		return fmt.Errorf("no session (YYYY-MM-DD directory) found in %q", lightsRoot)
+	}
+	if w := cameraMismatchWarning(sessions, profile); w != "" {
+		warnings = append(warnings, w)
 	}
 
 	// Indexed once for the whole target: the masters are shared by every
@@ -380,7 +596,7 @@ func runPrepare(opts prepareOptions) error {
 	biasRoot := filepath.Join(opts.input, biasDir, biasMastersDir)
 	if _, statErr := os.Stat(biasRoot); statErr == nil {
 		var biasWarnings []string
-		masters, biasWarnings, err = indexBiasMasters(biasRoot)
+		masters, biasWarnings, err = indexBiasMasters(biasRoot, profile)
 		if err != nil {
 			return err
 		}
@@ -391,7 +607,7 @@ func runPrepare(opts prepareOptions) error {
 	darkRoot := filepath.Join(opts.input, darksDir, darksMastersDir)
 	if _, statErr := os.Stat(darkRoot); statErr == nil {
 		var darkWarnings []string
-		darkMasters, darkWarnings, err = indexDarkMasters(darkRoot)
+		darkMasters, darkWarnings, err = indexDarkMasters(darkRoot, profile)
 		if err != nil {
 			return err
 		}
@@ -415,7 +631,7 @@ func runPrepare(opts prepareOptions) error {
 
 	// After the assessment, because a master dark is only wanted for frames
 	// that actually reach lights/.
-	collectDarkKeys(sessions)
+	collectDarkKeys(sessions, profile)
 
 	if !opts.dryRun {
 		if err := os.MkdirAll(targetOut, 0o755); err != nil {
@@ -460,7 +676,7 @@ func runPrepare(opts prepareOptions) error {
 
 	// Copied once for the target, after the sessions, because the masters are
 	// shared: one file per gain serves every night taken at that setting.
-	biasCount, biasWarnings, err := prepareBias(targetOut, targetGains(sessions), masters, opts)
+	biasCount, biasWarnings, err := prepareBias(targetOut, targetBiasKeys(sessions), masters, opts, profile)
 	if err != nil {
 		return err
 	}
@@ -717,7 +933,7 @@ var errMixedAngles = errors.New("mixed angles")
 // In the second case each session would still be matched to its own date's
 // flats, so every session would look internally consistent and the report
 // would carry several different angles with nothing explaining why.
-func planSessions(lightsRoot, flatsRoot, target string, targetFlats int) ([]sessionPlan, []string, error) {
+func planSessions(lightsRoot, flatsRoot, target string, targetFlats int, profile cameraProfile) ([]sessionPlan, []string, error) {
 	entries, err := os.ReadDir(lightsRoot)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to read %q: %w", lightsRoot, err)
@@ -739,7 +955,7 @@ func planSessions(lightsRoot, flatsRoot, target string, targetFlats int) ([]sess
 	)
 
 	for i, date := range dates {
-		s, warns, err := planSession(filepath.Join(lightsRoot, date), flatsRoot, i+1, date, dates, targetFlats)
+		s, warns, err := planSession(filepath.Join(lightsRoot, date), flatsRoot, i+1, date, dates, targetFlats, profile)
 		if err != nil {
 			// A fault in the data is collected and reported with the others; a
 			// directory that could not be read is not, since planning on from
@@ -808,7 +1024,7 @@ func mixedAnglesAcrossSessions(sessions []sessionPlan, target string) string {
 // targetFlats is how many flats the session wants per filter and angle. At zero
 // there is no goal: the session keeps its own date's frames, reaches into no
 // neighbour, and is never reported short.
-func planSession(sessionDir, flatsRoot string, number int, date string, targetDates []string, targetFlats int) (sessionPlan, []string, error) {
+func planSession(sessionDir, flatsRoot string, number int, date string, targetDates []string, targetFlats int, profile cameraProfile) (sessionPlan, []string, error) {
 	s := sessionPlan{
 		number:  number,
 		date:    date,
@@ -824,6 +1040,7 @@ func planSession(sessionDir, flatsRoot string, number int, date string, targetDa
 	warnings := filterWarns
 	paSeen := map[string]bool{}
 	gainSeen := map[string]bool{}
+	biasSeen := map[string]bool{}
 
 	for _, filter := range filterDirs {
 		files, err := listFITS(filepath.Join(sessionDir, filter))
@@ -840,11 +1057,23 @@ func planSession(sessionDir, flatsRoot string, number int, date string, targetDa
 			if m := frameDateRe.FindStringSubmatch(f); m != nil {
 				s.trackFrameDate(formatFrameDate(m[1]))
 			}
-			if m := paRe.FindStringSubmatch(f); m != nil {
-				paSeen[m[1]] = true
+			// A camera without a rotator has no angle to record, and no gain
+			// setting either. Reading them anyway would invent a session
+			// property the instrument does not have.
+			if profile.hasPA {
+				if m := paRe.FindStringSubmatch(f); m != nil {
+					paSeen[m[1]] = true
+				}
 			}
-			if m := gainRe.FindStringSubmatch(f); m != nil {
-				gainSeen[m[1]] = true
+			if profile.hasGain {
+				if m := gainRe.FindStringSubmatch(f); m != nil {
+					gainSeen[m[1]] = true
+					biasSeen[m[1]] = true
+				}
+			} else if key, ok := profile.lightDark(f); ok {
+				// Without a gain token the bias is keyed on the setpoint, so
+				// that is what this session needs a master for.
+				biasSeen[key.temp] = true
 			}
 		}
 	}
@@ -855,6 +1084,12 @@ func planSession(sessionDir, flatsRoot string, number int, date string, targetDa
 		s.gains = append(s.gains, g)
 	}
 	sort.Strings(s.gains)
+
+	s.biasKeys = make([]string, 0, len(biasSeen))
+	for k := range biasSeen {
+		s.biasKeys = append(s.biasKeys, k)
+	}
+	sort.Strings(s.biasKeys)
 
 	if len(paSeen) > 0 {
 		angles := make([]string, 0, len(paSeen))
@@ -879,14 +1114,18 @@ func planSession(sessionDir, flatsRoot string, number int, date string, targetDa
 	// Flats are matched on the session date, not the date embedded in the
 	// light filenames: sessions run past midnight, so the two disagree for
 	// most nights and only the directory name lines up with Flats/.
+	paLabel := ""
+	if profile.hasPA {
+		paLabel = fmt.Sprintf(" (PA%s)", s.pa)
+	}
 	for _, filter := range s.filterNames() {
-		matched, searched := collectFlats(flatsRoot, date, s.pa, filter, targetDates, targetFlats)
+		matched, searched := collectFlats(flatsRoot, date, s.pa, filter, targetDates, targetFlats, profile)
 		switch {
 		case len(matched) == 0:
 			s.missingFlats = append(s.missingFlats, filter)
 			warnings = append(warnings, fmt.Sprintf(
-				"session %s (%s): no flat for filter %s (PA%s), searched %s",
-				s.sessionDir(), date, filter, s.pa, strings.Join(searched, ", ")))
+				"session %s (%s): no flat for filter %s%s, searched %s",
+				s.sessionDir(), date, filter, paLabel, strings.Join(searched, ", ")))
 		case targetFlats > 0 && len(matched) < targetFlats:
 			// Short rather than absent: the frames are usable, so this warns
 			// and continues. Naming the dates searched matters, because a
@@ -894,8 +1133,8 @@ func planSession(sessionDir, flatsRoot string, number int, date string, targetDa
 			// simply held fewer flats. Only reachable with a goal set -- at zero
 			// there is no target to fall short of.
 			warnings = append(warnings, fmt.Sprintf(
-				"session %s (%s): %d flat(s) for filter %s (PA%s), want %d, searched %s",
-				s.sessionDir(), date, len(matched), filter, s.pa, targetFlats,
+				"session %s (%s): %d flat(s) for filter %s%s, want %d, searched %s",
+				s.sessionDir(), date, len(matched), filter, paLabel, targetFlats,
 				strings.Join(searched, ", ")))
 		}
 		s.flats[filter] = matched
@@ -921,7 +1160,7 @@ func planSession(sessionDir, flatsRoot string, number int, date string, targetDa
 // unguarded would be true immediately at zero and hand back no flats at all,
 // which would look like a night that shot none rather than a run that declined
 // to borrow.
-func collectFlats(flatRoot, date, pa, filter string, targetDates []string, target int) ([]flatRef, []string) {
+func collectFlats(flatRoot, date, pa, filter string, targetDates []string, target int, profile cameraProfile) ([]flatRef, []string) {
 	var (
 		matched  []flatRef
 		searched []string
@@ -948,7 +1187,7 @@ func collectFlats(flatRoot, date, pa, filter string, targetDates []string, targe
 		if target > 0 {
 			searched = append(searched, d)
 		}
-		index, _ := indexFlats(filepath.Join(flatRoot, d))
+		index, _ := indexFlats(filepath.Join(flatRoot, d), profile)
 		for _, name := range index[flatKey(filter, pa)] {
 			if target > 0 && len(matched) >= target {
 				break
@@ -1050,7 +1289,7 @@ func flatKey(filter, pa string) string {
 // kind of frame that happens to share the directory, and naming it as a broken
 // flat would be misleading. A name that is anchored on FLAT_ but whose filter
 // is outside the known set is a flat garfield cannot use, so it is reported.
-func indexFlats(flatDir string) (map[string][]string, []string) {
+func indexFlats(flatDir string, profile cameraProfile) (map[string][]string, []string) {
 	index := map[string][]string{}
 	var warnings []string
 
@@ -1066,29 +1305,38 @@ func indexFlats(flatDir string) (map[string][]string, []string) {
 		if e.IsDir() || !isFITSName(name) {
 			continue
 		}
-		mf := flatFilterRe.FindStringSubmatch(name)
+		mf := profile.flatFilterRe.FindStringSubmatch(name)
 		if mf == nil {
 			// Recognised by its prefix rather than a second, looser regex: a
-			// name carrying flatNamePrefix that the filter rejects is a flat
+			// name carrying the prefix that the filter rejects is a flat
 			// garfield cannot use, and naming it is how a newly added filter
-			// announces itself before anyone extends knownFilters. A name
-			// without the prefix -- FLATL_, a light frame, a master -- is a
-			// different kind of frame sharing the directory, so reporting it as
-			// a broken flat would be misleading.
-			if strings.HasPrefix(name, flatNamePrefix) {
+			// announces itself. A name without the prefix -- FLATL_, a light
+			// frame, a master, or the other camera's flat -- is a different
+			// kind of frame sharing the directory, so reporting it as a broken
+			// flat would be misleading.
+			if profile.isFlat(name) {
 				warnings = append(warnings, fmt.Sprintf(
 					"%s: %q has no known filter (%s), ignored",
 					flatDir, name, knownFilters))
 			}
 			continue
 		}
-		mp := paRe.FindStringSubmatch(name)
-		if mp == nil {
-			warnings = append(warnings, fmt.Sprintf(
-				"%s: %q has no position angle, ignored", flatDir, name))
-			continue
+
+		// A camera without a rotator writes no angle, and flats are matched on
+		// filter alone. Keying on an empty angle is deliberate: it is what lets
+		// every flat of that filter match, which is correct when the angle
+		// never changes.
+		pa := ""
+		if profile.hasPA {
+			mp := paRe.FindStringSubmatch(name)
+			if mp == nil {
+				warnings = append(warnings, fmt.Sprintf(
+					"%s: %q has no position angle, ignored", flatDir, name))
+				continue
+			}
+			pa = mp[1]
 		}
-		key := flatKey(mf[1], mp[1])
+		key := flatKey(mf[1], pa)
 		index[key] = append(index[key], name)
 	}
 
@@ -1191,9 +1439,10 @@ func prepareSession(s sessionPlan, targetOut string, opts prepareOptions) (int, 
 // around 120 MB, so copying them whole would spike memory across sessions.
 const copyBufferSize = 1 << 20
 
-// biasMaster is one master bias file and the gain it was taken at.
+// biasMaster is one master bias file and the key it is held under: the gain on a
+// C3, the sensor temperature setpoint on the G4.
 type biasMaster struct {
-	gain string // "GA0", "GA2750"
+	key  string // "GA0"/"GA2750" on the C3, "-20C" on the G4
 	date string // YYYYMMDD suffix, used to prefer the most recent
 	name string // masterBias_GA0_-10C_257f_20251117.xisf
 	src  string
@@ -1207,7 +1456,7 @@ type biasMaster struct {
 // Two files for one gain would leave the choice arbitrary -- the names carry a
 // date suffix, so a newer master can be added later -- so that is reported and
 // the first in sorted order wins, which keeps the outcome reproducible.
-func indexBiasMasters(dir string) (map[string]biasMaster, []string, error) {
+func indexBiasMasters(dir string, profile cameraProfile) (map[string]biasMaster, []string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to read %q: %w", dir, err)
@@ -1228,33 +1477,32 @@ func indexBiasMasters(dir string) (map[string]biasMaster, []string, error) {
 	var warnings []string
 
 	for _, name := range names {
-		m := gainRe.FindStringSubmatch(name)
-		if m == nil {
+		key, ok := profile.biasKey(name)
+		if !ok {
 			warnings = append(warnings, fmt.Sprintf(
-				"%s: %q ignored, no gain setting in the name", dir, name))
+				"%s: %q ignored, no %s in the name", dir, name, profile.biasKeyNoun()))
 			continue
 		}
-		gain := m[1]
 		date := masterDate(name)
 
-		if prev, dup := masters[gain]; dup {
+		if prev, dup := masters[key]; dup {
 			if !preferLater(prev.date, date) {
 				if date == prev.date {
-					warnings = append(warnings, tieWarning(dir, gain, prev.name, name))
+					warnings = append(warnings, tieWarning(dir, key, prev.name, name))
 				} else {
 					warnings = append(warnings,
-						collisionWarning(dir, gain, prev.name, name, prev.name))
+						collisionWarning(dir, key, prev.name, name, prev.name))
 				}
 				continue
 			}
 			warnings = append(warnings,
-				collisionWarning(dir, gain, prev.name, name, name))
-			masters[gain] = biasMaster{gain: gain, date: date, name: name,
+				collisionWarning(dir, key, prev.name, name, name))
+			masters[key] = biasMaster{key: key, date: date, name: name,
 				src: filepath.Join(dir, name)}
 			continue
 		}
 
-		masters[gain] = biasMaster{gain: gain, date: date, name: name,
+		masters[key] = biasMaster{key: key, date: date, name: name,
 			src: filepath.Join(dir, name)}
 	}
 
@@ -1265,36 +1513,36 @@ func indexBiasMasters(dir string) (map[string]biasMaster, []string, error) {
 // session mixing filters at two settings needs both masters: the acquisition
 // pairs filters to gains, so a B/G/L/R night alongside an O/S night spans the
 // two.
-func targetGains(sessions []sessionPlan) []string {
+func targetBiasKeys(sessions []sessionPlan) []string {
 	seen := map[string]bool{}
 	for _, s := range sessions {
-		for _, g := range s.gains {
-			seen[g] = true
+		for _, k := range s.biasKeys {
+			seen[k] = true
 		}
 	}
 
-	gains := make([]string, 0, len(seen))
-	for g := range seen {
-		gains = append(gains, g)
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
 	}
-	sort.Strings(gains)
-	return gains
+	sort.Strings(keys)
+	return keys
 }
 
 // gainList renders a gain set for a message, or a placeholder when empty.
-func gainList(gains []string) string {
-	if len(gains) == 0 {
+func keyList(keys []string) string {
+	if len(keys) == 0 {
 		return "none"
 	}
-	return strings.Join(gains, " ")
+	return strings.Join(keys, " ")
 }
 
 // prepareBias copies the master biases the target's sessions need into a single
 // shared directory under Sessions/. It runs once per target rather than once
 // per session, so a target spanning two gains copies two files no matter how
 // many nights it holds.
-func prepareBias(targetOut string, gains []string, masters map[string]biasMaster, opts prepareOptions) (int, []string, error) {
-	if len(gains) == 0 {
+func prepareBias(targetOut string, keys []string, masters map[string]biasMaster, opts prepareOptions, profile cameraProfile) (int, []string, error) {
+	if len(keys) == 0 {
 		return 0, nil, nil
 	}
 
@@ -1309,16 +1557,17 @@ func prepareBias(targetOut string, gains []string, masters map[string]biasMaster
 	}
 	sort.Strings(present)
 
+	noun := profile.biasKeyNoun()
 	var done []string
-	for _, gain := range gains {
-		master, ok := masters[gain]
+	for _, key := range keys {
+		master, ok := masters[key]
 		if !ok {
 			// Same policy as a missing flat: reported, but the run continues,
 			// because a session without its master is still usable data and the
 			// reduction can supply the bias later.
 			warnings = append(warnings, fmt.Sprintf(
-				"no master bias for gain %s in %q (available: %s)",
-				gain, filepath.Join(opts.input, biasDir, biasMastersDir), gainList(present)))
+				"no master bias for %s %s in %q (available: %s)",
+				noun, key, filepath.Join(opts.input, biasDir, biasMastersDir), keyList(present)))
 			continue
 		}
 
@@ -1335,15 +1584,15 @@ func prepareBias(targetOut string, gains []string, masters map[string]biasMaster
 		if n {
 			copied++
 		}
-		done = append(done, gain)
+		done = append(done, key)
 	}
 
-	if !opts.quiet && len(gains) > 0 {
+	if !opts.quiet && len(keys) > 0 {
 		verb := prepareVerb(opts.dryRun)
 		if copied == 0 {
-			fmt.Printf("  %s: no master bias (%s)\n", verb, gainList(gains))
+			fmt.Printf("  %s: no master bias (%s)\n", verb, keyList(keys))
 		} else {
-			fmt.Printf("  %s : %d master bias pour le gain %s\n", verb, copied, gainList(done))
+			fmt.Printf("  %s: %d master bias for %s %s\n", verb, copied, noun, keyList(done))
 		}
 	}
 
@@ -1373,6 +1622,12 @@ type darkKey struct {
 // This is what the sessions.csv darks column and the missing-dark warning both
 // show, so the third field is what tells two otherwise identical darks apart.
 func (k darkKey) String() string {
+	// A camera with no gain setting leaves the first field empty; rendering it
+	// as "/900s/-20C" would look like a missing value rather than an absent
+	// property.
+	if k.gain == "" {
+		return fmt.Sprintf("%ds/%s", k.exposure, k.temp)
+	}
 	return fmt.Sprintf("%s/%ds/%s", k.gain, k.exposure, k.temp)
 }
 
@@ -1390,7 +1645,7 @@ type darkMaster struct {
 // disagree with the filenames inside them -- "G2750/" holding "GA2750" files --
 // so the key is taken from the filename alone. Keying on the directory would
 // produce "G2750", match nothing, and copy nothing at all.
-func indexDarkMasters(root string) (map[darkKey]darkMaster, []string, error) {
+func indexDarkMasters(root string, profile cameraProfile) (map[darkKey]darkMaster, []string, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to read %q: %w", root, err)
@@ -1427,17 +1682,12 @@ func indexDarkMasters(root string) (map[darkKey]darkMaster, []string, error) {
 
 	for _, rel := range names {
 		base := filepath.Base(rel)
-		m := darkComboRe.FindStringSubmatch(base)
-		if m == nil {
+		key, ok := profile.darkMaster(base)
+		if !ok {
 			warnings = append(warnings, fmt.Sprintf(
-				"%s: %q ignored, no exposure/gain/setpoint in the name", root, base))
+				"%s: %q ignored, no exposure/setpoint%s in the name", root, base, profile.gainNoun()))
 			continue
 		}
-		// Group order here is exposure, gain, setpoint -- the reverse of
-		// lightComboRe. Copying an index across from there would key every
-		// master on the setpoint as its gain.
-		exposure, _ := strconv.Atoi(m[1])
-		key := darkKey{gain: m[2], exposure: exposure, temp: normaliseTemp(m[3])}
 
 		date := masterDate(base)
 
@@ -1525,15 +1775,7 @@ func tieWarning(dir, key, held, candidate string) string {
 // different order from darkComboRe's, so the groups are read here rather than
 // shared: m[1] exposure, m[2] sensor temperature setpoint, m[3] gain.
 func lightDarkKey(name string) (darkKey, bool) {
-	m := lightComboRe.FindStringSubmatch(name)
-	if m == nil {
-		return darkKey{}, false
-	}
-	exposure, err := strconv.Atoi(m[1])
-	if err != nil {
-		return darkKey{}, false
-	}
-	return darkKey{gain: m[3], exposure: exposure, temp: normaliseTemp(m[2])}, true
+	return c3Camera.lightDark(name)
 }
 
 // collectDarkKeys records, per session, the master darks for its approved frames.
@@ -1542,7 +1784,7 @@ func lightDarkKey(name string) (darkKey, bool) {
 //
 // This runs after the assessment, unlike the gains, which are read from the
 // plan before any verdict is known.
-func collectDarkKeys(sessions []sessionPlan) {
+func collectDarkKeys(sessions []sessionPlan, profile cameraProfile) {
 	for i := range sessions {
 		s := &sessions[i]
 		seen := map[darkKey]bool{}
@@ -1552,7 +1794,7 @@ func collectDarkKeys(sessions []sessionPlan) {
 				if !s.approved(name) {
 					continue
 				}
-				if key, ok := lightDarkKey(name); ok {
+				if key, ok := profile.lightDark(name); ok {
 					seen[key] = true
 				}
 			}
@@ -1655,7 +1897,7 @@ func prepareDarks(targetOut string, keys []darkKey, need map[darkKey][]string,
 		if copied == 0 {
 			fmt.Printf("  %s: no master dark (%s)\n", verb, strings.Join(done, " "))
 		} else {
-			fmt.Printf("  %s : %d master dark pour %s\n", verb, copied, strings.Join(done, " "))
+			fmt.Printf("  %s: %d master dark for %s\n", verb, copied, strings.Join(done, " "))
 		}
 	}
 
@@ -1806,10 +2048,18 @@ func writeSessionsCSV(targetOut string, sessions []sessionPlan) error {
 		for _, k := range s.darksNeeded {
 			darks = append(darks, k.String())
 		}
+		// A camera without a rotator records no angle, so the column is empty
+		// rather than a bare "PA". gains is likewise empty on the G4, which has
+		// no gain setting; its bias is keyed by setpoint, which the darks column
+		// already shows.
+		pa := ""
+		if s.pa != "" {
+			pa = "PA" + s.pa
+		}
 		row := []string{
 			s.sessionDir(),
 			s.date,
-			"PA" + s.pa,
+			pa,
 			filters,
 			strconv.Itoa(s.lightCount),
 			strconv.Itoa(s.approvedCount),

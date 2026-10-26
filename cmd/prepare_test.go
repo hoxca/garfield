@@ -1,10 +1,7 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"math"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,292 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astrogo/fitsio"
 	"github.com/spf13/cobra"
 )
-
-// prepareFixture describes a synthetic acquisition tree.
-type prepareFixture struct {
-	// lights maps target -> date -> filter -> filenames.
-	lights map[string]map[string]map[string][]string
-	// flats maps date -> filenames.
-	flats map[string][]string
-	// biases maps gain token -> master filename. Empty means the fixture writes
-	// no Bias/Masters directory at all.
-	biases map[string]string
-	// darks maps a darkKey rendering, "GA2750/600s/-10C", to a master filename.
-	// The file is written under a per-gain subdirectory, mirroring the
-	// acquisition. Empty means no Darks/Masters directory at all.
-	darks map[string]string
-}
-
-// build writes the fixture under root and returns it.
-func (f prepareFixture) build(t *testing.T, root string) {
-	t.Helper()
-
-	for target, dates := range f.lights {
-		for date, filters := range dates {
-			for filter, names := range filters {
-				dir := filepath.Join(root, lightsDir, target, date, filter)
-				if err := os.MkdirAll(dir, 0o755); err != nil {
-					t.Fatalf("mkdir %s: %v", dir, err)
-				}
-				for _, n := range names {
-					writeFixtureFrame(t, dir, n)
-				}
-			}
-		}
-	}
-	for date, names := range f.flats {
-		dir := filepath.Join(root, flatsDir, date)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", dir, err)
-		}
-		for _, n := range names {
-			writeStub(t, filepath.Join(dir, n))
-		}
-	}
-	if len(f.biases) > 0 {
-		dir := filepath.Join(root, biasDir, biasMastersDir)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", dir, err)
-		}
-		for _, n := range f.biases {
-			writeStub(t, filepath.Join(dir, n))
-		}
-	}
-	if len(f.darks) > 0 {
-		dir := filepath.Join(root, darksDir, darksMastersDir)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", dir, err)
-		}
-		for key, n := range f.darks {
-			// The acquisition splits darks by gain into subdirectories named
-			// "G0" and "G2750" whose spelling disagrees with the GA0/GA2750
-			// inside the filenames. Only the leading gain is needed here; the
-			// subdirectory carries no setpoint.
-			gain, _, found := strings.Cut(key, "/")
-			if !found {
-				t.Fatalf("dark key %q is not <gain>/<exposure>/<temp>", key)
-			}
-			subdir := filepath.Join(dir, "G"+strings.TrimPrefix(gain, "GA"))
-			if err := os.MkdirAll(subdir, 0o755); err != nil {
-				t.Fatalf("mkdir %s: %v", subdir, err)
-			}
-			writeStub(t, filepath.Join(subdir, n))
-		}
-	}
-}
-
-// writeStub creates a small file standing in for a 120 MB frame. Contents are
-// unique per name so a copy that mixed up sources would be detectable.
-func writeStub(t *testing.T, path string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-// writeFixtureFrame writes a real FITS frame when the name looks like a science
-// light, so the quality pass can actually read it, and a stub otherwise.
-//
-// Light frames carry a dense grid of Gaussian stars so processImage approves
-// them under the default thresholds. Flat frames are never analysed, so they
-// stay cheap stubs.
-func writeFixtureFrame(t *testing.T, dir, name string) string {
-	t.Helper()
-
-	path := filepath.Join(dir, name)
-	if !strings.Contains(name, "_LIGHT_") {
-		writeStub(t, path)
-		return path
-	}
-	writeStarFrame(t, path, 900, 900, 1000, 5, 3000, 1.5, 25, 11)
-	return path
-}
-
-// writeStarFrame stamps a synthetic sky of Gaussian stars into a real FITS file.
-//
-// The dimensions matter: minStars defaults to 680, so a field must detect more
-// than that to be approved. At a 25px spacing a 900x900 frame yields roughly
-// 1200 detections, comfortably over the bar, while still analysing in a few
-// milliseconds.
-func writeStarFrame(t *testing.T, path string, w, h int, level, noise, amp, sigma float64, spacing int, seed int64) {
-	t.Helper()
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	rng := rand.New(rand.NewSource(seed))
-	pix := make([]float32, w*h)
-	for i := range pix {
-		pix[i] = float32(level + rng.NormFloat64()*noise)
-	}
-	for cy := spacing + 5; cy < h-spacing-5; cy += spacing {
-		for cx := spacing + 5; cx < w-spacing-5; cx += spacing {
-			for dy := -8; dy <= 8; dy++ {
-				for dx := -8; dx <= 8; dx++ {
-					r2 := float64(dx*dx+dy*dy) / (2 * sigma * sigma)
-					pix[(cy+dy)*w+cx+dx] += float32(amp * math.Exp(-r2))
-				}
-			}
-		}
-	}
-
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create %s: %v", path, err)
-	}
-	defer f.Close()
-
-	tf, err := fitsio.Create(f)
-	if err != nil {
-		t.Fatalf("fitsio.Create: %v", err)
-	}
-	defer tf.Close()
-
-	img := fitsio.NewImage(-32, []int{w, h})
-	if err := img.Write(&pix); err != nil {
-		t.Fatalf("write pixels to %s: %v", path, err)
-	}
-	if err := tf.Write(img); err != nil {
-		t.Fatalf("write HDU: %v", err)
-	}
-}
-
-// lightName builds a science frame filename in the acquisition convention, at
-// the GA0 gain setting and 300s.
-func lightName(target, filter, date, time, ms, pa string) string {
-	return lightNameGainExp(target, filter, date, time, ms, pa, "GA0", "300s")
-}
-
-// lightNameGain builds a science frame filename at an explicit gain setting,
-// which is what lets a fixture mix filters taken at two different gains.
-func lightNameGain(target, filter, date, time, ms, pa, gain string) string {
-	return lightNameGainExp(target, filter, date, time, ms, pa, gain, "300s")
-}
-
-// lightNameGainExp builds a science frame filename at an explicit gain and
-// exposure, which is what lets a fixture need two different master darks in one
-// session. exposure carries its own "s" suffix, as the acquisition spells it.
-func lightNameGainExp(target, filter, date, time, ms, pa, gain, exposure string) string {
-	return lightNameFull(target, filter, date, time, ms, pa, gain, exposure, "-10C")
-}
-
-// lightNameFull is the only builder that writes the sensor temperature setpoint
-// token. The ones above fix it at -10C because that is the temperature the
-// acquisition actually uses; this one exists so a fixture can put two setpoints
-// in one target, which is the case the setpoint-in-the-key change is about.
-func lightNameFull(target, filter, date, time, ms, pa, gain, exposure, temp string) string {
-	return fmt.Sprintf("%s_LIGHT_%s_%s_BIN1_%s_%s_%s_%s_%s_PA%s_E.FIT",
-		target, filter, exposure, temp, gain, date, time, ms, pa)
-}
-
-// flatName builds a flat frame filename.
-func flatName(filter, dur, date, time, ms, pa string) string {
-	return flatNameTemp(filter, dur, date, time, ms, pa, "-10C")
-}
-
-// flatNameTemp builds a flat at an explicit sensor temperature setpoint. The
-// setpoint is not part of how a flat is matched -- only filter and angle are --
-// so this exists to prove that: a fixture can put a 0C flat under a -10C session
-// and the flat is still collected.
-func flatNameTemp(filter, dur, date, time, ms, pa, temp string) string {
-	return fmt.Sprintf("FLAT_%s_%ss_BIN1_%s_GA2750_%s_%s_%s_PA%s.FIT",
-		filter, dur, temp, date, time, ms, pa)
-}
-
-// simpleFixture is two nights, one filter, matching flats.
-func simpleFixture(target string) prepareFixture {
-	return prepareFixture{
-		lights: map[string]map[string]map[string][]string{
-			target: {
-				"2026-09-10": {"H": {
-					lightName(target, "H", "20260910", "220000", "000", "310"),
-					lightName(target, "H", "20260910", "223000", "000", "310"),
-				}},
-				"2026-09-11": {"H": {
-					lightName(target, "H", "20260911", "220000", "000", "310"),
-				}},
-			},
-		},
-		flats: map[string][]string{
-			"2026-09-10": {flatName("H", "41.4", "20260910", "070000", "000", "310")},
-			"2026-09-11": {flatName("H", "41.5", "20260911", "070000", "000", "310")},
-		},
-	}
-}
-
-// prepareOptionsForTest returns options carrying the shared default
-// thresholds, so the synthetic frames in these fixtures are approved unless a
-// test deliberately moves them.
-func prepareOptionsForTest(target, root, out string) prepareOptions {
-	return prepareOptions{
-		target: target, input: root, output: out, quiet: true,
-		qualityThresholds: defaultThresholds,
-	}
-}
-
-// dirEntries reads dir, failing the test if it cannot be listed.
-func dirEntries(t *testing.T, dir string) []os.DirEntry {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read %s: %v", dir, err)
-	}
-	return entries
-}
-
-// subDirNames returns the sorted names of the directories directly inside dir.
-func subDirNames(t *testing.T, dir string) []string {
-	t.Helper()
-	var names []string
-	for _, e := range dirEntries(t, dir) {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	return names
-}
-
-// fileNames returns the sorted names of the files directly inside dir, skipping
-// the dotfiles macOS leaves behind on exFAT volumes.
-func fileNames(t *testing.T, dir string) []string {
-	t.Helper()
-	var names []string
-	for _, e := range dirEntries(t, dir) {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		names = append(names, e.Name())
-	}
-	sort.Strings(names)
-	return names
-}
-
-// sessionDirNames lists the prepared session directories of a target. It
-// descends into sessionsDir, which is what distinguishes the Sessions/ wrapper
-// from the older layout where sessions sat in the target root.
-//
-// The Session_ prefix filter matters now that bias/ shares the directory: a
-// plain listing would return the master bias directory alongside the sessions,
-// and any consumer doing the same -- globbing Sessions/*/ -- sees it too.
-func sessionDirNames(t *testing.T, out, target string) []string {
-	t.Helper()
-	var names []string
-	for _, e := range dirEntries(t, filepath.Join(out, target, sessionsDir)) {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "Session_") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	return names
-}
 
 func TestPrepareSessionsAndFilterDirs(t *testing.T) {
 	const target = "LBN527"
@@ -459,57 +172,6 @@ func TestPrepareCopiesFlatsIntoSession(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("flat contents = %q, want %q", got, want)
-	}
-}
-
-// TestPrepareFiltersFlatsByAngle is the load-bearing case: Flats/<date> can
-// hold frames at several parallactic angles, and only the one matching the
-// session's lights is valid calibration.
-func TestPrepareFiltersFlatsByAngle(t *testing.T) {
-	const target = "SH2-101"
-	root := t.TempDir()
-
-	f := prepareFixture{
-		lights: map[string]map[string]map[string][]string{
-			target: {
-				"2026-09-21": {"O": {
-					lightName(target, "O", "20260921", "220000", "000", "240"),
-				}},
-			},
-		},
-		flats: map[string][]string{
-			// Two angles on the same night; only PA240 matches.
-			"2026-09-21": {
-				flatName("O", "41.4", "20260921", "070000", "000", "240"),
-				flatName("O", "41.5", "20260921", "070100", "000", "196"),
-				flatName("O", "41.6", "20260921", "070200", "000", "310"),
-				// Right filter, right angle not required: a different filter
-				// at the matching angle must still be excluded.
-				flatName("H", "41.7", "20260921", "070300", "000", "240"),
-			},
-		},
-	}
-	f.build(t, root)
-	out := t.TempDir()
-
-	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
-		t.Fatalf("runPrepare: %v", err)
-	}
-
-	dir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats", "O")
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read flats: %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("got %d flats, want 1 (only the PA240 O frame)", len(files))
-	}
-	if !strings.Contains(files[0].Name(), "PA240") {
-		t.Errorf("flat = %q, want the PA240 frame", files[0].Name())
-	}
-	// The other filter's directory must not exist.
-	if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), "flats", "H")); err == nil {
-		t.Error("flats/H was created but no H lights exist")
 	}
 }
 
@@ -706,7 +368,7 @@ func TestPrepareDryRunStillAssesses(t *testing.T) {
 	}
 
 	lightsRoot := filepath.Join(root, lightsDir, target)
-	sessions, _, err := planSessions(lightsRoot, filepath.Join(root, flatsDir), target, 0)
+	sessions, _, err := planSessions(lightsRoot, filepath.Join(root, flatsDir), target, 0, c3Camera)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -863,7 +525,7 @@ func TestPrepareErrors(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(root, lightsDir), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		err := runPrepare(prepareOptions{target: "Nope", input: root, output: t.TempDir(), quiet: true})
+		err := runPrepare(prepareOptions{target: "Nope", input: root, output: t.TempDir(), quiet: true, camera: "c3"})
 		if err == nil || !strings.Contains(err.Error(), "not found") {
 			t.Errorf("error = %v, want a target-not-found failure", err)
 		}
@@ -896,7 +558,7 @@ func TestPrepareErrors(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(root, lightsDir, "Empty"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		err := runPrepare(prepareOptions{target: "Empty", input: root, output: t.TempDir(), quiet: true})
+		err := runPrepare(prepareOptions{target: "Empty", input: root, output: t.TempDir(), quiet: true, camera: "c3"})
 		if err == nil || !strings.Contains(err.Error(), "no session") {
 			t.Errorf("error = %v, want a no-sessions failure", err)
 		}
@@ -910,7 +572,7 @@ func TestPrepareErrors(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, lightsDir, "File"), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		err := runPrepare(prepareOptions{target: "File", input: root, output: t.TempDir(), quiet: true})
+		err := runPrepare(prepareOptions{target: "File", input: root, output: t.TempDir(), quiet: true, camera: "c3"})
 		if err == nil || !strings.Contains(err.Error(), "is not a directory") {
 			t.Errorf("error = %v, want a not-a-directory failure", err)
 		}
@@ -927,7 +589,7 @@ func TestPrepareErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err := runPrepare(prepareOptions{target: target, input: root, output: blocked, quiet: true})
+		err := runPrepare(prepareOptions{target: target, input: root, output: blocked, quiet: true, camera: "c3"})
 		if err == nil {
 			t.Error("expected a failure when the output path is a file")
 		}
@@ -1366,26 +1028,6 @@ func TestPrepareRejectedTreeIsTargetScoped(t *testing.T) {
 			t.Errorf("rejected/%s/H missing: %v", s, err)
 		}
 	}
-}
-
-// readFramesCSV parses the per-frame report.
-func readFramesCSV(t *testing.T, targetOut string) [][]string {
-	t.Helper()
-
-	b, err := os.ReadFile(metricsPath(targetOut, framesCSVName))
-	if err != nil {
-		t.Fatalf("read %s: %v", framesCSVName, err)
-	}
-	recs, err := newCSVReader(strings.NewReader(string(b))).ReadAll()
-	if err != nil {
-		t.Fatalf("parse %s: %v\n%s", framesCSVName, err, b)
-	}
-	for _, r := range recs {
-		if len(r) != len(recs[0]) {
-			t.Errorf("ragged row %v, want %d fields", r, len(recs[0]))
-		}
-	}
-	return recs
 }
 
 // TestWriteFramesCSV covers the per-frame metrics report: one row per analysed
@@ -1924,52 +1566,6 @@ func TestQualityThresholdsAnalyzeConversion(t *testing.T) {
 	}
 }
 
-func TestPrepareParsesLightNames(t *testing.T) {
-	// The filename conventions the planner relies on.
-	light := lightName("LBN527", "H", "20260910", "025946", "489", "310")
-	if !frameDateRe.MatchString(light) {
-		t.Errorf("frameDateRe does not match %q", light)
-	}
-	if m := paRe.FindStringSubmatch(light); m == nil || m[1] != "310" {
-		t.Errorf("paRe on %q = %v, want 310", light, m)
-	}
-
-	flat := flatName("S", "67.02", "20260916", "071758", "808", "310")
-	if m := flatFilterRe.FindStringSubmatch(flat); m == nil || m[1] != "S" {
-		t.Errorf("flatFilterRe on %q = %v, want S", flat, m)
-	}
-	if m := paRe.FindStringSubmatch(flat); m == nil || m[1] != "310" {
-		t.Errorf("paRe on %q = %v, want 310", flat, m)
-	}
-
-	// The master-flat style seen in the repository must not match. The filter
-	// pattern is anchored so a frame that merely contains "FLAT_" somewhere in
-	// its name cannot be picked up as a flat.
-	for _, name := range []string{
-		"masterFlat_BIN-1_9576x6388_FILTER-S_mono_SESSION-1.fit",
-		"LBN527_LIGHT_H_600s_BIN1_-10C_GA2750_20260916_062721_275_PA310_E.FIT",
-		"FLATL_H_41s_PA310.FIT",
-		"NOT_A_FLAT_H_41s_PA310.FIT",
-	} {
-		if flatFilterRe.MatchString(name) {
-			t.Errorf("flatFilterRe matched %q", name)
-		}
-	}
-
-	// A flat is only usable when both the filter and the angle parse; the
-	// indexer drops anything missing either.
-	for _, name := range []string{
-		"FLAT_H_41.4s_BIN1_PA310.FIT",
-	} {
-		if !flatFilterRe.MatchString(name) {
-			t.Errorf("flatFilterRe did not match %q", name)
-		}
-	}
-	if paRe.MatchString("FLAT_H_41.4s_BIN1.FIT") {
-		t.Error("paRe matched a flat with no angle")
-	}
-}
-
 // TestKnownFilters pins the recognised filter set and isKnownFilter.
 //
 // isKnownFilter gates both the flat filename token and the light filter
@@ -1999,126 +1595,6 @@ func TestKnownFilters(t *testing.T) {
 		if isKnownFilter(f) {
 			t.Errorf("isKnownFilter(%q) = true, want false", f)
 		}
-	}
-}
-
-// TestFlatFilterReAcceptsOnlyKnownFilters pins the narrowed capture group.
-//
-// The group is a character class spliced in from knownFilters, so the failure
-// mode worth guarding is structural: a non-capturing group, or losing the
-// brackets, matches nothing at all and drops every flat silently.
-func TestFlatFilterReAcceptsOnlyKnownFilters(t *testing.T) {
-	for _, f := range []string{"L", "R", "G", "B", "S", "H", "O"} {
-		name := fmt.Sprintf("FLAT_%s_41.4s_BIN1_PA310.FIT", f)
-		m := flatFilterRe.FindStringSubmatch(name)
-		if m == nil {
-			t.Errorf("flatFilterRe does not match %q", name)
-			continue
-		}
-		if m[1] != f {
-			t.Errorf("flatFilterRe on %q captured %q, want %q (the group must stay capturing)",
-				name, m[1], f)
-		}
-		if len(m) != 2 {
-			t.Errorf("flatFilterRe on %q returned %d groups, want exactly 2", name, len(m))
-		}
-	}
-
-	// Narrowband and unknown filters no longer parse, but they still carry the
-	// FLAT_ prefix, which is what earns them a warning rather than a silent
-	// drop in indexFlats.
-	for _, name := range []string{
-		"FLAT_Ha_41.4s_BIN1_PA310.FIT",
-		"FLAT_OIII_41.4s_BIN1_PA310.FIT",
-		"FLAT_L2_41.4s_BIN1_PA310.FIT",
-		"FLAT_X_41.4s_BIN1_PA310.FIT",
-	} {
-		if flatFilterRe.MatchString(name) {
-			t.Errorf("flatFilterRe matched %q, want no match", name)
-		}
-		if !strings.HasPrefix(name, flatNamePrefix) {
-			t.Errorf("%q lacks the %q prefix, so indexFlats would drop it silently",
-				name, flatNamePrefix)
-		}
-	}
-
-	// Not a flat at all: no FLAT_ prefix, so indexFlats leaves them alone
-	// rather than mislabelling another frame type as a broken flat.
-	for _, name := range []string{
-		"FLATL_H_41s_PA310.FIT",
-		"masterFlat_BIN-1_9576x6388_FILTER-S_mono_SESSION-1.fit",
-		"NOT_A_FLAT_H_41s_PA310.FIT",
-	} {
-		if strings.HasPrefix(name, flatNamePrefix) {
-			t.Errorf("%q carries the %q prefix, so indexFlats would warn on a non-flat",
-				name, flatNamePrefix)
-		}
-	}
-
-	// The prefix and the regex must not drift apart: the regex is what decides
-	// a flat is usable, the prefix is what decides an unusable one is worth
-	// reporting, and a name that satisfies one but not the other would either
-	// vanish or be mislabelled.
-	if !strings.HasPrefix("FLAT_S_1s_PA0.FIT", flatNamePrefix) {
-		t.Error("a valid flat does not carry flatNamePrefix")
-	}
-	if !strings.HasPrefix(flatFilterRe.String(), "^"+flatNamePrefix) {
-		t.Errorf("flatFilterRe %q does not start with ^%s",
-			flatFilterRe.String(), flatNamePrefix)
-	}
-}
-
-// TestIndexFlatsWarnsOnUnusableFlats checks the two ways a real flat is
-// dropped, both of which used to be silent: an unrecognised filter, and a
-// filter with no position angle.
-func TestIndexFlatsWarnsOnUnusableFlats(t *testing.T) {
-	dir := t.TempDir()
-	usable := flatName("S", "67.02", "20260916", "071758", "808", "310")
-	for _, n := range []string{
-		usable,
-		"FLAT_Ha_41.4s_BIN1_-10C_GA2750_20260916_070000_000_PA310.FIT",
-		"FLAT_OIII_41.4s_BIN1_-10C_GA2750_20260916_070100_000_PA310.FIT",
-		"FLAT_H_41.4s_BIN1_-10C_GA2750_20260916_070200_000.FIT",
-		// Carries the prefix but no usable token, so it warns. The prefix test
-		// is looser than the filter regex on purpose: a name that is plainly
-		// meant to be a flat is worth naming even when it is malformed, and
-		// the warning says why.
-		"FLAT_-weird_name.FIT",
-		"FLAT__PA310.FIT",
-		// No prefix at all, so it is another frame type sharing the directory.
-		"FLATL_H_41.4s_PA310.FIT",
-	} {
-		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	index, warnings := indexFlats(dir)
-
-	if got := index[flatKey("S", "310")]; len(got) != 1 || got[0] != usable {
-		t.Errorf("index = %v, want the one usable flat keyed S@310", index)
-	}
-
-	// Two warnings, one per dropped real flat. Both name the file and say why.
-	// Five warnings: two unknown filters, two malformed names, one missing angle.
-	if len(warnings) != 5 {
-		t.Fatalf("got %d warnings (%v), want 5", len(warnings), warnings)
-	}
-	joined := strings.Join(warnings, "\n")
-	for _, want := range []string{
-		"FLAT_Ha_", "no known filter",
-		"FLAT_OIII_",
-		"FLAT_H_41.4s", "no position angle",
-		"FLAT_-weird_name.FIT",
-		"FLAT__PA310.FIT",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("warnings %q do not mention %q", joined, want)
-		}
-	}
-	// FLATL_ is not a flat, so it must not be reported as a broken one.
-	if strings.Contains(joined, "FLATL_") {
-		t.Errorf("warnings %q report a non-flat as a broken flat", joined)
 	}
 }
 
@@ -2175,7 +1651,7 @@ func TestCollectFlatsZeroTargetKeepsOnlyTheSessionDate(t *testing.T) {
 	dates := []string{"2026-09-09", "2026-09-10", "2026-09-11"}
 	flatRoot := filepath.Join(root, flatsDir)
 
-	matched, searched := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, 0)
+	matched, searched := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, 0, c3Camera)
 
 	if len(matched) != 3 {
 		t.Fatalf("got %d flats, want the session's own 3 (not none, not borrowed)", len(matched))
@@ -2214,7 +1690,7 @@ func TestPrepareZeroFlatCountWarnsNothing(t *testing.T) {
 	f.build(t, root)
 
 	sessions, warnings, err := planSessions(
-		filepath.Join(root, lightsDir, target), filepath.Join(root, flatsDir), target, 0)
+		filepath.Join(root, lightsDir, target), filepath.Join(root, flatsDir), target, 0, c3Camera)
 	if err != nil {
 		t.Fatalf("planSessions: %v", err)
 	}
@@ -2270,30 +1746,6 @@ func TestFlatCountIsAConfigKey(t *testing.T) {
 // it from the flag rather than a constant, so the tests state it explicitly.
 const flatTarget = 14
 
-// flatSet builds n flat names for one filter and angle on a date.
-func flatSet(filter, date string, pa string, n int) []string {
-	out := make([]string, 0, n)
-	for i := range n {
-		out = append(out, flatName(filter, "41.4", strings.ReplaceAll(date, "-", ""),
-			fmt.Sprintf("07%04d", i), "000", pa))
-	}
-	return out
-}
-
-// buildFlatDirs writes flat sets keyed by date, for the collectFlats tests.
-func buildFlatDirs(t *testing.T, root string, byDate map[string][]string) {
-	t.Helper()
-	for date, names := range byDate {
-		dir := filepath.Join(root, flatsDir, date)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		for _, n := range names {
-			writeStub(t, filepath.Join(dir, n))
-		}
-	}
-}
-
 // TestFlatSearchOrder pins the consultation order: own date, then previous
 // before next, stepping outward. The first session has no previous, so its walk
 // starts at the following date, which is what makes borrowing possible at all
@@ -2338,7 +1790,7 @@ func TestCollectFlatsBorrowsFromPreviousDate(t *testing.T) {
 	dates := []string{"2026-09-09", "2026-09-10", "2026-09-11"}
 	flatRoot := filepath.Join(root, flatsDir)
 
-	matched, _ := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget)
+	matched, _ := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget, c3Camera)
 
 	if len(matched) != flatTarget {
 		t.Fatalf("got %d flats, want %d", len(matched), flatTarget)
@@ -2371,7 +1823,7 @@ func TestCollectFlatsFirstSessionBorrowsFromNextDate(t *testing.T) {
 	dates := []string{"2026-09-09", "2026-09-10"}
 	flatRoot := filepath.Join(root, flatsDir)
 
-	matched, searched := collectFlats(flatRoot, "2026-09-09", "310", "S", dates, flatTarget)
+	matched, searched := collectFlats(flatRoot, "2026-09-09", "310", "S", dates, flatTarget, c3Camera)
 
 	if len(matched) != flatTarget {
 		t.Fatalf("got %d flats, want %d", len(matched), flatTarget)
@@ -2410,7 +1862,7 @@ func TestCollectFlatsWalksPastAnEmptyNeighbour(t *testing.T) {
 	dates := []string{"2026-09-09", "2026-09-10", "2026-09-11"}
 	flatRoot := filepath.Join(root, flatsDir)
 
-	matched, _ := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget)
+	matched, _ := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget, c3Camera)
 
 	// Two own-date frames plus twelve from two nights on: the angle is part of
 	// the key, so the PA240 flats are not candidates.
@@ -2441,7 +1893,7 @@ func TestCollectFlatsNeverBorrowsAForeignDate(t *testing.T) {
 	dates := []string{"2026-09-10"}
 	flatRoot := filepath.Join(root, flatsDir)
 
-	matched, _ := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget)
+	matched, _ := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget, c3Camera)
 
 	for _, m := range matched {
 		if m.date != "2026-09-10" {
@@ -2465,7 +1917,7 @@ func TestCollectFlatsReportsAShortfall(t *testing.T) {
 	dates := []string{"2026-09-09", "2026-09-10"}
 	flatRoot := filepath.Join(root, flatsDir)
 
-	matched, searched := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget)
+	matched, searched := collectFlats(flatRoot, "2026-09-10", "310", "S", dates, flatTarget, c3Camera)
 
 	// Three on the session's own date plus two on the previous, and nothing more
 	// to find: the search is exhausted rather than truncated by the target.
@@ -2563,7 +2015,7 @@ func TestPrepareWarnsWhenShortOfFlats(t *testing.T) {
 	f.build(t, root)
 
 	sessions, warnings, err := planSessions(
-		filepath.Join(root, lightsDir, target), filepath.Join(root, flatsDir), target, flatTarget)
+		filepath.Join(root, lightsDir, target), filepath.Join(root, flatsDir), target, flatTarget, c3Camera)
 	if err != nil {
 		t.Fatalf("planSessions: %v", err)
 	}
@@ -2599,26 +2051,6 @@ func TestPrepareFormatFrameDate(t *testing.T) {
 			t.Errorf("formatFrameDate(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
-}
-
-// readSessionsCSV parses a generated sessions.csv.
-func readSessionsCSV(t *testing.T, path string) [][]string {
-	t.Helper()
-
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	recs, err := newCSVReader(strings.NewReader(string(b))).ReadAll()
-	if err != nil {
-		t.Fatalf("parse %s: %v\n%s", path, err, b)
-	}
-	for _, r := range recs {
-		if len(r) != len(recs[0]) {
-			t.Errorf("ragged CSV row %v, want %d fields", r, len(recs[0]))
-		}
-	}
-	return recs
 }
 
 // TestPrepareRealTreeShape runs against a fixture mirroring the real acquisition
@@ -2674,278 +2106,6 @@ func TestPrepareRealTreeShape(t *testing.T) {
 	if recs[1][9] != "2026-09-16" || recs[1][10] != "2026-09-17" {
 		t.Errorf("frame date range = [%s .. %s], want [2026-09-16 .. 2026-09-17]", recs[1][9], recs[1][10])
 	}
-}
-
-// TestPrepareMixedAnglesWarns covers a session whose lights somehow span two
-// parallactic angles, which the acquisition software should prevent.
-// TestPrepareMixedAnglesIsFatal checks that a session holding two angles stops
-// the run.
-//
-// This used to be a warning that took the lowest angle and carried on, which
-// calibrated part of the night against flats shot for a different angle while
-// the report named only one. A target is acquired at a single angle chosen
-// before the run, so a second angle means the instrument was rotated and the
-// data cannot be trusted.
-func TestPrepareMixedAnglesIsFatal(t *testing.T) {
-	const target = "TEST"
-	root := t.TempDir()
-
-	f := prepareFixture{
-		lights: map[string]map[string]map[string][]string{
-			target: {
-				"2026-09-10": {"H": {
-					lightName(target, "H", "20260910", "220000", "000", "310"),
-					lightName(target, "H", "20260910", "230000", "000", "240"),
-				}},
-			},
-		},
-		flats: map[string][]string{
-			"2026-09-10": {
-				flatName("H", "41.4", "20260910", "070000", "000", "240"),
-				flatName("H", "41.5", "20260910", "070100", "000", "310"),
-			},
-		},
-	}
-	f.build(t, root)
-	out := t.TempDir()
-
-	err := runPrepare(prepareOptionsForTest(target, root, out))
-	if err == nil {
-		t.Fatal("runPrepare succeeded on a mixed-angle session, want a failure")
-	}
-
-	// Both angles named, so the operator can see what the session actually
-	// holds rather than being told one of them was chosen.
-	for _, want := range []string{"multiple angles", "240", "310", "Session_01"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not mention %q", err, want)
-		}
-	}
-
-	// Planning happens before anything is written, so the failure leaves no
-	// tree behind: no half-prepared session to mistake for real output.
-	if _, statErr := os.Stat(filepath.Join(out, target)); !os.IsNotExist(statErr) {
-		t.Errorf("output tree exists after a fatal error: %v", statErr)
-	}
-}
-
-// TestPrepareMixedAnglesAcrossSessionsIsFatal covers the case that was
-// silently accepted before any of this: each session internally consistent, but
-// the target rotated between nights. Every session matched its own date's flats,
-// so nothing looked wrong and sessions.csv simply carried two angles.
-func TestPrepareMixedAnglesAcrossSessionsIsFatal(t *testing.T) {
-	const target = "TEST"
-	root := t.TempDir()
-
-	f := prepareFixture{
-		lights: map[string]map[string]map[string][]string{
-			target: {
-				"2026-09-10": {"H": {
-					lightName(target, "H", "20260910", "220000", "000", "310"),
-				}},
-				"2026-09-11": {"H": {
-					lightName(target, "H", "20260911", "220000", "000", "240"),
-				}},
-			},
-		},
-		flats: map[string][]string{
-			"2026-09-10": {flatName("H", "41.4", "20260910", "070000", "000", "310")},
-			"2026-09-11": {flatName("H", "41.5", "20260911", "070000", "000", "240")},
-		},
-	}
-	f.build(t, root)
-	out := t.TempDir()
-
-	err := runPrepare(prepareOptionsForTest(target, root, out))
-	if err == nil {
-		t.Fatal("runPrepare succeeded on a target acquired at two angles, want a failure")
-	}
-
-	// The whole set is reported, not one "expected" angle: with the target
-	// rotated more than once there is no principled choice to name.
-	for _, want := range []string{"TEST", "2 different angles", "240/310"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not mention %q", err, want)
-		}
-	}
-	if _, statErr := os.Stat(filepath.Join(out, target)); !os.IsNotExist(statErr) {
-		t.Errorf("output tree exists after a fatal error: %v", statErr)
-	}
-}
-
-// TestPrepareReportsEveryMixedAngleAtOnce checks the failures batch rather than
-// stopping at the first, so one run names everything that needs fixing instead
-// of demanding a fix-and-rerun per session.
-func TestPrepareReportsEveryMixedAngleAtOnce(t *testing.T) {
-	const target = "TEST"
-	root := t.TempDir()
-
-	f := prepareFixture{
-		lights: map[string]map[string]map[string][]string{
-			target: {
-				// Mixed within the session.
-				"2026-09-10": {"H": {
-					lightName(target, "H", "20260910", "220000", "000", "310"),
-					lightName(target, "H", "20260910", "230000", "000", "240"),
-				}},
-				// Clean, and at an angle of its own, so it survives planning
-				// while disagreeing with the target's other sessions.
-				"2026-09-11": {"H": {
-					lightName(target, "H", "20260911", "220000", "000", "90"),
-				}},
-				// Also mixed within the session.
-				"2026-09-12": {"H": {
-					lightName(target, "H", "20260912", "220000", "000", "310"),
-					lightName(target, "H", "20260912", "230000", "000", "180"),
-				}},
-				// Mixed, at a third angle, so the batching assertion below needs
-				// no cross-session check: three offenders must all be named.
-				"2026-09-13": {"H": {
-					lightName(target, "H", "20260913", "220000", "000", "90"),
-					lightName(target, "H", "20260913", "230000", "000", "180"),
-				}},
-			},
-		},
-		flats: map[string][]string{
-			"2026-09-10": {flatName("H", "41.4", "20260910", "070000", "000", "310")},
-			"2026-09-11": {flatName("H", "41.5", "20260911", "070000", "000", "90")},
-			"2026-09-12": {flatName("H", "41.6", "20260912", "070000", "000", "310")},
-			"2026-09-13": {flatName("H", "41.7", "20260913", "070000", "000", "90")},
-			"2026-09-14": {flatName("H", "41.8", "20260914", "070000", "000", "90")},
-		},
-	}
-	f.build(t, root)
-	out := t.TempDir()
-
-	err := runPrepare(prepareOptionsForTest(target, root, out))
-	if err == nil {
-		t.Fatal("runPrepare succeeded on a rotated target with mixed sessions, want a failure")
-	}
-
-	// Three mixed sessions, all named in one error. The cross-session
-	// disagreement does not fire here: every session that survived planning
-	// shares PA90, so only the within-session faults are reported.
-	msg := err.Error()
-	for _, want := range []string{"Session_01", "Session_03", "Session_04"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error %q does not mention %q", msg, want)
-		}
-	}
-	if strings.Contains(msg, "different angles") {
-		t.Errorf("error %q reports a cross-session rotation that did not occur: %q", msg, msg)
-	}
-}
-
-// TestPrepareSingleAngleTargetIsUnaffected guards the other side: a target
-// acquired at one angle throughout must still plan and copy as before.
-func TestPrepareSingleAngleTargetIsUnaffected(t *testing.T) {
-	const target = "TEST"
-	root := t.TempDir()
-
-	f := prepareFixture{
-		lights: map[string]map[string]map[string][]string{
-			target: {
-				"2026-09-10": {"H": {
-					lightName(target, "H", "20260910", "220000", "000", "310"),
-					lightName(target, "H", "20260910", "230000", "000", "310"),
-				}},
-				"2026-09-11": {"R": {
-					lightName(target, "R", "20260911", "220000", "000", "310"),
-				}},
-			},
-		},
-		flats: map[string][]string{
-			"2026-09-10": {flatName("H", "41.4", "20260910", "070000", "000", "310")},
-			"2026-09-11": {flatName("R", "41.5", "20260911", "070000", "000", "310")},
-		},
-	}
-	f.build(t, root)
-	out := t.TempDir()
-
-	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
-		t.Fatalf("runPrepare: %v", err)
-	}
-
-	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
-	if len(recs) != 3 {
-		t.Fatalf("got %d rows, want header plus two sessions", len(recs))
-	}
-	for _, row := range recs[1:] {
-		if row[2] != "PA310" {
-			t.Errorf("%s pa = %q, want PA310", row[0], row[2])
-		}
-	}
-}
-
-// TestMixedAnglesAcrossSessions covers the predicate on its own, including the
-// cases that must not be mistaken for a rotation: a target with one angle, and
-// sessions carrying no angle at all.
-func TestMixedAnglesAcrossSessions(t *testing.T) {
-	tests := []struct {
-		name     string
-		sessions []sessionPlan
-		want     bool
-	}{
-		{"no sessions", nil, false},
-		{"one angle", []sessionPlan{{pa: "310"}}, false},
-		{"two sessions one angle", []sessionPlan{{pa: "310"}, {pa: "310"}}, false},
-		{"sessions without an angle", []sessionPlan{{pa: ""}, {pa: ""}}, false},
-		{"mixed present and absent", []sessionPlan{{pa: "310"}, {pa: ""}}, false},
-		{"two angles", []sessionPlan{{pa: "310"}, {pa: "240"}}, true},
-		{"three angles", []sessionPlan{{pa: "310"}, {pa: "240"}, {pa: "90"}}, true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := mixedAnglesAcrossSessions(tc.sessions, "TGT") != ""
-			if got != tc.want {
-				t.Errorf("mixedAnglesAcrossSessions = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestPlanSessionLeavesAngleUnsetOnMixedAngles pins that the failing session
-// carries no position angle. A half-built session with an arbitrary angle
-// recorded is worse than none: it looks like a usable plan.
-func TestPlanSessionLeavesAngleUnsetOnMixedAngles(t *testing.T) {
-	const target = "TEST"
-	root := t.TempDir()
-
-	f := prepareFixture{
-		lights: map[string]map[string]map[string][]string{
-			target: {
-				"2026-09-10": {"H": {
-					lightName(target, "H", "20260910", "220000", "000", "310"),
-					lightName(target, "H", "20260910", "230000", "000", "240"),
-				}},
-			},
-		},
-		flats: map[string][]string{
-			"2026-09-10": {flatName("H", "41.4", "20260910", "070000", "000", "310")},
-		},
-	}
-	f.build(t, root)
-
-	s, _, err := planSession(filepath.Join(root, lightsDir, target, "2026-09-10"),
-		filepath.Join(root, flatsDir), 1, "2026-09-10", []string{"2026-09-10"}, 0)
-	if err == nil {
-		t.Fatal("planSession succeeded on a mixed-angle session, want a failure")
-	}
-	if !errors.Is(err, errMixedAngles) {
-		t.Errorf("error %v does not wrap errMixedAngles", err)
-	}
-	if s.pa != "" {
-		t.Errorf("pa = %q, want empty on the failure path", s.pa)
-	}
-}
-
-func namesOf(entries []os.DirEntry) []string {
-	var out []string
-	for _, e := range entries {
-		out = append(out, e.Name())
-	}
-	sort.Strings(out)
-	return out
 }
 
 // TestPrepareSessionDirPadding checks the two-digit format holds past nine

@@ -26,6 +26,17 @@ prepare:
   input: /Volumes/Dyno/Kosmodrom
   output: /Volumes/T7/Workspace
 
+  # Which camera wrote the filenames.
+  #
+  # c3 = Moravian C3: filenames carry a position angle and a gain setting.
+  # g4 = Moravian G4 (CCD): no rotator and no gain, so position angle is
+  #      neither read nor matched, and master bias/dark are keyed on the
+  #      sensor temperature setpoint instead of a gain.
+  #
+  # An unknown value is rejected rather than defaulted, so a typo cannot
+  # silently apply the other camera's matching rules.
+  camera: c3
+
   # Flats wanted per filter and angle, 0 = the session's own date only.
   # A session rarely holds this many of its own, so a positive value tops it
   # up from the target's neighbouring nights, previous date first. Set to 0 to

@@ -93,7 +93,7 @@ func TestIndexDarkMastersKeysOnFilenameNotDirectory(t *testing.T) {
 		writeStub(t, filepath.Join(subdir, "masterDark_300s_"+gain+"_-10C_20251118.xisf"))
 	}
 
-	masters, warnings, err := indexDarkMasters(dir)
+	masters, warnings, err := indexDarkMasters(dir, c3Camera)
 	if err != nil {
 		t.Fatalf("indexDarkMasters: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestIndexDarkMastersPrefersTheLatestDate(t *testing.T) {
 		writeStub(t, filepath.Join(sub, n))
 	}
 
-	masters, warnings, err := indexDarkMasters(dir)
+	masters, warnings, err := indexDarkMasters(dir, c3Camera)
 	if err != nil {
 		t.Fatalf("indexDarkMasters: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestIndexDarkMastersReportsAnUndecidedTie(t *testing.T) {
 		writeStub(t, filepath.Join(sub, n))
 	}
 
-	masters, warnings, err := indexDarkMasters(dir)
+	masters, warnings, err := indexDarkMasters(dir, c3Camera)
 	if err != nil {
 		t.Fatalf("indexDarkMasters: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestIndexDarkMastersRejectsNonMasters(t *testing.T) {
 				}
 			}
 
-			masters, _, err := indexDarkMasters(dir)
+			masters, _, err := indexDarkMasters(dir, c3Camera)
 			if err != nil {
 				t.Fatalf("indexDarkMasters: %v", err)
 			}
@@ -295,7 +295,7 @@ func TestIndexDarkMastersRejectsNonMasters(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		masters, warnings, err := indexDarkMasters(dir)
+		masters, warnings, err := indexDarkMasters(dir, c3Camera)
 		if err != nil {
 			t.Fatalf("indexDarkMasters: %v", err)
 		}
@@ -494,7 +494,7 @@ func TestPrepareReportsCopiedDarks(t *testing.T) {
 
 	var line string
 	for _, l := range strings.Split(stdout, "\n") {
-		if strings.Contains(l, "master dark") && strings.Contains(l, "pour") {
+		if strings.Contains(l, "master dark") && strings.Contains(l, "600s") {
 			line = l
 		}
 	}
@@ -863,7 +863,7 @@ func TestFlatsAreNotFilteredByTemperature(t *testing.T) {
 	})
 	dates := []string{"2026-09-10"}
 
-	matched, _ := collectFlats(filepath.Join(root, flatsDir), "2026-09-10", "310", "S", dates, 0)
+	matched, _ := collectFlats(filepath.Join(root, flatsDir), "2026-09-10", "310", "S", dates, 0, c3Camera)
 	if len(matched) != 2 {
 		t.Fatalf("got %d flats, want both despite the setpoint differing from the lights", len(matched))
 	}

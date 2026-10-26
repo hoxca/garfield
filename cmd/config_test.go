@@ -49,6 +49,8 @@ func configTestPrepareCmd() (*cobra.Command, *prepareOptions) {
 	f.StringVarP(&opts.output, "output", "o", defaultPrepareOutput, "destination root")
 	f.IntVar(&opts.targetFlats, "flat-count", 0,
 		"flats to collect per filter and angle; 0 = the session's own date only")
+	f.StringVar(&opts.camera, "camera", "c3",
+		"camera the filenames come from: c3 (rotator and gain) or g4 (fixed angle, no gain)")
 	setConfigSections(c, sectionThresholds, sectionConcurrency, sectionPrepare)
 	return c, opts
 }

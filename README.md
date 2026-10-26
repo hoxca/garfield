@@ -79,6 +79,7 @@ concurrency:
 prepare:
   input: /Volumes/Dyno/Kosmodrom
   output: /Volumes/T7/Workspace
+  camera: c3        # c3 (rotator + gain) or g4 (fixed angle, no gain)
   flat-count: 0     # 0 = the session's own date only
 
 analyze:
@@ -226,6 +227,7 @@ Usage:
   garfield prepare [flags]
 
 Flags:
+      --camera string      camera the filenames come from: c3 (rotator and gain) or g4 (fixed angle, no gain) [config: garfield.yaml] (default "c3")
       --conv-workers int   inner convolution workers (0 = auto) [config: garfield.yaml]
       --dry-run            show the plan without copying
       --flat-count int     flats to collect per filter and angle; 0 = the session's own date only [config: garfield.yaml]
@@ -256,8 +258,9 @@ Global Flags:
 4. **Route** each frame: `APPROVED` to `lights/<filter>/`, everything else to
    the target-level `rejected/` tree.
 5. **Match flats** by filter *and* angle, on the session's date.
-6. **Copy masters**: biases by gain, darks by gain, exposure *and* sensor
-   temperature setpoint, only those the approved frames actually need.
+6. **Copy masters**: biases by gain (C3) or setpoint (G4), darks by gain,
+   exposure *and* setpoint (C3) or exposure and setpoint (G4), only those the
+   approved frames actually need.
 7. **Write** `metrics/sessions.csv` and `metrics/frames.csv`.
 
 Start with `--dry-run`. It prints the whole plan without copying, and it costs
@@ -309,23 +312,46 @@ previous date, so its walk starts at the following one.
 │
 ├── Flats/                           ← one level only, NO filter directory
 │   ├── 2026-09-10/
-│   │   └── FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT
+│   │   ├── FLAT_S_67.02s_BIN1_-10C_GA2750_…_PA310.FIT       ← c3
+│   │   └── H_AutoFlat_FLAT_H_BIN1_-10C_001_…_E.FIT          ← g4
 │   └── 2026-09-16/
 │
 ├── Bias/
 │   └── Masters/                     ← flat: no subdirectories
-│       └── masterBias_GA0_-10C_257f_20251117.xisf
+│       ├── masterBias_GA0_-10C_257f_20251117.xisf           ← c3, per gain
+│       └── masterBias_-20C_257f_20201024.xisf               ← g4, per setpoint
 │
 └── Darks/
-    └── Masters/                     ← one level of per-gain subdirs accepted
-        ├── G0/
+    └── Masters/
+        ├── G0/                                              ← c3 only
         │   └── masterDark_300s_GA0_-10C_20251118.xisf
-        └── G2750/
-            └── masterDark_600s_GA2750_-10C_20251120.xisf
+        ├── G2750/
+        │   └── masterDark_600s_GA2750_-10C_20251120.xisf
+        └── masterDark_600s_-20C_20220901.xisf               ← g4, no gain subdir
 ```
 
 Only `Lights/<target>` is required. Everything missing produces warnings, not
 errors — the frames are still usable and calibration can be supplied later.
+
+### Two cameras
+
+`--camera` selects the filename convention. Both write into the same tree.
+
+| | `c3` (default) | `g4` |
+|---|---|---|
+| Camera | Moravian C3, CMOS | Moravian G4, CCD |
+| Light name | `<target>_LIGHT_<F>_<exp>_BIN_<temp>_GA0_<date>_<time>_<ms>_PA310_E` | `<prefix>_LIGHT_<F>_<exp>_BIN_<temp>_<idx>_<date>_<time>_<ms>_W` |
+| Position angle | present, matched | **absent** — no rotator, so ignored |
+| Gain | present, keys the bias | **absent** — one gain setting |
+| Bias key | gain | **sensor temperature setpoint** |
+| Dark key | gain + exposure + setpoint | exposure + setpoint |
+| Dark subdirectories | one level per gain | none |
+
+The patterns are mutually exclusive, so a shared `Flats/` or `Darks/Masters/`
+holding both cameras' files is safe: the inactive camera's files are left alone
+rather than reported as malformed. An unknown `--camera` is rejected instead of
+defaulting, and a switch that contradicts every light frame warns once and names
+the likely fix.
 
 ### The rules that bite
 
@@ -352,10 +378,10 @@ wheel to be acquired at all, not a code change.
 filename token is never read — both spellings come from the same wheel setting,
 so they agree by construction.
 
-**One position angle per target.** More than one angle within a session, or
+**One position angle per target (C3).** More than one angle within a session, or
 different angles across a target's sessions, is fatal. The failure happens
 during planning, before any output is written, and every offending session is
-named in one error.
+named in one error. The G4 has no rotator, so none of this applies to it.
 
 **Flats match on the session *directory* date**, never the date inside the
 filenames. Sessions cross midnight, so the two disagree on most nights.
@@ -365,11 +391,13 @@ holding `masterDark_600s_GA2750_...` works. A file named `G2750` instead of
 `GA2750` matches no light and **no dark is ever copied** — the sharpest edge in
 the input contract, and it fails quietly.
 
-**A dark must match the sensor temperature setpoint it was shot at.** Exposure,
-gain and setpoint together identify the dark a light needs — a `-10C` dark does
-not calibrate a `0C` light, so a target spanning two setpoints draws one dark per
-setpoint. Bias is keyed on gain alone, and flats are not matched on temperature
-at all.
+**A dark must match the sensor temperature setpoint it was shot at.** On the C3,
+exposure, gain and setpoint together identify the dark a light needs. On the G4
+it is exposure and setpoint, because there is no gain. Either way a `-10C` dark
+does not calibrate a `0C` light, so a target spanning two setpoints draws one dark
+per setpoint. A C3 bias is keyed on gain alone; a G4 bias is keyed on the
+setpoint, since that is the only setting that varies. Flats are not matched on
+temperature at all.
 
 **Masters must be `.xisf`.** A `.fit` master is rejected. The raw calibration
 frames under `Darks/-10C/G0/30s/*.FIT` are doubly out of scope — two levels deep,
@@ -478,12 +506,16 @@ Ranked by how quietly they fail. The full list is
    filename, never the directory. A misnamed *directory* costs nothing.
 2. **A dark at the wrong setpoint is not silently substituted.** It is reported
    instead, with the masters that *were* found, so a near miss is visible.
-3. **A rotated target cannot be prepared at all** — fatal, not approximated.
-4. **Session numbers are positional.** Insert a date directory and everything
+3. **Session numbers are positional.** Insert a date directory and everything
    after it renumbers.
-5. **Only seven filters are known** — the wheel's full inventory, so this is not
+4. **Only seven filters are known** — the wheel's full inventory, so this is not
    a pending limitation. Narrowband needs different hardware.
-6. **Masters must be `.xisf`.**
+5. **A rotated target cannot be prepared at all** — on a C3. The G4 has no
+   rotator; see the Two cameras table.
+6. **`--camera` defaults to `c3`.** A G4 run that omits it finds no angles, no
+   flats and no masters, then warns once about the likely cause. It fails safely,
+   but it does fail — the switch is not inferred.
+7. **Masters must be `.xisf`.**
 
 ---
 

@@ -264,7 +264,7 @@ func TestIndexBiasMasters(t *testing.T) {
 			writeStub(t, filepath.Join(dir, n))
 		}
 
-		masters, warnings, err := indexBiasMasters(dir)
+		masters, warnings, err := indexBiasMasters(dir, c3Camera)
 		if err != nil {
 			t.Fatalf("indexBiasMasters: %v", err)
 		}
@@ -290,7 +290,7 @@ func TestIndexBiasMasters(t *testing.T) {
 		writeStub(t, filepath.Join(dir, "masterBias_BIN-1_9576x6388.xisf"))
 		writeStub(t, filepath.Join(dir, "masterBias_GA0_-10C_257f_20251117.xisf"))
 
-		masters, warnings, err := indexBiasMasters(dir)
+		masters, warnings, err := indexBiasMasters(dir, c3Camera)
 		if err != nil {
 			t.Fatalf("indexBiasMasters: %v", err)
 		}
@@ -365,7 +365,7 @@ func TestIndexBiasMasters(t *testing.T) {
 					writeStub(t, filepath.Join(dir, n))
 				}
 
-				masters, warnings, err := indexBiasMasters(dir)
+				masters, warnings, err := indexBiasMasters(dir, c3Camera)
 				if err != nil {
 					t.Fatalf("indexBiasMasters: %v", err)
 				}
@@ -418,7 +418,7 @@ func TestIndexBiasMasters(t *testing.T) {
 			writeStub(t, filepath.Join(dir, n))
 		}
 
-		masters, warnings, err := indexBiasMasters(dir)
+		masters, warnings, err := indexBiasMasters(dir, c3Camera)
 		if err != nil {
 			t.Fatalf("indexBiasMasters: %v", err)
 		}
@@ -444,7 +444,7 @@ func TestIndexBiasMasters(t *testing.T) {
 			writeStub(t, filepath.Join(dir, n))
 		}
 
-		masters, _, err := indexBiasMasters(dir)
+		masters, _, err := indexBiasMasters(dir, c3Camera)
 		if err != nil {
 			t.Fatalf("indexBiasMasters: %v", err)
 		}
@@ -486,11 +486,11 @@ func TestIndexBiasMasters(t *testing.T) {
 			writeStub(t, filepath.Join(darkDir, n))
 		}
 
-		biases, bwarnings, err := indexBiasMasters(biasDir)
+		biases, bwarnings, err := indexBiasMasters(biasDir, c3Camera)
 		if err != nil {
 			t.Fatalf("indexBiasMasters: %v", err)
 		}
-		darks, dwarnings, err := indexDarkMasters(darkRoot)
+		darks, dwarnings, err := indexDarkMasters(darkRoot, c3Camera)
 		if err != nil {
 			t.Fatalf("indexDarkMasters: %v", err)
 		}
@@ -509,7 +509,7 @@ func TestIndexBiasMasters(t *testing.T) {
 	})
 
 	t.Run("a missing directory is an error", func(t *testing.T) {
-		if _, _, err := indexBiasMasters(filepath.Join(t.TempDir(), "absent")); err == nil {
+		if _, _, err := indexBiasMasters(filepath.Join(t.TempDir(), "absent"), c3Camera); err == nil {
 			t.Error("a missing masters directory was accepted")
 		}
 	})
@@ -551,7 +551,7 @@ func TestIndexBiasMasters(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		masters, warnings, err := indexBiasMasters(dir)
+		masters, warnings, err := indexBiasMasters(dir, c3Camera)
 		if err != nil {
 			t.Fatalf("indexBiasMasters: %v", err)
 		}
@@ -581,19 +581,29 @@ func TestIndexBiasMasters(t *testing.T) {
 	})
 }
 
-// TestTargetGainsUnionsAcrossSessions checks the union and the ordering.
-func TestTargetGainsUnionsAcrossSessions(t *testing.T) {
+// TestTargetBiasKeysUnionsAcrossSessions checks the union and the ordering.
+//
+// The key set is what a master bias is looked up by: a gain on the C3, a
+// sensor temperature setpoint on the G4. On the C3 the two coincide, which is
+// why the field is separate from gains rather than the same slice.
+func TestTargetBiasKeysUnionsAcrossSessions(t *testing.T) {
 	sessions := []sessionPlan{
-		{gains: []string{"GA0"}},
-		{gains: []string{"GA2750", "GA0"}},
-		{gains: nil},
-		{gains: []string{"GA0"}},
+		{biasKeys: []string{"GA0"}},
+		{biasKeys: []string{"GA2750", "GA0"}},
+		{biasKeys: nil},
+		{biasKeys: []string{"GA0"}},
 	}
-	if got := strings.Join(targetGains(sessions), " "); got != "GA0 GA2750" {
-		t.Errorf("targetGains = %q, want %q", got, "GA0 GA2750")
+	if got := strings.Join(targetBiasKeys(sessions), " "); got != "GA0 GA2750" {
+		t.Errorf("targetBiasKeys = %q, want %q", got, "GA0 GA2750")
 	}
-	if got := targetGains(nil); len(got) != 0 {
-		t.Errorf("targetGains(nil) = %v, want empty", got)
+	if got := targetBiasKeys(nil); len(got) != 0 {
+		t.Errorf("targetBiasKeys(nil) = %v, want empty", got)
+	}
+
+	// The G4 shape: setpoints, no gains.
+	g4 := []sessionPlan{{biasKeys: []string{"-20C", "-10C"}}, {biasKeys: []string{"0C"}}}
+	if got := strings.Join(targetBiasKeys(g4), " "); got != "-10C -20C 0C" {
+		t.Errorf("targetBiasKeys(g4) = %q, want %q", got, "-10C -20C 0C")
 	}
 }
 
