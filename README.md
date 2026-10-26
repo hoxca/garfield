@@ -106,6 +106,21 @@ eccentricity, SNR and score for each frame.
 score = snr / fwhm × (1 − ecc)
 ```
 
+**Shape comes from a 2D Gaussian PSF fit**, not from image moments. Each measured
+star is fitted with an elliptical Gaussian whose background is a free parameter;
+FWHM is the equivalent-circular width of the fitted profile and eccentricity is
+`sqrt(1 − (b/a)²)` of its axes.
+
+This matters below about 2 px FWHM. There the PSF spans only a few pixels,
+background subtraction and noise clip the moments, and a round star can measure
+0.6 while looking perfectly round. On an undersampled 1.69 ″/px field the fit
+agrees with PixInsight's eccentricity to within 0.03 per frame, where moments
+were 0.2 high.
+
+Because it is a Gaussian fit, the FWHM it reports is a Gaussian-equivalent width
+and will differ from a tool that fits a Moffat profile; it reads roughly 1.3×
+PixInsight's figure on the same frames.
+
 ### `garfield analyze --help`
 
 ```

@@ -114,45 +114,32 @@ func parseFilename(name string) (filter string, date string) {
 	return
 }
 
-// eccApertureScale sets the eccentricity aperture as a multiple of the measured
-// FWHM. A moment estimator needs the whole profile, so the aperture has to grow
-// with the PSF; a fixed pixel radius is implicitly tuned to one sampling regime.
+// fitBoxScale sets the half-width of the box the star profile is fitted in, as
+// a multiple of the detected width.
 //
-// 3.5x is the point where garfield's figure agrees with PixInsight's on
-// undersampled data (1.69"/px, FWHM 1.94 px), and leaves well-sampled data
-// essentially unchanged: at 0.71"/px (FWHM 3.3 px) it selects ~12 px against the
-// old fixed 10, which moves the mean by a few hundredths.
-const eccApertureScale = 3.5
+// The box only has to contain the core and enough of the wings for the fit to
+// see the profile; it is not the measurement aperture it used to be. Too large
+// and a nebula gradient or a neighbour pulls the shape, too small and the
+// Gaussian is truncated. Twice the detected FWHM is comfortable for both.
+const fitBoxScale = 2.0
 
-// eccApertureMin and eccApertureMax bound the radius. The floor stops a very
-// narrow PSF from being measured in a box too small to contain its wings; the
-// ceiling stops a broad one from dragging in neighbours and background
-// structure, which is what inflates the measured eccentricity at large radii.
-//
-// The ceiling is 18 px, well under 3.5x the largest accepted FWHM (24.5). A box
-// wider than about 36 px reaches the neighbouring stars in any realistic field,
-// and their wings then dilute the very elongation being measured: at 25 px the
-// effect was severe enough to collapse a 3:1 field to a nearly circular
-// measurement. Stars broad enough to want more than 18 are past the FWHM gate
-// anyway.
+// fitBoxMin and fitBoxMax bound the half-width. The floor keeps an undersampled
+// star from being fitted in a handful of pixels; the ceiling keeps a broad or
+// contaminated one from reaching into the field.
 const (
-	eccApertureMin = 5
-	eccApertureMax = 18
+	fitBoxMin = 4
+	fitBoxMax = 10
 )
 
-// eccApertureRadius is the half-width of the box the second moments are summed
-// over, scaled to this star's PSF.
-//
-// The pixel scale is not an input: the same PSF sampled more coarsely has a
-// smaller FWHM in pixels, and the radius follows it. That is what makes the
-// measurement comparable between a 3.76um and a 9um sensor on the same telescope.
-func eccApertureRadius(fwhm float64) int {
-	r := int(math.Round(eccApertureScale * fwhm))
-	if r < eccApertureMin {
-		return eccApertureMin
+// fitBoxRadius is the half-width of the fitting box for a star of the detected
+// width.
+func fitBoxRadius(fwhm float64) int {
+	r := int(math.Round(fitBoxScale * fwhm))
+	if r < fitBoxMin {
+		return fitBoxMin
 	}
-	if r > eccApertureMax {
-		return eccApertureMax
+	if r > fitBoxMax {
+		return fitBoxMax
 	}
 	return r
 }
@@ -220,9 +207,19 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 		if fieldStars[i].Signal < 50.0*skyNoise {
 			continue
 		}
-		fwhm := fieldStars[i].FWHM
-		ecc, okEcc := starsmetrics.CalculateEccentricity(pixels, bgMap, fieldStars[i].X, fieldStars[i].Y, eccApertureRadius(fwhm))
-		if !okEcc || math.IsNaN(ecc) {
+		// The shape comes from a PSF fit, not from image moments. Moments over a
+		// box bias both width and ellipticity whenever the PSF spans only a
+		// couple of pixels: on NGC281 the moments read FWHM 1.96 and
+		// eccentricity 0.64 where PixInsight's PSF fit reads 1.24 and 0.44 for
+		// the same frames.
+		fit, okFit := starsmetrics.FitEllipticalGaussian(
+			pixels, bgMap, fieldStars[i].X, fieldStars[i].Y, fitBoxRadius(fieldStars[i].FWHM))
+		if !okFit {
+			continue
+		}
+		fwhm := fit.FWHM
+		ecc := fit.Eccentricity
+		if math.IsNaN(ecc) || math.IsNaN(fwhm) {
 			continue
 		}
 		w := fieldStars[i].TotalFlux

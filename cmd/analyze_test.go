@@ -215,17 +215,21 @@ func TestEccentricityGateOnEllipticalField(t *testing.T) {
 func TestFWHMGateOnDefocusedField(t *testing.T) {
 	dir := t.TempDir()
 
+	// The expected values are the analytic FWHM = 2.3548 * sigma. The previous
+	// numbers here were the moment estimator's, which read the broad cases about
+	// 4% narrow (5.65 against 5.89). The fit recovers the profile, so the test
+	// now asserts the profile.
 	tests := []struct {
 		sigma    float64
 		want     string
 		wantFWHM float64
 	}{
-		{sigma: 1.0, want: decisionApproved, wantFWHM: 2.43},
-		{sigma: 1.5, want: decisionApproved, wantFWHM: 3.49},
-		{sigma: 2.0, want: decisionApproved, wantFWHM: 4.63},
-		// Measured 5.65 and 6.48, both past the default maxFWHM of 5.
-		{sigma: 2.5, want: decisionFWHM, wantFWHM: 5.65},
-		{sigma: 2.9, want: decisionFWHM, wantFWHM: 6.48},
+		{sigma: 1.0, want: decisionApproved, wantFWHM: 2.355},
+		{sigma: 1.5, want: decisionApproved, wantFWHM: 3.532},
+		{sigma: 2.0, want: decisionApproved, wantFWHM: 4.710},
+		// Past the default maxFWHM of 5.
+		{sigma: 2.5, want: decisionFWHM, wantFWHM: 5.887},
+		{sigma: 2.9, want: decisionFWHM, wantFWHM: 6.829},
 	}
 
 	for _, tc := range tests {
@@ -491,50 +495,44 @@ func writeFrameWithSaturation(t *testing.T, dir, name string, o synthOpts, n int
 	return path
 }
 
-// TestEccApertureRadius pins the PSF-scaled aperture.
+// TestFitBoxRadius pins the fitting box.
 //
-// The aperture is the half-width of the box the second moments are summed over.
-// It must follow the PSF: a fixed pixel radius is implicitly tuned to one
-// sampling regime, so the same optical train on a 9um sensor (FWHM ~2 px) was
-// measured in a box 5x the PSF, against 3x on a 3.76um sensor (FWHM ~3.3 px).
-// The wider box drags in neighbours and background structure and inflates the
-// eccentricity -- 0.60 against PixInsight's 0.47 on real data.
-func TestEccApertureRadius(t *testing.T) {
+// The box only has to contain the core and enough wings for the Gaussian fit;
+// it is not a measurement aperture. It follows the detected width so an
+// undersampled star is not fitted in a handful of pixels, and is clamped so a
+// broad or contaminated one does not reach into the field.
+func TestFitBoxRadius(t *testing.T) {
 	for _, tc := range []struct {
 		fwhm float64
 		want int
 	}{
-		// Undersampled: the case the fixed radius of 10 got wrong.
-		{fwhm: 1.8, want: 6},
-		{fwhm: 1.94, want: 7},
-		{fwhm: 2.09, want: 7},
-		// Well sampled: barely moves off the old 10.
-		{fwhm: 2.86, want: 10},
-		{fwhm: 3.28, want: 11},
-		{fwhm: 3.70, want: 13},
-		// The floor and ceiling clamp rather than extrapolating.
-		{fwhm: 0.5, want: eccApertureMin},
-		{fwhm: 6.0, want: eccApertureMax},
-		{fwhm: 7.0, want: eccApertureMax},
-		{fwhm: 20.0, want: eccApertureMax},
+		{fwhm: 1.8, want: 4},
+		{fwhm: 1.94, want: 4},
+		{fwhm: 2.09, want: 4},
+		{fwhm: 2.86, want: 6},
+		{fwhm: 3.28, want: 7},
+		{fwhm: 3.70, want: 7},
+		{fwhm: 0.5, want: fitBoxMin},
+		{fwhm: 6.0, want: fitBoxMax},
+		{fwhm: 20.0, want: fitBoxMax},
 	} {
-		if got := eccApertureRadius(tc.fwhm); got != tc.want {
-			t.Errorf("eccApertureRadius(%.2f) = %d, want %d", tc.fwhm, got, tc.want)
+		if got := fitBoxRadius(tc.fwhm); got != tc.want {
+			t.Errorf("fitBoxRadius(%.2f) = %d, want %d", tc.fwhm, got, tc.want)
 		}
 	}
 }
 
-// TestEccApertureGrowsWithFWHM states the property rather than a table: whatever
-// the constants become, a broader PSF must never be measured in a smaller box.
-func TestEccApertureGrowsWithFWHM(t *testing.T) {
-	prev := eccApertureRadius(1.0)
+// TestFitBoxGrowsWithFWHM states the property rather than a table: a broader
+// PSF must never be fitted in a smaller box.
+func TestFitBoxGrowsWithFWHM(t *testing.T) {
+	prev := fitBoxRadius(1.0)
 	for f := 1.0; f <= 8.0; f += 0.1 {
-		got := eccApertureRadius(f)
+		got := fitBoxRadius(f)
 		if got < prev {
-			t.Fatalf("aperture shrank from %d to %d as FWHM rose to %.1f", prev, got, f)
+			t.Fatalf("box shrank from %d to %d as FWHM rose to %.1f", prev, got, f)
 		}
-		if got < eccApertureMin || got > eccApertureMax {
-			t.Fatalf("FWHM %.1f gives radius %d, outside [%d,%d]", f, got, eccApertureMin, eccApertureMax)
+		if got < fitBoxMin || got > fitBoxMax {
+			t.Fatalf("FWHM %.1f gives radius %d, outside [%d,%d]", f, got, fitBoxMin, fitBoxMax)
 		}
 		prev = got
 	}

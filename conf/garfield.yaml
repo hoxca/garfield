@@ -11,7 +11,7 @@
 thresholds:
   min-snr: 11.0
   max-fwhm: 5.0
-  max-ecc: 0.54
+  max-ecc: 0.50
   min-score: 2.0
   min-stars: 680
 
@@ -23,7 +23,7 @@ concurrency:
 
 # Default directories for prepare, and how many flats each session collects.
 prepare:
-  input: /Volumes/Dyno/Kosmodrom
+  input: /Volumes/Kosmodrom_2022/Kosmodrom
   output: /Volumes/T7/Workspace
 
   # Which camera wrote the filenames.

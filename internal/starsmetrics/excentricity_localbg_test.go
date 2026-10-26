@@ -41,7 +41,7 @@ func addGaussian(img [][]float64, cx, cy int, amp, sigma float64) {
 }
 
 // addAnisotropicGaussian stamps an axis-aligned Gaussian with independent
-// sigmas, used to give CalculateEccentricity a known eccentricity.
+// sigmas, used to build a star with a known profile.
 func addAnisotropicGaussian(img [][]float64, cx, cy int, amp, sx, sy float64) {
 	h, w := len(img), len(img[0])
 	den := 2 * sx * sx

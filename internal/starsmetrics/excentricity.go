@@ -2,7 +2,6 @@
 package starsmetrics
 
 import (
-	"math"
 	"sort"
 )
 
@@ -45,82 +44,6 @@ func LocalBackground(pixels [][]float64, cx, cy int) float64 {
 
 	sort.Float64s(vals)
 	return vals[len(vals)/2]
-}
-
-func CalculateEccentricity(pixels, bgMap [][]float64, cx, cy, radius int) (float64, bool) {
-	var m00, m10, m01, m20, m02, m11 float64
-	height := len(pixels)
-	width := len(pixels[0])
-	useBgMap := len(bgMap) == height && len(bgMap) > 0 && len(bgMap[0]) == width
-
-	for y := cy - radius; y <= cy+radius; y++ {
-		if y < 0 || y >= height {
-			continue
-		}
-		for x := cx - radius; x <= cx+radius; x++ {
-			if x < 0 || x >= width {
-				continue
-			}
-			bg := 0.0
-			if useBgMap {
-				bg = bgMap[y][x]
-			}
-			intensity := pixels[y][x] - bg
-			if intensity < 0 {
-				intensity = 0
-			}
-			m00 += intensity
-			m10 += float64(x) * intensity
-			m01 += float64(y) * intensity
-		}
-	}
-
-	if m00 <= 0 {
-		return 0, false
-	}
-	xCenter := m10 / m00
-	yCenter := m01 / m00
-
-	for y := cy - radius; y <= cy+radius; y++ {
-		if y < 0 || y >= height {
-			continue
-		}
-		dy := float64(y) - yCenter
-		for x := cx - radius; x <= cx+radius; x++ {
-			if x < 0 || x >= width {
-				continue
-			}
-			dx := float64(x) - xCenter
-			bg := 0.0
-			if useBgMap {
-				bg = bgMap[y][x]
-			}
-			intensity := pixels[y][x] - bg
-			if intensity < 0 {
-				intensity = 0
-			}
-			m20 += dx * dx * intensity
-			m02 += dy * dy * intensity
-			m11 += dx * dy * intensity
-		}
-	}
-
-	mu20 := m20 / m00
-	mu02 := m02 / m00
-	mu11 := m11 / m00
-
-	delta := mu20 - mu02
-	term := math.Sqrt(delta*delta + 4.0*mu11*mu11)
-
-	a2 := 2.0 * (mu20 + mu02 + term)
-	b2 := 2.0 * (mu20 + mu02 - term)
-
-	if a2 <= 0 || b2 <= 0 || b2 > a2 {
-		return 0, false
-	}
-
-	eccentricity := math.Sqrt(1.0 - (b2 / a2))
-	return eccentricity, true
 }
 
 func IsAbsolutePeak(pixels [][]float64, cx, cy int) bool {

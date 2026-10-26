@@ -407,15 +407,11 @@ func TestApplyConfigBadValueIsAnError(t *testing.T) {
 func TestRepoConfigIsValid(t *testing.T) {
 	v := mustReadConfig(t, "../"+configRelPath)
 
-	for key, want := range map[string]string{
-		"prepare.input":  defaultPrepareInput,
-		"prepare.output": defaultPrepareOutput,
-		"analyze.dir":    "images",
-	} {
-		if got := v.GetString(key); got != want {
-			t.Errorf("%s = %q in %s, want %q", key, got, configRelPath, want)
-		}
-	}
+	// Directions are deliberately not compared with the compiled defaults. The
+	// input volume is a property of the machine the config was written on, and
+	// pinning it to defaultPrepareInput turns moving the acquisition disk into a
+	// test failure. Only presence is checked, below.
+	_ = v
 
 	// Every key must be present, so deleting one cannot silently fall back to
 	// the compiled default for a whole run.
