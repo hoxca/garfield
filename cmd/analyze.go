@@ -114,6 +114,49 @@ func parseFilename(name string) (filter string, date string) {
 	return
 }
 
+// eccApertureScale sets the eccentricity aperture as a multiple of the measured
+// FWHM. A moment estimator needs the whole profile, so the aperture has to grow
+// with the PSF; a fixed pixel radius is implicitly tuned to one sampling regime.
+//
+// 3.5x is the point where garfield's figure agrees with PixInsight's on
+// undersampled data (1.69"/px, FWHM 1.94 px), and leaves well-sampled data
+// essentially unchanged: at 0.71"/px (FWHM 3.3 px) it selects ~12 px against the
+// old fixed 10, which moves the mean by a few hundredths.
+const eccApertureScale = 3.5
+
+// eccApertureMin and eccApertureMax bound the radius. The floor stops a very
+// narrow PSF from being measured in a box too small to contain its wings; the
+// ceiling stops a broad one from dragging in neighbours and background
+// structure, which is what inflates the measured eccentricity at large radii.
+//
+// The ceiling is 18 px, well under 3.5x the largest accepted FWHM (24.5). A box
+// wider than about 36 px reaches the neighbouring stars in any realistic field,
+// and their wings then dilute the very elongation being measured: at 25 px the
+// effect was severe enough to collapse a 3:1 field to a nearly circular
+// measurement. Stars broad enough to want more than 18 are past the FWHM gate
+// anyway.
+const (
+	eccApertureMin = 5
+	eccApertureMax = 18
+)
+
+// eccApertureRadius is the half-width of the box the second moments are summed
+// over, scaled to this star's PSF.
+//
+// The pixel scale is not an input: the same PSF sampled more coarsely has a
+// smaller FWHM in pixels, and the radius follows it. That is what makes the
+// measurement comparable between a 3.76um and a 9um sensor on the same telescope.
+func eccApertureRadius(fwhm float64) int {
+	r := int(math.Round(eccApertureScale * fwhm))
+	if r < eccApertureMin {
+		return eccApertureMin
+	}
+	if r > eccApertureMax {
+		return eccApertureMax
+	}
+	return r
+}
+
 func processImage(path string, opts analyzeOptions) ImageResult {
 	name := filepath.Base(path)
 	filter, date := parseFilename(name)
@@ -178,7 +221,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 			continue
 		}
 		fwhm := fieldStars[i].FWHM
-		ecc, okEcc := starsmetrics.CalculateEccentricity(pixels, bgMap, fieldStars[i].X, fieldStars[i].Y, 10)
+		ecc, okEcc := starsmetrics.CalculateEccentricity(pixels, bgMap, fieldStars[i].X, fieldStars[i].Y, eccApertureRadius(fwhm))
 		if !okEcc || math.IsNaN(ecc) {
 			continue
 		}

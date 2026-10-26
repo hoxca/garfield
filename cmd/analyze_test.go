@@ -490,3 +490,52 @@ func writeFrameWithSaturation(t *testing.T, dir, name string, o synthOpts, n int
 	}
 	return path
 }
+
+// TestEccApertureRadius pins the PSF-scaled aperture.
+//
+// The aperture is the half-width of the box the second moments are summed over.
+// It must follow the PSF: a fixed pixel radius is implicitly tuned to one
+// sampling regime, so the same optical train on a 9um sensor (FWHM ~2 px) was
+// measured in a box 5x the PSF, against 3x on a 3.76um sensor (FWHM ~3.3 px).
+// The wider box drags in neighbours and background structure and inflates the
+// eccentricity -- 0.60 against PixInsight's 0.47 on real data.
+func TestEccApertureRadius(t *testing.T) {
+	for _, tc := range []struct {
+		fwhm float64
+		want int
+	}{
+		// Undersampled: the case the fixed radius of 10 got wrong.
+		{fwhm: 1.8, want: 6},
+		{fwhm: 1.94, want: 7},
+		{fwhm: 2.09, want: 7},
+		// Well sampled: barely moves off the old 10.
+		{fwhm: 2.86, want: 10},
+		{fwhm: 3.28, want: 11},
+		{fwhm: 3.70, want: 13},
+		// The floor and ceiling clamp rather than extrapolating.
+		{fwhm: 0.5, want: eccApertureMin},
+		{fwhm: 6.0, want: eccApertureMax},
+		{fwhm: 7.0, want: eccApertureMax},
+		{fwhm: 20.0, want: eccApertureMax},
+	} {
+		if got := eccApertureRadius(tc.fwhm); got != tc.want {
+			t.Errorf("eccApertureRadius(%.2f) = %d, want %d", tc.fwhm, got, tc.want)
+		}
+	}
+}
+
+// TestEccApertureGrowsWithFWHM states the property rather than a table: whatever
+// the constants become, a broader PSF must never be measured in a smaller box.
+func TestEccApertureGrowsWithFWHM(t *testing.T) {
+	prev := eccApertureRadius(1.0)
+	for f := 1.0; f <= 8.0; f += 0.1 {
+		got := eccApertureRadius(f)
+		if got < prev {
+			t.Fatalf("aperture shrank from %d to %d as FWHM rose to %.1f", prev, got, f)
+		}
+		if got < eccApertureMin || got > eccApertureMax {
+			t.Fatalf("FWHM %.1f gives radius %d, outside [%d,%d]", f, got, eccApertureMin, eccApertureMax)
+		}
+		prev = got
+	}
+}
