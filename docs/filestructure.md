@@ -178,10 +178,25 @@ The set is the wheel (§3.1.3).
 
 A real frame:
 
+When it's a file comming from the Moravian G4 the filename is the following
+
 ```
-target   type  filter  exp    bin    temp  gain   date      time    ms   PA     flip
-  │       │      │      │      │      │     │      │         │      │    │      │
+target       filter   bin      index          time     flip
+  │            │       │         │             │        │
+IC1805HA_LIGHT_H_900s_BIN1_-20C_001_20201024_204428_998_W.FIT
+          │       │          │         │             │      
+         type    exp       temp       date           ms   
+```
+
+
+When it's a file comming from the Moravian C3 the filename is the following
+
+```
+        type   exp       temp       date           ms     flip
+         │      │          │          │            │        │
 LBN527_LIGHT_R_300s_BIN1_-10C_GA0_20260910_021539_988_PA310_E.FIT
+  │          │       │         │              │         │      
+target     filter   bin       gain          time        PA
 ```
 
 `<target>` is the `--target` value. `<flip>` is `E` or `W` side of pier.
@@ -267,10 +282,10 @@ FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT
      │     │     │     │     │      │      └───────────── time    071758
      │     │     │     │     │      └──────────────────── date    20260916
      │     │     │     │     └─────────────────────────── gain    GA2750
-     │     │     │     └──────────────────────────────── temp    -10C
-     │     │     └────────────────────────────────────── bin     BIN1
-     │     └──────────────────────────────────────────── exp     67.02s
-     └────────────────────────────────────────────────── filter  S
+     │     │     │     └───────────────────────────────── temp    -10C
+     │     │     └─────────────────────────────────────── bin     BIN1
+     │     └───────────────────────────────────────────── exp     67.02s
+     └─────────────────────────────────────────────────── filter  S
 ```
 
 Two tokens are load-bearing and three of the rest are not:
@@ -303,9 +318,9 @@ S, H, O:
 
 ```
 FLAT_S_67.02s_BIN1_-10C_GA2750_20260916_071758_808_PA310.FIT   → S     indexed at S@310
-FLAT_Ha_41.4s_BIN1_PA310.FIT                                  → nil   no known filter
-FLAT_OIII_41.4s_BIN1_PA310.FIT                                → nil   no known filter
-FLAT_L2_41.4s_BIN1_PA310.FIT                                  → nil   no known filter
+FLAT_Ha_41.4s_BIN1_PA310.FIT                                   → nil   no known filter
+FLAT_OIII_41.4s_BIN1_PA310.FIT                                 → nil   no known filter
+FLAT_L2_41.4s_BIN1_PA310.FIT                                   → nil   no known filter
 ```
 
 Two consequences:
