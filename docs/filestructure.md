@@ -838,7 +838,7 @@ Much looser. Any directory of FITS frames works.
 | `--recursive`, `-r` | `false` |
 | `--limit-computed-stars` | 500 |
 | `--format` | `console` (or `csv`, `both`) |
-| `--output`, `-o` | *(CSV file; required for csv/both to a file)* |
+| `--output`, `-o` | *(directory; the report is `analyse_report.csv` inside it)* |
 
 **Flat by default.** Only files directly in `--dir`. Descending is opt-in so a
 stray frame below the chosen directory cannot quietly join the report.

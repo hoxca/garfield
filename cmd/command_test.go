@@ -235,9 +235,9 @@ func TestAnalyzeFlagParsing(t *testing.T) {
 		},
 		{
 			name:    "output shorthand",
-			args:    []string{"-o", "results.csv", "--format", "csv"},
+			args:    []string{"-o", "out", "--format", "csv"},
 			wantDir: "images",
-			want:    analyzeOptions{dir: "images", qualityThresholds: defaultThresholds, limitComputedStars: 500, format: "csv", output: "results.csv"},
+			want:    analyzeOptions{dir: "images", qualityThresholds: defaultThresholds, limitComputedStars: 500, format: "csv", output: "out"},
 		},
 		{
 			name:    "boolean quiet",

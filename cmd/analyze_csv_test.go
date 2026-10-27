@@ -175,6 +175,9 @@ func TestParseFilenameRoundTripThroughProcessImage(t *testing.T) {
 	}
 }
 
+// reportPath returns the fixed report name inside an analyze output directory.
+func reportPath(dir string) string { return filepath.Join(dir, analyseReportName) }
+
 func TestWriteResultsCSVHeader(t *testing.T) {
 	want := []string{
 		"filename", "filter", "date", "detectedStars", "starCount",
@@ -411,7 +414,7 @@ func TestRunAnalyzeDiscoversFITSFiles(t *testing.T) {
 	}
 	writeFrame(t, nested, "deep.FIT", goodFrameOpts())
 
-	out := filepath.Join(dir, "out.csv")
+	out := filepath.Join(dir, "out")
 	o := defaultOpts()
 	o.format = "csv"
 	o.output = out
@@ -421,7 +424,7 @@ func TestRunAnalyzeDiscoversFITSFiles(t *testing.T) {
 		t.Fatalf("runAnalyze: %v", err)
 	}
 
-	recs := readCSVFile(t, out)
+	recs := readCSVFile(t, reportPath(out))
 	if len(recs) != 7 { // header + 6 frames
 		t.Fatalf("got %d records, want 7 (header plus six frames)\n%v", len(recs), recs)
 	}
@@ -472,7 +475,7 @@ func TestRunAnalyzeFlatScanIgnoresSubdirectories(t *testing.T) {
 	}
 
 	// And through a real run, so the flag plumbing is covered too.
-	out := filepath.Join(dir, "out.csv")
+	out := filepath.Join(dir, "out")
 	o := defaultOpts()
 	o.format = "csv"
 	o.output = out
@@ -480,7 +483,7 @@ func TestRunAnalyzeFlatScanIgnoresSubdirectories(t *testing.T) {
 	if err := runAnalyze(dir, o); err != nil {
 		t.Fatalf("runAnalyze: %v", err)
 	}
-	recs := readCSVFile(t, out)
+	recs := readCSVFile(t, reportPath(out))
 	if len(recs) != 2 { // header plus the one top-level frame
 		t.Fatalf("got %d records, want 2\n%v", len(recs), recs)
 	}
@@ -497,7 +500,7 @@ func TestRunAnalyzeFlatScanIgnoresSubdirectories(t *testing.T) {
 	if err := runAnalyze(dir, o2); err != nil {
 		t.Fatalf("runAnalyze -r: %v", err)
 	}
-	if got := len(readCSVFile(t, out)); got != 4 {
+	if got := len(readCSVFile(t, reportPath(out))); got != 4 {
 		t.Errorf("recursive run got %d records, want 4", got)
 	}
 }
@@ -608,7 +611,7 @@ func TestRunAnalyzeWalksTheWholeTree(t *testing.T) {
 		t.Error("the walk was not reported as truncated, but deeper directories were skipped")
 	}
 
-	out := filepath.Join(dir, "out.csv")
+	out := filepath.Join(dir, "out")
 	o := defaultOpts()
 	o.format = "csv"
 	o.output = out
@@ -618,7 +621,7 @@ func TestRunAnalyzeWalksTheWholeTree(t *testing.T) {
 		t.Fatalf("runAnalyze: %v", err)
 	}
 
-	recs := readCSVFile(t, out)
+	recs := readCSVFile(t, reportPath(out))
 	if len(recs) != len(within)+1 {
 		t.Fatalf("got %d records, want %d (header plus the frames within the cap)\n%v",
 			len(recs), len(within)+1, recs)
@@ -684,7 +687,7 @@ func TestRunAnalyzeReportsTruncation(t *testing.T) {
 	}
 	writeFrame(t, filepath.Join(shallow, "a", "b"), "inside.FIT", goodFrameOpts())
 
-	out := filepath.Join(shallow, "out.csv")
+	out := filepath.Join(shallow, "out")
 	quiet := captureStderr(t, func() {
 		o := defaultOpts()
 		o.format = "csv"
@@ -710,7 +713,7 @@ func TestRunAnalyzeReportsTruncation(t *testing.T) {
 	noted := captureStderr(t, func() {
 		o := defaultOpts()
 		o.format = "csv"
-		o.output = filepath.Join(deep, "out.csv")
+		o.output = filepath.Join(deep, "out")
 		o.quiet = true
 		o.recursive = true
 		if err := runAnalyze(deep, o); err != nil {
@@ -721,7 +724,7 @@ func TestRunAnalyzeReportsTruncation(t *testing.T) {
 		t.Errorf("stderr %q does not announce the depth limit", noted)
 	}
 	// And the frame beyond the cap is genuinely absent from the report.
-	recs := readCSVFile(t, filepath.Join(deep, "out.csv"))
+	recs := readCSVFile(t, reportPath(filepath.Join(deep, "out")))
 	for _, r := range recs[1:] {
 		if r[0] == "outside.FIT" {
 			t.Error("a frame beyond the cap reached the report")
@@ -768,7 +771,7 @@ func TestRunAnalyzeSortsAcrossDirectories(t *testing.T) {
 			"this fixture can no longer detect a missing sort", walked)
 	}
 
-	out := filepath.Join(dir, "out.csv")
+	out := filepath.Join(dir, "out")
 	o := defaultOpts()
 	o.format = "csv"
 	o.output = out
@@ -778,7 +781,7 @@ func TestRunAnalyzeSortsAcrossDirectories(t *testing.T) {
 		t.Fatalf("runAnalyze: %v", err)
 	}
 
-	recs := readCSVFile(t, out)
+	recs := readCSVFile(t, reportPath(out))
 	var got []string
 	for _, r := range recs[1:] {
 		got = append(got, r[0])
@@ -824,7 +827,7 @@ func TestRunAnalyzeSkipsDotfiles(t *testing.T) {
 		t.Errorf("discovered %v, want only the two real frames", found)
 	}
 
-	out := filepath.Join(dir, "out.csv")
+	out := filepath.Join(dir, "out")
 	o := defaultOpts()
 	o.format = "csv"
 	o.output = out
@@ -832,7 +835,7 @@ func TestRunAnalyzeSkipsDotfiles(t *testing.T) {
 	if err := runAnalyze(dir, o); err != nil {
 		t.Fatalf("runAnalyze: %v", err)
 	}
-	for _, r := range readCSVFile(t, out)[1:] {
+	for _, r := range readCSVFile(t, reportPath(out))[1:] {
 		if r[11] != "" {
 			t.Errorf("%s reported an error: %s", r[0], r[11])
 		}
@@ -884,7 +887,7 @@ func TestRunAnalyzeWarnsOnDuplicateBasenames(t *testing.T) {
 		writeFrame(t, full, filepath.Base(rel), goodFrameOpts())
 	}
 
-	out := filepath.Join(dir, "out.csv")
+	out := filepath.Join(dir, "out")
 	stderr := captureStderr(t, func() {
 		o := defaultOpts()
 		o.format = "csv"
@@ -907,7 +910,7 @@ func TestRunAnalyzeWarnsOnDuplicateBasenames(t *testing.T) {
 		t.Errorf("stderr %q names a frame that does not collide", stderr)
 	}
 	// And the run still produces a row for each frame.
-	if got := len(readCSVFile(t, out)); got != 4 {
+	if got := len(readCSVFile(t, reportPath(out))); got != 4 {
 		t.Errorf("got %d records, want 4 (header plus three frames)", got)
 	}
 }
@@ -927,7 +930,7 @@ func TestRunAnalyzeFlatScanDoesNotWarnAboutDuplicates(t *testing.T) {
 		writeFrame(t, full, filepath.Base(rel), goodFrameOpts())
 	}
 
-	out := filepath.Join(dir, "out.csv")
+	out := filepath.Join(dir, "out")
 
 	// Every frame is in a subdirectory, so the flat scan finds nothing and fails
 	// before writing a report. What matters is what it did not say.
@@ -958,7 +961,7 @@ func TestRunAnalyzeFlatScanDoesNotWarnAboutDuplicates(t *testing.T) {
 	if !strings.Contains(recursive, "same.FIT") {
 		t.Errorf("recursive scan warned %q, want the collision reported", recursive)
 	}
-	if got := len(readCSVFile(t, out)); got != 4 {
+	if got := len(readCSVFile(t, reportPath(out))); got != 4 {
 		t.Errorf("got %d records, want 4 (header plus three frames)", got)
 	}
 }
@@ -1026,7 +1029,7 @@ func TestRunAnalyzeRowOrderIsSorted(t *testing.T) {
 	writeFrame(t, dir, "d_fast.FIT", fast)
 	writeFrame(t, dir, "b_fast.FIT", fast)
 
-	out := filepath.Join(dir, "out.csv")
+	out := filepath.Join(dir, "out")
 	o := defaultOpts()
 	o.format = "csv"
 	o.output = out
@@ -1036,7 +1039,7 @@ func TestRunAnalyzeRowOrderIsSorted(t *testing.T) {
 		t.Fatalf("runAnalyze: %v", err)
 	}
 
-	recs := readCSVFile(t, out)
+	recs := readCSVFile(t, reportPath(out))
 	if len(recs) != 6 {
 		t.Fatalf("got %d records, want 6", len(recs))
 	}
@@ -1102,7 +1105,7 @@ func TestRunAnalyzeWorkerInvariance(t *testing.T) {
 
 	var reference string
 	for _, workers := range []int{1, 2, 4, 8} {
-		out := filepath.Join(dir, "out.csv")
+		out := filepath.Join(dir, "out")
 		o := defaultOpts()
 		o.format = "csv"
 		o.output = out
@@ -1112,9 +1115,9 @@ func TestRunAnalyzeWorkerInvariance(t *testing.T) {
 			t.Fatalf("workers=%d: %v", workers, err)
 		}
 
-		b, err := os.ReadFile(out)
+		b, err := os.ReadFile(reportPath(out))
 		if err != nil {
-			t.Fatalf("workers=%d: read output: %v", workers, err)
+			t.Fatalf("workers=%d: read report: %v", workers, err)
 		}
 		if workers == 1 {
 			reference = string(b)
@@ -1182,7 +1185,7 @@ func TestRunAnalyzeFormats(t *testing.T) {
 	})
 
 	t.Run("console prints the score and agrees with the CSV", func(t *testing.T) {
-		out := filepath.Join(dir, "score.csv")
+		out := filepath.Join(dir, "score")
 
 		stdout := captureStdout(t, func() {
 			o := defaultOpts()
@@ -1201,7 +1204,7 @@ func TestRunAnalyzeFormats(t *testing.T) {
 		// still render plausible values. Reading the score back out of the line
 		// and comparing it with the CSV for the same frame is what catches that:
 		// both come from the same ImageResult.
-		rec := readCSVFile(t, out)[1]
+		rec := readCSVFile(t, reportPath(out))[1]
 		col := -1
 		for i, h := range imageResultHeader {
 			if h == "score" {
@@ -1231,7 +1234,7 @@ func TestRunAnalyzeFormats(t *testing.T) {
 	})
 
 	t.Run("both writes console and a file", func(t *testing.T) {
-		out := filepath.Join(dir, "both.csv")
+		out := filepath.Join(dir, "both")
 		o := defaultOpts()
 		o.format = "both"
 		o.output = out
@@ -1244,11 +1247,11 @@ func TestRunAnalyzeFormats(t *testing.T) {
 		if !strings.Contains(stdout, "Done") {
 			t.Errorf("format=both did not print console output:\n%s", stdout)
 		}
-		if !strings.Contains(stdout, "CSV results written") {
+		if !strings.Contains(stdout, "Report written to") {
 			t.Errorf("format=both did not report the CSV write:\n%s", stdout)
 		}
 
-		recs := readCSVFile(t, out)
+		recs := readCSVFile(t, reportPath(out))
 		if len(recs) != 2 {
 			t.Fatalf("got %d records in the CSV file, want 2", len(recs))
 		}
@@ -1353,14 +1356,21 @@ func TestRunAnalyzeErrors(t *testing.T) {
 			amp: 3000, sigma: 1.5, spacing: 25, seed: 1,
 		})
 
+		// The output is a directory now, so a missing one is created. Block it
+		// with a regular file of the same name: MkdirAll fails on that.
+		blocked := filepath.Join(frameDir, "blocked")
+		if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write blocker: %v", err)
+		}
+
 		o := defaultOpts()
 		o.format = "csv"
-		o.output = filepath.Join(frameDir, "no-such-dir", "x.csv")
+		o.output = blocked
 		o.quiet = true
 
 		err := runAnalyze(frameDir, o)
-		if err == nil || !strings.Contains(err.Error(), "unable to create the CSV file") {
-			t.Errorf("error = %v, want a CSV creation failure", err)
+		if err == nil || !strings.Contains(err.Error(), "unable to create") {
+			t.Errorf("error = %v, want a directory creation failure", err)
 		}
 	})
 }
@@ -1377,7 +1387,7 @@ func TestRunAnalyzeRecordsPerFileError(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	out := filepath.Join(dir, "out.csv")
+	out := filepath.Join(dir, "out")
 	o := defaultOpts()
 	o.format = "csv"
 	o.output = out
@@ -1386,7 +1396,7 @@ func TestRunAnalyzeRecordsPerFileError(t *testing.T) {
 		t.Fatalf("runAnalyze: %v", err)
 	}
 
-	recs := readCSVFile(t, out)
+	recs := readCSVFile(t, reportPath(out))
 	if len(recs) != 3 {
 		t.Fatalf("got %d records, want 3 (header plus two files)", len(recs))
 	}

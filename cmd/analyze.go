@@ -34,8 +34,12 @@ type analyzeOptions struct {
 	convWorkers        int
 	limitComputedStars int
 	format             string
-	output             string
-	quiet              bool
+	// output is a directory: the report is written inside it as
+	// analyseReportName, and rejected frames are copied beneath it when
+	// copyRejected is set. It is not a CSV path any more.
+	output       string
+	copyRejected bool
+	quiet        bool
 }
 
 var analyzeOpts = analyzeOptions{}
@@ -52,8 +56,9 @@ score = snr/fwhm*(1-ecc)
 Example:
   garfield analyze images/
   garfield analyze --dir images/ --limit-computed-stars 500
-  garfield analyze --dir images/ --format csv --output results.csv
-  garfield analyze --dir images/ --format both --output results.csv --quiet`,
+  garfield analyze --dir images/ --format csv --output out/
+  garfield analyze --dir images/ --format both --output out/ --quiet
+  garfield analyze --dir images/ --copy-rejected --output out/`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := analyzeOpts.dir
@@ -72,7 +77,10 @@ func init() {
 	registerQualityFlags(analyzeCmd.Flags(), &analyzeOpts.qualityThresholds)
 	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "limit the number of bright stars measured")
 	analyzeCmd.Flags().StringVar(&analyzeOpts.format, "format", "console", "output format: console, csv or both")
-	analyzeCmd.Flags().StringVarP(&analyzeOpts.output, "output", "o", "", "output CSV file (required for csv/both to a file)")
+	analyzeCmd.Flags().StringVarP(&analyzeOpts.output, "output", "o", "",
+		"output directory for the report and copied rejected frames")
+	analyzeCmd.Flags().BoolVar(&analyzeOpts.copyRejected, "copy-rejected", false,
+		"copy rejected frames into <output>/rejected/<category>/")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.quiet, "quiet", false, "suppress console output")
 }
 
@@ -527,6 +535,9 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	if opts.format == "both" && opts.output == "" {
 		return fmt.Errorf("--output is required with --format both")
 	}
+	if opts.copyRejected && opts.output == "" {
+		return fmt.Errorf("--copy-rejected requires --output")
+	}
 
 	fitsFiles, truncated, err := discoverFITSFiles(dir, opts.recursive)
 	if err != nil {
@@ -595,6 +606,10 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 
 	showConsole := opts.format == "console" || opts.format == "both"
 	csvToStdout := opts.format == "csv" && opts.output == ""
+	reportPath := ""
+	if opts.output != "" {
+		reportPath = filepath.Join(opts.output, analyseReportName)
+	}
 	if !opts.quiet && showConsole {
 		fmt.Printf("\nProcessing %d FITS file(s) in %q (%d workers, conv=%d)...\n\n", len(fitsFiles), dir, outerWorkers, convWorkers)
 	}
@@ -657,6 +672,20 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		}
 	}
 
+	if opts.copyRejected {
+		copied, copyWarnings, err := copyRejectedFrames(results, fitsFiles, opts)
+		if err != nil {
+			return err
+		}
+		for _, w := range copyWarnings {
+			fmt.Fprintf(os.Stderr, "  warning: %s\n", w)
+		}
+		if !opts.quiet {
+			fmt.Printf("Rejected images copied to %q (%d file(s)).\n",
+				filepath.Join(opts.output, rejectedOutDir), copied)
+		}
+	}
+
 	if opts.format == "csv" || opts.format == "both" {
 		if csvToStdout {
 			w := newCSVWriter(os.Stdout)
@@ -664,9 +693,12 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 				return fmt.Errorf("writing CSV: %w", err)
 			}
 		} else {
-			f, err := os.Create(opts.output)
+			if err := os.MkdirAll(opts.output, 0o755); err != nil {
+				return fmt.Errorf("unable to create %q: %w", opts.output, err)
+			}
+			f, err := os.Create(reportPath)
 			if err != nil {
-				return fmt.Errorf("unable to create the CSV file %q: %w", opts.output, err)
+				return fmt.Errorf("unable to create the report %q: %w", reportPath, err)
 			}
 			w := newCSVWriter(f)
 			writeErr := writeResultsCSV(results, w)
@@ -678,7 +710,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 				return fmt.Errorf("closing CSV: %w", closeErr)
 			}
 			if !opts.quiet {
-				fmt.Printf("CSV results written to %q (%d rows).\n", opts.output, len(results))
+				fmt.Printf("Report written to %q (%d rows).\n", reportPath, len(results))
 			}
 		}
 	}
@@ -944,4 +976,99 @@ func percentileSorted(sorted []float64, p float64) float64 {
 		return sorted[len(sorted)-1]
 	}
 	return sorted[lo] + (k-float64(lo))*(sorted[hi]-sorted[lo])
+}
+
+// analyseReportName is the fixed name of the CSV inside the output directory.
+// Fixed rather than taken from --output, which is now a directory: one run
+// writes one report, so the name carries no information the flag does not.
+const analyseReportName = "analyse_report.csv"
+
+// rejectedOutDir groups the copied rejected frames beneath the output
+// directory. Mirrors the name prepare uses for its quarantine tree.
+const rejectedOutDir = "rejected"
+
+// rejectCategories maps each rejection decision to its folder name.
+//
+// A table rather than string munging: the decision strings are a documented
+// contract that includes spaces, and deriving a name from them would silently
+// invent a folder the first time a value is added. Anything not listed is
+// placed under "other" so a new decision cannot drop frames on the floor.
+var rejectCategories = map[string]string{
+	decisionNoStars: "no-stars",
+	decisionEcc:     "eccentricity",
+	decisionFWHM:    "fwhm",
+	decisionSNR:     "snr",
+	decisionScoring: "scoring",
+	decisionClouds:  "clouds",
+}
+
+// rejectCategory returns the folder a rejected frame belongs in.
+func rejectCategory(decision string) string {
+	if c, ok := rejectCategories[decision]; ok {
+		return c
+	}
+	return "other"
+}
+
+// copyRejectedFrames copies every rejected frame into
+// <output>/rejected/<category>/<basename>.
+//
+// A frame whose destination already exists is reported and skipped rather than
+// overwritten: analyze can walk several sessions with the same frame numbering,
+// so two different sources can share a basename. Losing one silently would be
+// worse than telling the operator the category folder is not unique.
+func copyRejectedFrames(results []ImageResult, paths []string, opts analyzeOptions) (int, []string, error) {
+	root := filepath.Join(opts.output, rejectedOutDir)
+	var warnings []string
+	copied := 0
+
+	for i, r := range results {
+		if !strings.HasPrefix(r.Decision, "REJECTED") {
+			continue
+		}
+		if i >= len(paths) {
+			continue
+		}
+		dir := filepath.Join(root, rejectCategory(r.Decision))
+		dst := filepath.Join(dir, filepath.Base(r.Filename))
+
+		if _, err := os.Stat(dst); err == nil {
+			warnings = append(warnings, fmt.Sprintf(
+				"%q already exists in %q; not overwritten (duplicate basename from another directory?)",
+				filepath.Base(r.Filename), dir))
+			continue
+		}
+
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return copied, warnings, fmt.Errorf("unable to create %q: %w", dir, err)
+		}
+		if err := copyFile(paths[i], dst); err != nil {
+			return copied, warnings, err
+		}
+		copied++
+	}
+	return copied, warnings, nil
+}
+
+// copyFile streams src to dst. Frames are around 120 MB, so they are not read
+// into memory whole.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("unable to open %q: %w", src, err)
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("unable to create %q: %w", dst, err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return fmt.Errorf("copying to %q: %w", dst, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("closing %q: %w", dst, err)
+	}
+	return nil
 }

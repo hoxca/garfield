@@ -160,6 +160,7 @@ Aliases:
 
 Flags:
       --conv-workers int           inner convolution workers (0 = auto) [config: garfield.yaml]
+      --copy-rejected              copy rejected frames into <output>/rejected/<category>/
   -d, --dir string                 directory containing the FITS files [config: garfield.yaml] (default "images")
       --format string              output format: console, csv or both (default "console")
   -h, --help                       help for analyze
@@ -172,7 +173,7 @@ Flags:
       --min-snr float              minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int              minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
       --moffat                     fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
-  -o, --output string              output CSV file (required for csv/both to a file)
+  -o, --output string              output directory for the report and copied rejected frames
       --quiet                      suppress console output
   -r, --recursive                  also walk the subdirectories of --dir, 2 levels deep [config: garfield.yaml]
   -w, --workers int                processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
@@ -191,6 +192,9 @@ Global Flags:
 | `--limit-computed-stars` | how many of the brightest stars are *measured*. `detectedStars` counts everything found; the metrics come from the measured subset. Lower it for speed while tuning. |
 | `-r`, `--recursive` | **off by default.** Only files directly in `--dir`. With `-r` the walk stops at directory depth 2, sized for `Lights/<target>/<date>/<filter>/`. When the cap truncates the walk, `analyze` says so on stderr — a bounded search is not a complete one. |
 | `--format` | `console`, `csv`, or `both`. `csv`/`both` need `-o`. |
+| `-o`, `--output` | **a directory**, not a file. The report is written inside it as `analyse_report.csv`. Without it, `--format csv` writes to stdout. |
+| `--copy-rejected` | copy every rejected frame into `<output>/rejected/<category>/`, one folder per rejection reason. Requires `-o`. |
+| `--quiet` | suppress console output. |
 | `-w`, `--conv-workers` | both default to 0 = automatic. |
 
 ### Output
@@ -208,7 +212,8 @@ Done: 2 file(s) processed.
 
 `478/2594` is `starCount/detectedStars`: measured over found.
 
-CSV, `;`-separated to match the reference PixInsight tool's export format:
+CSV, `;`-separated to match the reference PixInsight tool's export format, written
+to `<output>/analyse_report.csv` when `-o` is given and to stdout otherwise:
 
 ```
 filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure
@@ -251,6 +256,32 @@ one session, and one attached to a flat directory of prepared frames works too.
 
 A frame already rejected for eccentricity or FWHM keeps that reason — the cloud
 rule only overrides `APPROVED`.
+
+### Copying rejected frames
+
+`--copy-rejected` puts every rejected frame into `<output>/rejected/<category>/`:
+
+```
+<output>/
+├── analyse_report.csv
+└── rejected/
+    ├── clouds/
+    ├── eccentricity/
+    ├── fwhm/
+    ├── no-stars/
+    ├── scoring/
+    └── snr/
+```
+
+The category folders are a fixed mapping from the decision values, and a folder
+appears only if a frame was rejected for that reason. Approved frames are never
+copied, and neither are unreadable ones — they have no decision to categorise
+them by.
+
+The folders are **flat**. Since the scan can be recursive, two different frames
+can share a basename; the first is kept and the second reported on stderr rather
+than overwritten. On a tree that renumbers from `001` each session, that will
+happen, so check the warnings before assuming every rejected frame was copied.
 
 ### Known limitation
 
