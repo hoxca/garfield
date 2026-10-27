@@ -202,7 +202,7 @@ Global Flags:
 Console, one line per frame:
 
 ```
-Processing 2 FITS file(s) in "images" (8 workers, conv=10)...
+Processing 2 FITS file(s) in "images" (8 workers, conv=10, max-cloud=1.08, max-structure=1.12)...
 
   [1/2] LBN527_LIGHT_B_..._PA310_E.FIT ... OK (478/2594 stars, FWHM=3.62, Ecc=0.303, SNR=32.27, Score=6.224, APPROVED)
   [2/2] LBN527_LIGHT_B_..._PA310_E.FIT ... OK (477/2920 stars, FWHM=3.31, Ecc=0.329, SNR=32.67, Score=6.619, APPROVED)
@@ -211,6 +211,22 @@ Done: 2 file(s) processed.
 ```
 
 `478/2594` is `starCount/detectedStars`: measured over found.
+
+The header carries the cloud thresholds in force, so the log says which values
+produced the decisions. A threshold of `0` prints as `max-cloud=disabled`.
+
+When the session had at least four frames to establish a baseline, each frame
+line also carries the two ratios the cloud rule compares against those
+thresholds:
+
+```
+  [3/9] IC1805_..._002_20231220_191825....FIT ... OK (457/3426 stars, FWHM=2.18, Ecc=0.427, SNR=17.22, Score=4.535, cloud=1.144, struct=0.953, REJECTED CLOUDS)
+```
+
+A ratio above the threshold is why the frame was rejected. Both fields are
+omitted when the ratio was not measured — either the rule is disabled or the
+session was too small — rather than printed as `0.000`, which would read as a
+clean frame.
 
 CSV, `;`-separated to match the reference PixInsight tool's export format, written
 to `<output>/analyse_report.csv` when `-o` is given and to stdout otherwise:

@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"strconv"
+
 	"github.com/spf13/pflag"
 )
 
@@ -59,6 +61,20 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 		"reject a frame whose sky structure exceeds this multiple of its session's; 0 disables")
 	fs.BoolVar(&dst.moffat, "moffat", false,
 		"fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight)")
+}
+
+// formatThreshold renders a cloud threshold for the console.
+//
+// Zero disables that half of the rule, so it is printed as "disabled" rather
+// than "0": a line reading max-cloud=0 invites the reading "a threshold of
+// zero", which is the opposite of what it means. Otherwise the exact value is
+// printed, untrimmed, so a tuned 1.125 is not rounded to some prettier number
+// that would suggest a threshold the run did not use.
+func formatThreshold(v float64) string {
+	if v <= 0 {
+		return "disabled"
+	}
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
 // registerWorkerFlags binds the parallelism knobs, which both commands expose

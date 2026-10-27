@@ -10,7 +10,7 @@
 # are discarded.
 thresholds:
   min-snr: 11.0
-  max-fwhm: 3.8
+  max-fwhm: 3.2
   max-ecc: 0.64
   min-score: 2.0
   min-stars: 380

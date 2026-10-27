@@ -611,7 +611,9 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		reportPath = filepath.Join(opts.output, analyseReportName)
 	}
 	if !opts.quiet && showConsole {
-		fmt.Printf("\nProcessing %d FITS file(s) in %q (%d workers, conv=%d)...\n\n", len(fitsFiles), dir, outerWorkers, convWorkers)
+		fmt.Printf("\nProcessing %d FITS file(s) in %q (%d workers, conv=%d, max-cloud=%s, max-structure=%s)...\n\n",
+			len(fitsFiles), dir, outerWorkers, convWorkers,
+			formatThreshold(opts.maxCloud), formatThreshold(opts.maxStructure))
 	}
 
 	results := make([]ImageResult, len(fitsFiles))
@@ -666,9 +668,22 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 			// Score is printed to three decimals, like Ecc, because the score
 			// gate is the finest of the seven: a frame sitting just above
 			// --min-score would render as exactly on it at two.
-			fmt.Printf("  [%d/%d] %s ... OK (%d/%d stars, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f, %s)\n",
+			line := fmt.Sprintf("  [%d/%d] %s ... OK (%d/%d stars, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f",
 				i+1, len(results), r.Filename, r.StarCount, r.DetectedStars,
-				r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Score, r.Decision)
+				r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Score)
+			// The cloud numbers are printed only when they were measured. The
+			// session pass leaves both at zero when the rule is disabled or
+			// when the session has too few frames to supply a baseline, and a
+			// console "cloud=0.000" would then read as "perfectly clear"
+			// instead of "no baseline, not tested".
+			if r.CloudRatio > 0 {
+				line += fmt.Sprintf(", cloud=%.3f", r.CloudRatio)
+			}
+			if r.StructRatio > 0 {
+				line += fmt.Sprintf(", struct=%.3f", r.StructRatio)
+			}
+			line += fmt.Sprintf(", %s)", r.Decision)
+			fmt.Println(line)
 		}
 	}
 

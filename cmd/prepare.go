@@ -618,8 +618,9 @@ func runPrepare(opts prepareOptions) error {
 		fmt.Printf("\n%s of %q (%d session(s)) into %q%s\n\n",
 			prepareVerb(opts.dryRun), opts.target, len(sessions), targetOut, dryRunSuffix(opts.dryRun))
 		if !opts.dryRun {
-			fmt.Printf("Analysing the quality of %d image(s), this can take several minutes...\n\n",
-				totalLightCount(sessions))
+			fmt.Printf("Analysing the quality of %d image(s) (max-cloud=%s, max-structure=%s), this can take several minutes...\n\n",
+				totalLightCount(sessions),
+				formatThreshold(opts.maxCloud), formatThreshold(opts.maxStructure))
 		}
 	}
 

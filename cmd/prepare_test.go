@@ -352,6 +352,34 @@ func TestPrepareDryRunWritesNothing(t *testing.T) {
 	}
 }
 
+// TestPrepareConsoleShowsCloudThresholds checks the quality banner records the
+// cloud thresholds. prepare applies the same rule as analyze, so a log of a
+// prepare run has to say which values it used.
+func TestPrepareConsoleShowsCloudThresholds(t *testing.T) {
+	const target = "NGC2237-1"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.quiet = false
+
+	stdout := captureStdout(t, func() {
+		if err := runPrepare(opts); err != nil {
+			t.Errorf("runPrepare: %v", err)
+		}
+	})
+
+	for _, want := range []string{
+		"max-cloud=" + formatThreshold(defaultThresholds.maxCloud),
+		"max-structure=" + formatThreshold(defaultThresholds.maxStructure),
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("console output missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 // TestPrepareDryRunStillAssesses confirms the quality pass runs in dry-run
 // mode: a dry run that skipped assessment could not answer the question the
 // flag exists for, which is what would be filtered.
