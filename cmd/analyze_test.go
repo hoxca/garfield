@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/astrogo/fitsio"
+	"github.com/spf13/cobra"
 )
 
 // goodFrameOpts produces a frame that clears every default gate, so each gate
@@ -535,5 +536,31 @@ func TestFitBoxGrowsWithFWHM(t *testing.T) {
 			t.Fatalf("FWHM %.1f gives radius %d, outside [%d,%d]", f, got, fitBoxMin, fitBoxMax)
 		}
 		prev = got
+	}
+}
+
+// TestMoffatIsAConfigKey checks the profile switch is drivable from the config
+// file, and that one key reaches both commands because they share the
+// thresholds section.
+func TestMoffatIsAConfigKey(t *testing.T) {
+	if !knownConfigKeys()["thresholds.moffat"] {
+		t.Error("thresholds.moffat is not a known config key")
+	}
+	path := writeConfig(t, "thresholds:\n  moffat: true\n")
+
+	for _, tc := range []struct {
+		name string
+		cmd  func() *cobra.Command
+	}{
+		{"analyze", func() *cobra.Command { c, _ := configTestAnalyzeCmd(); return c }},
+		{"prepare", func() *cobra.Command { c, _ := configTestPrepareCmd(); return c }},
+	} {
+		cmd := tc.cmd()
+		if err := applySections(cmd, mustReadConfig(t, path), path); err != nil {
+			t.Fatalf("%s: applySections: %v", tc.name, err)
+		}
+		if got := cmd.Flags().Lookup("moffat").Value.String(); got != "true" {
+			t.Errorf("%s: moffat from config = %q, want %q", tc.name, got, "true")
+		}
 	}
 }

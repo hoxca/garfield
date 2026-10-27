@@ -13,6 +13,12 @@ type qualityThresholds struct {
 	maxEcc   float64
 	minScore float64
 	minStars int
+	// moffat selects the PSF profile used to measure width and shape. It is not
+	// a threshold: it decides how the metrics are obtained, not whether a frame
+	// passes. It lives here because this struct is the one thing analyze and
+	// prepare already share, so one switch governs both commands instead of two
+	// that can drift apart.
+	moffat bool
 }
 
 // defaultThresholds is the single point of configuration for those criteria.
@@ -38,6 +44,8 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 	fs.Float64Var(&dst.maxEcc, "max-ecc", defaultThresholds.maxEcc, "maximum eccentricity for APPROVED")
 	fs.Float64Var(&dst.minScore, "min-score", defaultThresholds.minScore, "minimum score for APPROVED")
 	fs.IntVar(&dst.minStars, "min-stars", defaultThresholds.minStars, "minimum number of detected stars for APPROVED")
+	fs.BoolVar(&dst.moffat, "moffat", false,
+		"fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight)")
 }
 
 // registerWorkerFlags binds the parallelism knobs, which both commands expose

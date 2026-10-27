@@ -71,6 +71,7 @@ thresholds:
   max-ecc: 0.54
   min-score: 2.0
   min-stars: 680
+  moffat: false     # true = Moffat PSF fit (slower, FWHM matches PixInsight)
 
 concurrency:
   workers: 0        # 0 = NumCPU/2
@@ -106,20 +107,34 @@ eccentricity, SNR and score for each frame.
 score = snr / fwhm × (1 − ecc)
 ```
 
-**Shape comes from a 2D Gaussian PSF fit**, not from image moments. Each measured
-star is fitted with an elliptical Gaussian whose background is a free parameter;
-FWHM is the equivalent-circular width of the fitted profile and eccentricity is
+**Shape comes from a PSF fit**, not from image moments. Each measured star is
+fitted with an elliptical profile whose background is a free parameter; FWHM is
+the width of the fitted half-maximum contour and eccentricity is
 `sqrt(1 − (b/a)²)` of its axes.
 
-This matters below about 2 px FWHM. There the PSF spans only a few pixels,
-background subtraction and noise clip the moments, and a round star can measure
-0.6 while looking perfectly round. On an undersampled 1.69 ″/px field the fit
-agrees with PixInsight's eccentricity to within 0.03 per frame, where moments
-were 0.2 high.
+Two profiles are available, selected by `--moffat`:
 
-Because it is a Gaussian fit, the FWHM it reports is a Gaussian-equivalent width
-and will differ from a tool that fits a Moffat profile; it reads roughly 1.3×
-PixInsight's figure on the same frames.
+| mode | profile | cost | FWHM on `data/6_files.csv` |
+|---|---|---|---|
+| default | Gaussian | ~0.05 ms/star | 1.52–1.64 (PixInsight 1.18–1.31) |
+| `--moffat` | Moffat, exponent fitted | ~0.42 ms/star | **1.21–1.45** |
+
+A real PSF has broader wings than a Gaussian can express, so a Gaussian fit
+returns a width larger than the half-maximum contour actually has — about
+0.3 px on these undersampled frames. That is the whole reason the option
+exists; it is not a different label on the same number. Eccentricity barely
+moves between modes, because it is a ratio of axes and so insensitive to the
+wing shape.
+
+The fit matters below about 2 px FWHM. There the PSF spans only a few pixels,
+background subtraction and noise clip the moments, and a round star can measure
+0.6 while looking perfectly round. Both modes fix that: on an undersampled
+1.69 ″/px field they agree with PixInsight to within 0.03 on eccentricity, where
+moments were 0.2 high.
+
+Metrics from the two modes are **not comparable**, and neither are scores from
+runs made before the fit existed: FWHM reads lower, so
+`score = snr/fwhm × (1 − ecc)` reads higher.
 
 ### `garfield analyze --help`
 
@@ -147,11 +162,12 @@ Flags:
       --format string              output format: console, csv or both (default "console")
   -h, --help                       help for analyze
       --limit-computed-stars int   limit the number of bright stars measured (default 500)
-      --max-ecc float              maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.54)
+      --max-ecc float              maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.5)
       --max-fwhm float             maximum FWHM for APPROVED [config: garfield.yaml] (default 5)
       --min-score float            minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float              minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int              minimum number of detected stars for APPROVED [config: garfield.yaml] (default 680)
+      --moffat                     fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
   -o, --output string              output CSV file (required for csv/both to a file)
       --quiet                      suppress console output
   -r, --recursive                  also walk the subdirectories of --dir, 2 levels deep [config: garfield.yaml]
@@ -247,12 +263,13 @@ Flags:
       --dry-run            show the plan without copying
       --flat-count int     flats to collect per filter and angle; 0 = the session's own date only [config: garfield.yaml]
   -h, --help               help for prepare
-  -i, --input string       root of the acquisition data [config: garfield.yaml] (default "/Volumes/Dyno/Kosmodrom")
-      --max-ecc float      maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.54)
+  -i, --input string       root of the acquisition data [config: garfield.yaml] (default "/Volumes/Kosmodrom_2022/Kosmodrom")
+      --max-ecc float      maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.5)
       --max-fwhm float     maximum FWHM for APPROVED [config: garfield.yaml] (default 5)
       --min-score float    minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float      minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int      minimum number of detected stars for APPROVED [config: garfield.yaml] (default 680)
+      --moffat             fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
   -o, --output string      destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
       --quiet              suppress console output
       --skip-existing      do not overwrite existing files

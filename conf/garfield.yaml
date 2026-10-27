@@ -15,6 +15,17 @@ thresholds:
   min-score: 2.0
   min-stars: 680
 
+  # PSF profile used to measure width and shape.
+  #
+  # false = Gaussian. Cheapest, and the default.
+  # true  = Moffat. Slower (~5x the per-star fit cost) but the FWHM of a real
+  #         PSF agrees with PixInsight, where a Gaussian reads ~0.3 px wide on
+  #         undersampled data.
+  #
+  # Applies to analyze AND prepare. Metrics from the two modes are not
+  # comparable: scores rise when FWHM reads smaller.
+  moffat: false
+
 # Parallelism, read by analyze AND by prepare.
 # 0 = automatic (NumCPU/2 for workers, core count for conv-workers).
 concurrency:

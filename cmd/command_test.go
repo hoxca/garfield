@@ -58,7 +58,7 @@ func TestTestHelperFlagsMatchProduction(t *testing.T) {
 
 	shared := []string{
 		"min-snr", "max-fwhm", "max-ecc", "min-score", "min-stars",
-		"workers", "conv-workers",
+		"moffat", "workers", "conv-workers",
 	}
 
 	for _, name := range shared {
@@ -89,7 +89,7 @@ func TestTestHelperFlagsMatchProduction(t *testing.T) {
 func TestSharedFlagSetIsIdenticalAcrossCommands(t *testing.T) {
 	shared := map[string]bool{
 		"min-snr": true, "max-fwhm": true, "max-ecc": true,
-		"min-score": true, "min-stars": true,
+		"min-score": true, "min-stars": true, "moffat": true,
 		"workers": true, "conv-workers": true,
 	}
 
@@ -133,6 +133,7 @@ func TestAnalyzeFlagDefaults(t *testing.T) {
 		{"max-ecc", ""},
 		{"min-score", ""},
 		{"min-stars", ""},
+		{"moffat", ""},
 		{"limit-computed-stars", ""},
 		{"format", ""},
 		{"output", "o"},
@@ -162,6 +163,7 @@ func TestAnalyzeFlagDefaults(t *testing.T) {
 		"max-ecc":              "0.54",
 		"min-score":            "2",
 		"min-stars":            "680",
+		"moffat":               "false",
 		"limit-computed-stars": "500",
 		"format":               "console",
 		"output":               "",

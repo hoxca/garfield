@@ -212,8 +212,8 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 		// couple of pixels: on NGC281 the moments read FWHM 1.96 and
 		// eccentricity 0.64 where PixInsight's PSF fit reads 1.24 and 0.44 for
 		// the same frames.
-		fit, okFit := starsmetrics.FitEllipticalGaussian(
-			pixels, bgMap, fieldStars[i].X, fieldStars[i].Y, fitBoxRadius(fieldStars[i].FWHM))
+		fit, okFit := starsmetrics.FitStarProfile(
+			pixels, bgMap, fieldStars[i].X, fieldStars[i].Y, fitBoxRadius(fieldStars[i].FWHM), opts.moffat)
 		if !okFit {
 			continue
 		}
