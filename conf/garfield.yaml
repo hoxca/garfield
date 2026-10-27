@@ -26,22 +26,26 @@ thresholds:
   # comparable: scores rise when FWHM reads smaller.
   moffat: false
 
-  # Cloud rejection, per session.
+  # Session-relative rejection: cloud and bad seeing.
   #
-  # A frame is rejected when its cloudRatio exceeds max-cloud, or when its
-  # structureRatio exceeds max-structure. Both are relative to the frame's own
-  # session and filter, so a frame is compared with its night rather than
-  # against an absolute sky level. A uniformly brighter sky (moonlight, haze)
-  # stays near 1 on both; scattering from cloud does not.
+  # REJECTED CLOUDS when haloRatio exceeds max-halo-ratio; REJECTED BAD SEEING
+  # when structureRatio exceeds max-structure. Both compare a frame with the
+  # rest of its session and filter, so a night that is uniformly brighter or
+  # more structured does not reject itself.
   #
-  # cloudRatio is (1/snr)/sqrt(background) over the session's 25th percentile;
-  # structureRatio is the sky's block-to-block variation over the session's
-  # 25th percentile. The structure half is relative because a night can have a
-  # uniformly more structured sky than another without any cloud in it.
+  # haloRatio is the wing brightness of the brightest stars relative to its
+  # session's 25th percentile. Thin cloud scatters starlight into a wide
+  # aureole: the wings grow several-fold while the core and the PSF width
+  # barely move. It is a shape measurement, not a sky level, so moonlight,
+  # twilight and low altitude cannot produce it.
   #
-  # 0 disables either half. These defaults were calibrated against one target's
-  # clouded frames, so expect to retune them on your own data.
-  max-cloud: 1.08
+  # structureRatio is the sky's block-to-block variation relative to its
+  # session's 25th percentile, used as a bad-seeing signal.
+  #
+  # 0 disables either half. max-halo-ratio was calibrated on one target's
+  # clouded frames: 2.0 rejected all three obvious clouds and nothing else in
+  # 71 frames. Expect to retune it on your own data.
+  max-halo-ratio: 2.0
   max-structure: 1.12
 
 # Parallelism, read by analyze AND by prepare.

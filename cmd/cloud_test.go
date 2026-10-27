@@ -1,41 +1,18 @@
 package cmd
 
 import (
-	"math"
 	"strings"
 	"testing"
 )
 
-func TestCloudIndexFor(t *testing.T) {
-	r := ImageResult{SNR: 20, Background: 1000}
-	want := (1.0 / 20) / math.Sqrt(1000)
-	if got := cloudIndexFor(r); math.Abs(got-want) > 1e-12 {
-		t.Errorf("cloudIndexFor = %.10f, want %.10f", got, want)
-	}
-
-	// Degenerate inputs must yield 0 rather than Inf/NaN: a NaN here would
-	// compare false against every threshold and silently disable the rule.
-	for _, bad := range []ImageResult{
-		{SNR: 0, Background: 1000},
-		{SNR: -1, Background: 1000},
-		{SNR: 20, Background: 0},
-		{SNR: 20, Background: -5},
-	} {
-		if got := cloudIndexFor(bad); got != 0 {
-			t.Errorf("cloudIndexFor(%+v) = %v, want 0", bad, got)
-		}
-	}
-}
-
-// quietGroup builds n frames whose cloud index is identical, so the session
-// baseline is unambiguous.
+// quietGroup builds n frames whose halo and structure are identical, so the
+// session baselines are unambiguous.
 func quietGroup(n int) []*ImageResult {
 	out := make([]*ImageResult, n)
 	for i := range out {
 		out[i] = &ImageResult{
 			Filename:    "f",
-			SNR:         25,
-			Background:  1200,
+			Halo:        50,
 			BgStructure: 0.50,
 			Decision:    decisionApproved,
 		}
@@ -43,23 +20,23 @@ func quietGroup(n int) []*ImageResult {
 	return out
 }
 
-func TestApplyCloudRuleRatio(t *testing.T) {
-	q := qualityThresholds{maxCloud: 1.08, maxStructure: 1.12}
+func TestApplyHaloRuleRejectsClouds(t *testing.T) {
+	q := qualityThresholds{maxHaloRatio: 2.0, maxStructure: 1.12}
 
-	// Four quiet frames plus one 15% worse than the baseline. The 25th
-	// percentile of five values is the second smallest, i.e. the quiet level, so
-	// the outlier must land above maxCloud.
+	// Four quiet frames plus one whose bright-star wings are 2.5x the session.
+	// The 25th percentile of five values is the second smallest, i.e. the quiet
+	// level, so the outlier must land above maxHaloRatio.
 	group := quietGroup(5)
-	group[4].SNR = 25 / 1.15 // same background, so the index scales by 1.15
+	group[4].Halo = 50 * 2.5
 
-	applyCloudRule(group, q)
+	applySessionRules(group, q)
 
 	if group[4].Decision != decisionClouds {
-		t.Errorf("ratio outlier decision = %q, want %q (ratio %.3f)",
-			group[4].Decision, decisionClouds, group[4].CloudRatio)
+		t.Errorf("halo outlier decision = %q, want %q (ratio %.3f)",
+			group[4].Decision, decisionClouds, group[4].HaloRatio)
 	}
-	if group[4].CloudRatio < 1.14 || group[4].CloudRatio > 1.16 {
-		t.Errorf("cloudRatio = %.4f, want ~1.15", group[4].CloudRatio)
+	if group[4].HaloRatio < 2.49 || group[4].HaloRatio > 2.51 {
+		t.Errorf("haloRatio = %.4f, want ~2.5", group[4].HaloRatio)
 	}
 	for i := 0; i < 4; i++ {
 		if group[i].Decision != decisionApproved {
@@ -68,33 +45,51 @@ func TestApplyCloudRuleRatio(t *testing.T) {
 	}
 }
 
-func TestApplyCloudRuleStructure(t *testing.T) {
-	q := qualityThresholds{maxCloud: 1.08, maxStructure: 1.12}
+func TestApplyStructureRuleRejectsBadSeeing(t *testing.T) {
+	q := qualityThresholds{maxHaloRatio: 2.0, maxStructure: 1.12}
 
-	// Structure catches the patchy case that leaves the ratio untouched: all
-	// frames measure identically except one, whose sky varies more across the
-	// field.
+	// Structure catches the patchy frame whose halo is normal. It is labelled
+	// bad seeing, not clouds: the fix is to discard the frame, not to blame the
+	// sky's transparency.
 	group := quietGroup(5)
 	group[2].BgStructure = 0.65
 
-	applyCloudRule(group, q)
+	applySessionRules(group, q)
 
-	if group[2].Decision != decisionClouds {
-		t.Errorf("structurally clouded frame decision = %q, want %q", group[2].Decision, decisionClouds)
+	if group[2].Decision != decisionBadSeeing {
+		t.Errorf("structured frame decision = %q, want %q", group[2].Decision, decisionBadSeeing)
 	}
-	if group[2].CloudRatio < 0.99 || group[2].CloudRatio > 1.01 {
-		t.Errorf("cloudRatio = %.4f, want ~1.0: structure, not ratio, should have flagged it",
-			group[2].CloudRatio)
+	if group[2].HaloRatio < 0.99 || group[2].HaloRatio > 1.01 {
+		t.Errorf("haloRatio = %.4f, want ~1.0: structure, not halo, should have flagged it",
+			group[2].HaloRatio)
+	}
+	if group[0].Decision != decisionApproved {
+		t.Errorf("a quiet frame was rejected: %q", group[0].Decision)
 	}
 }
 
-func TestApplyCloudRuleDoesNotOverwriteASpecificReason(t *testing.T) {
-	q := qualityThresholds{maxCloud: 1.08, maxStructure: 1.12}
+func TestCloudTakesPrecedenceOverBadSeeing(t *testing.T) {
+	q := qualityThresholds{maxHaloRatio: 2.0, maxStructure: 1.12}
 	group := quietGroup(5)
+	group[1].Halo = 200
+	group[1].BgStructure = 0.90
+
+	applySessionRules(group, q)
+
+	if group[1].Decision != decisionClouds {
+		t.Errorf("decision = %q, want %q: cloud is the more specific diagnosis",
+			group[1].Decision, decisionClouds)
+	}
+}
+
+func TestApplyRulesDoNotOverwriteASpecificReason(t *testing.T) {
+	q := qualityThresholds{maxHaloRatio: 2.0, maxStructure: 1.12}
+	group := quietGroup(5)
+	group[1].Halo = 500
 	group[1].BgStructure = 0.99
 	group[1].Decision = decisionEcc
 
-	applyCloudRule(group, q)
+	applySessionRules(group, q)
 
 	if group[1].Decision != decisionEcc {
 		t.Errorf("decision = %q, want %q: a more specific rejection must survive",
@@ -102,26 +97,24 @@ func TestApplyCloudRuleDoesNotOverwriteASpecificReason(t *testing.T) {
 	}
 }
 
-func TestApplyCloudRuleNeedsABaseline(t *testing.T) {
-	q := qualityThresholds{maxCloud: 1.08, maxStructure: 1.12}
+func TestApplyRulesNeedABaseline(t *testing.T) {
+	q := qualityThresholds{maxHaloRatio: 2.0, maxStructure: 1.12}
 
-	// Too few frames for a percentile: the ratio test is skipped, otherwise a
+	// Too few frames for a percentile: both tests are skipped, otherwise a
 	// three-frame run would compare each frame against a meaningless reference.
 	group := quietGroup(3)
-	group[2].SNR = 25 / 2
-	applyCloudRule(group, q)
+	group[2].Halo = 50 * 4
+	applySessionRules(group, q)
 	if group[2].Decision != decisionApproved {
-		t.Errorf("a 2x outlier among three frames was rejected on ratio; baseline is unreliable")
+		t.Errorf("a 4x halo outlier among three frames was rejected; baseline is unreliable")
 	}
-	if group[2].CloudRatio != 0 {
-		t.Errorf("cloudRatio = %v, want 0 when there is no baseline", group[2].CloudRatio)
+	if group[2].HaloRatio != 0 {
+		t.Errorf("haloRatio = %v, want 0 when there is no baseline", group[2].HaloRatio)
 	}
 
-	// Structure is relative to the session now, so it needs the same baseline
-	// and is skipped for the same reason.
 	group = quietGroup(3)
 	group[0].BgStructure = 0.70
-	applyCloudRule(group, q)
+	applySessionRules(group, q)
 	if group[0].Decision != decisionApproved {
 		t.Errorf("structure was applied without a session baseline")
 	}
@@ -130,20 +123,20 @@ func TestApplyCloudRuleNeedsABaseline(t *testing.T) {
 	}
 }
 
-func TestApplyCloudRuleDisabled(t *testing.T) {
+func TestApplyRulesDisabled(t *testing.T) {
 	group := quietGroup(5)
+	group[0].Halo = 500
 	group[0].BgStructure = 0.99
-	group[0].SNR = 1
 
 	vals := toValues(group)
-	applyCloudRuleBySession(vals, qualityThresholds{maxCloud: 0, maxStructure: 0})
+	applySessionRulesBySession(vals, qualityThresholds{maxHaloRatio: 0, maxStructure: 0})
 
 	for i, r := range vals {
 		if r.Decision != decisionApproved {
 			t.Errorf("frame %d rejected with both thresholds disabled", i)
 		}
-		if r.CloudIndex != 0 || r.CloudRatio != 0 {
-			t.Errorf("frame %d carries cloud numbers with the rule disabled", i)
+		if r.HaloRatio != 0 || r.StructRatio != 0 {
+			t.Errorf("frame %d carries session ratios with the rules disabled", i)
 		}
 	}
 }
@@ -179,14 +172,14 @@ func TestPercentileSorted(t *testing.T) {
 
 func TestCloudThresholdsAreConfigKeys(t *testing.T) {
 	keys := knownConfigKeys()
-	for _, k := range []string{"thresholds.max-cloud", "thresholds.max-structure"} {
+	for _, k := range []string{"thresholds.max-halo-ratio", "thresholds.max-structure"} {
 		if !keys[k] {
 			t.Errorf("%s is not a known config key", k)
 		}
 	}
 }
 
-// TestSessionKeys pins the grouping the cloud rule depends on. Both defects it
+// TestSessionKeys pins the grouping the session rules depend on. Both defects it
 // fixes were observed on real data: a night that crosses midnight, and two
 // different sessions sharing a date string.
 func TestSessionKeys(t *testing.T) {

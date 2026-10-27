@@ -71,8 +71,8 @@ thresholds:
   max-ecc: 0.54
   min-score: 2.0
   min-stars: 680
-  max-cloud: 1.08      # session-relative cloud index; 0 disables
-  max-structure: 1.12  # session-relative sky structure; 0 disables
+  max-halo-ratio: 2.0  # session-relative bright-star halo; 0 disables
+  max-structure: 1.12  # session-relative sky structure (bad seeing); 0 disables
   moffat: false        # true = Moffat PSF fit (slower, FWHM matches PixInsight)
 
 concurrency:
@@ -165,10 +165,10 @@ Flags:
       --format string              output format: console, csv or both (default "console")
   -h, --help                       help for analyze
       --limit-computed-stars int   limit the number of bright stars measured (default 500)
-      --max-cloud float            reject a frame whose session-relative cloud index exceeds this; 0 disables [config: garfield.yaml] (default 1.08)
       --max-ecc float              maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
-      --max-fwhm float             maximum FWHM for APPROVED [config: garfield.yaml] (default 3.8)
-      --max-structure float        reject a frame whose sky structure exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 1.12)
+      --max-fwhm float             maximum FWHM for APPROVED [config: garfield.yaml] (default 3.2)
+      --max-halo-ratio float       reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 2)
+      --max-structure float        reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables [config: garfield.yaml] (default 1.12)
       --min-score float            minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float              minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int              minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
@@ -202,7 +202,7 @@ Global Flags:
 Console, one line per frame:
 
 ```
-Processing 2 FITS file(s) in "images" (8 workers, conv=10, max-cloud=1.08, max-structure=1.12)...
+Processing 2 FITS file(s) in "images" (8 workers, conv=10, max-halo=2, max-structure=1.12)...
 
   [1/2] LBN527_LIGHT_B_..._PA310_E.FIT ... OK (478/2594 stars, FWHM=3.62, Ecc=0.303, SNR=32.27, Score=6.224, APPROVED)
   [2/2] LBN527_LIGHT_B_..._PA310_E.FIT ... OK (477/2920 stars, FWHM=3.31, Ecc=0.329, SNR=32.67, Score=6.619, APPROVED)
@@ -212,21 +212,20 @@ Done: 2 file(s) processed.
 
 `478/2594` is `starCount/detectedStars`: measured over found.
 
-The header carries the cloud thresholds in force, so the log says which values
-produced the decisions. A threshold of `0` prints as `max-cloud=disabled`.
+The header carries the session-relative thresholds in force, so the log says
+which values produced the decisions. A threshold of `0` prints as `disabled`.
 
 When the session had at least four frames to establish a baseline, each frame
-line also carries the two ratios the cloud rule compares against those
-thresholds:
+line also carries the two ratios those thresholds are compared against:
 
 ```
-  [3/9] IC1805_..._002_20231220_191825....FIT ... OK (457/3426 stars, FWHM=2.18, Ecc=0.427, SNR=17.22, Score=4.535, cloud=1.144, struct=0.953, REJECTED CLOUDS)
+  [3/9] VDB149_..._035_....FIT ... OK (455/2710 stars, FWHM=1.69, Ecc=0.412, SNR=22.38, Score=5.1, halo=3.33, struct=1.02, REJECTED CLOUDS)
 ```
 
 A ratio above the threshold is why the frame was rejected. Both fields are
 omitted when the ratio was not measured — either the rule is disabled or the
-session was too small — rather than printed as `0.000`, which would read as a
-clean frame.
+frame had too few measurable stars — rather than printed as `0.00`, which would
+read as a clean frame.
 
 CSV, `;`-separated to match the reference PixInsight tool's export format, written
 to `<output>/analyse_report.csv` when `-o` is given and to stdout otherwise:
@@ -247,21 +246,29 @@ The last three columns are measurement, not decision:
 | `noise` | per-pixel noise sigma from the background/noise estimator |
 | `bgStructure` | MAD of 64×64 block medians, in units of `noise`: how much the sky varies across the frame at scales far larger than a star |
 
-The last two columns are the cloud decision:
+The last three columns are the session-relative decisions:
 
 | Column | Meaning |
 |---|---|
-| `cloudIndex` | `(1/snr) / sqrt(background)` — noise in excess of what the raised sky alone explains |
-| `cloudRatio` | that value relative to the 25th percentile of its session |
+| `halo` | median wing brightness of the brightest stars, in ADU above the local sky: the aureole thin cloud scatters around bright stars |
+| `haloRatio` | `halo` relative to the 25th percentile of its session |
 | `structRatio` | `bgStructure` relative to the 25th percentile of its session |
 
-Both ratios are 0 when the session has fewer than four frames.
+Both ratios are 0 when the session has fewer than four measured frames, or when
+too few stars were bright enough to measure a halo.
 
-A frame is `REJECTED CLOUDS` when `cloudRatio > --max-cloud` **or**
-`structRatio > --max-structure`. The two split the work: the ratio catches cloud
-that dims stars, structure catches patchy cirrus that leaves the ratio alone but
-varies the sky across the field. Neither alone found every clouded frame on the
-reference night. Set either threshold to `0` to disable that half.
+A frame is `REJECTED CLOUDS` when `haloRatio > --max-halo-ratio`; it is
+`REJECTED BAD SEEING` when `structRatio > --max-structure`. Set either threshold
+to `0` to disable that half.
+
+The halo is the cloud signal because it is a **shape** measurement, not a sky
+level: thin cloud scatters starlight into a wide aureole around the brightest
+stars, growing the wings several-fold while the core and the PSF width barely
+move. Moonlight, twilight and low altitude raise the sky without producing an
+aureole, so they cannot trigger it — the false positives the old sky-level rule
+suffered from. Structure is kept separately as a bad-seeing indicator: a sky that
+varies strongly across the field produces frames that no amount of stacking
+repairs.
 
 **Both are relative to the frame's own session and filter.** A night can have a
 uniformly more structured sky than another — moon, haze, light pollution — with
@@ -270,8 +277,9 @@ night. Sessions are found by clustering frames on their acquisition time (a gap
 of more than two hours starts a new one), so a night that crosses midnight stays
 one session, and one attached to a flat directory of prepared frames works too.
 
-A frame already rejected for eccentricity or FWHM keeps that reason — the cloud
-rule only overrides `APPROVED`.
+A frame already rejected for eccentricity or FWHM keeps that reason — the rules
+only override `APPROVED`, and cloud takes precedence over bad seeing when both
+fire.
 
 ### Copying rejected frames
 
@@ -281,6 +289,7 @@ rule only overrides `APPROVED`.
 <output>/
 ├── analyse_report.csv
 └── rejected/
+    ├── bad-seeing/
     ├── clouds/
     ├── eccentricity/
     ├── fwhm/
@@ -343,25 +352,25 @@ Usage:
   garfield prepare [flags]
 
 Flags:
-      --camera string         camera the filenames come from: c3 (rotator and gain) or g4 (fixed angle, no gain) [config: garfield.yaml] (default "c3")
-      --conv-workers int      inner convolution workers (0 = auto) [config: garfield.yaml]
-      --dry-run               show the plan without copying
-      --flat-count int        flats to collect per filter and angle; 0 = the session's own date only [config: garfield.yaml]
-  -h, --help                  help for prepare
-  -i, --input string          root of the acquisition data [config: garfield.yaml] (default "/Volumes/Kosmodrom_2022/Kosmodrom")
-      --max-cloud float       reject a frame whose session-relative cloud index exceeds this; 0 disables [config: garfield.yaml] (default 1.08)
-      --max-ecc float         maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
-      --max-fwhm float        maximum FWHM for APPROVED [config: garfield.yaml] (default 3.8)
-      --max-structure float   reject a frame whose sky structure exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 1.12)
-      --min-score float       minimum score for APPROVED [config: garfield.yaml] (default 2)
-      --min-snr float         minimum SNR for APPROVED [config: garfield.yaml] (default 11)
-      --min-stars int         minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
-      --moffat                fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
-  -o, --output string         destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
-      --quiet                 suppress console output
-      --skip-existing         do not overwrite existing files
-  -t, --target string         astronomical target (directory under Lights/)
-  -w, --workers int           processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
+      --camera string          camera the filenames come from: c3 (rotator and gain) or g4 (fixed angle, no gain) [config: garfield.yaml] (default "c3")
+      --conv-workers int       inner convolution workers (0 = auto) [config: garfield.yaml]
+      --dry-run                show the plan without copying
+      --flat-count int         flats to collect per filter and angle; 0 = the session's own date only [config: garfield.yaml]
+  -h, --help                   help for prepare
+  -i, --input string           root of the acquisition data [config: garfield.yaml] (default "/Volumes/Kosmodrom_2022/Kosmodrom")
+      --max-ecc float          maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
+      --max-fwhm float         maximum FWHM for APPROVED [config: garfield.yaml] (default 3.2)
+      --max-halo-ratio float   reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 2)
+      --max-structure float    reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables [config: garfield.yaml] (default 1.12)
+      --min-score float        minimum score for APPROVED [config: garfield.yaml] (default 2)
+      --min-snr float          minimum SNR for APPROVED [config: garfield.yaml] (default 11)
+      --min-stars int          minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
+      --moffat                 fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
+  -o, --output string          destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
+      --quiet                  suppress console output
+      --skip-existing          do not overwrite existing files
+  -t, --target string          astronomical target (directory under Lights/)
+  -w, --workers int            processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
 
 Global Flags:
       --config string   YAML configuration file (default: conf/garfield.yaml if it exists)

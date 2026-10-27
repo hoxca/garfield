@@ -12,12 +12,13 @@ import (
 // than slugified: a new value must be added deliberately.
 func TestRejectCategory(t *testing.T) {
 	tests := map[string]string{
-		decisionNoStars: "no-stars",
-		decisionEcc:     "eccentricity",
-		decisionFWHM:    "fwhm",
-		decisionSNR:     "snr",
-		decisionScoring: "scoring",
-		decisionClouds:  "clouds",
+		decisionNoStars:   "no-stars",
+		decisionEcc:       "eccentricity",
+		decisionFWHM:      "fwhm",
+		decisionSNR:       "snr",
+		decisionScoring:   "scoring",
+		decisionClouds:    "clouds",
+		decisionBadSeeing: "bad-seeing",
 	}
 	for decision, want := range tests {
 		if got := rejectCategory(decision); got != want {

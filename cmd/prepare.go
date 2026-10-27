@@ -618,9 +618,9 @@ func runPrepare(opts prepareOptions) error {
 		fmt.Printf("\n%s of %q (%d session(s)) into %q%s\n\n",
 			prepareVerb(opts.dryRun), opts.target, len(sessions), targetOut, dryRunSuffix(opts.dryRun))
 		if !opts.dryRun {
-			fmt.Printf("Analysing the quality of %d image(s) (max-cloud=%s, max-structure=%s), this can take several minutes...\n\n",
+			fmt.Printf("Analysing the quality of %d image(s) (max-halo=%s, max-structure=%s), this can take several minutes...\n\n",
 				totalLightCount(sessions),
-				formatThreshold(opts.maxCloud), formatThreshold(opts.maxStructure))
+				formatThreshold(opts.maxHaloRatio), formatThreshold(opts.maxStructure))
 		}
 	}
 
@@ -893,7 +893,7 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 	// Cloud is a per-session decision, and assessSessions is the one place that
 	// holds every session's measurements at once. Runs before verdicts are
 	// copied, so the routed counts and reject reasons already reflect it.
-	if aopts.maxCloud > 0 || aopts.maxStructure > 0 {
+	if aopts.maxHaloRatio > 0 || aopts.maxStructure > 0 {
 		// Session and filter, matching analyze. A session's filters do not share
 		// a sky background or an exposure, so they cannot share a baseline.
 		groups := map[string][]*ImageResult{}
@@ -902,7 +902,7 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 			groups[k] = append(groups[k], &results[i])
 		}
 		for _, g := range groups {
-			applyCloudRule(g, aopts.qualityThresholds)
+			applySessionRules(g, aopts.qualityThresholds)
 		}
 	}
 
@@ -1965,7 +1965,7 @@ var framesCSVHeader = []string{
 	"filename", "detectedStars", "starCount",
 	"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
 	"decision", "error", "background", "noise", "bgStructure",
-	"cloudIndex", "cloudRatio", "structRatio",
+	"halo", "haloRatio", "structRatio",
 }
 
 // writeFramesCSV records the per-frame quality metrics that decided the split

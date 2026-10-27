@@ -15,12 +15,14 @@ type qualityThresholds struct {
 	maxEcc   float64
 	minScore float64
 	minStars int
-	// maxCloud and maxStructure are the cloud rule, both session-relative.
-	// maxCloud bounds the cloud index; maxStructure bounds the sky's
-	// block-to-block variation. Either may be 0 to disable that half. They
-	// are provisional: calibrated on one night, so they are configurable rather
-	// than baked in.
-	maxCloud     float64
+	// maxHaloRatio and maxStructure are the session-relative rules.
+	//
+	// maxHaloRatio bounds the bright-star halo relative to its session: thin
+	// cloud scatters starlight into a wide aureole, so the wings of the
+	// brightest stars grow before the sky level or the PSF do. maxStructure
+	// bounds the sky's block-to-block variation and is used as a bad-seeing
+	// signal. Either may be 0 to disable that half.
+	maxHaloRatio float64
 	maxStructure float64
 	// moffat selects the PSF profile used to measure width and shape. It is not
 	// a threshold: it decides how the metrics are obtained, not whether a frame
@@ -42,7 +44,7 @@ var defaultThresholds = qualityThresholds{
 	maxEcc:       0.54,
 	minScore:     2.0,
 	minStars:     680,
-	maxCloud:     1.08,
+	maxHaloRatio: 2.0,
 	maxStructure: 1.12,
 }
 
@@ -55,10 +57,10 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 	fs.Float64Var(&dst.maxEcc, "max-ecc", defaultThresholds.maxEcc, "maximum eccentricity for APPROVED")
 	fs.Float64Var(&dst.minScore, "min-score", defaultThresholds.minScore, "minimum score for APPROVED")
 	fs.IntVar(&dst.minStars, "min-stars", defaultThresholds.minStars, "minimum number of detected stars for APPROVED")
-	fs.Float64Var(&dst.maxCloud, "max-cloud", defaultThresholds.maxCloud,
-		"reject a frame whose session-relative cloud index exceeds this; 0 disables")
+	fs.Float64Var(&dst.maxHaloRatio, "max-halo-ratio", defaultThresholds.maxHaloRatio,
+		"reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables")
 	fs.Float64Var(&dst.maxStructure, "max-structure", defaultThresholds.maxStructure,
-		"reject a frame whose sky structure exceeds this multiple of its session's; 0 disables")
+		"reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables")
 	fs.BoolVar(&dst.moffat, "moffat", false,
 		"fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight)")
 }
@@ -66,7 +68,7 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 // formatThreshold renders a cloud threshold for the console.
 //
 // Zero disables that half of the rule, so it is printed as "disabled" rather
-// than "0": a line reading max-cloud=0 invites the reading "a threshold of
+// than "0": a line reading max-halo=0 invites the reading "a threshold of
 // zero", which is the opposite of what it means. Otherwise the exact value is
 // printed, untrimmed, so a tuned 1.125 is not rounded to some prettier number
 // that would suggest a threshold the run did not use.

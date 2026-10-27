@@ -24,6 +24,17 @@ type synthOpts struct {
 	// ratio stretches the PSF along y to make the field elliptical. 1 is
 	// circular.
 	ratio float64
+	// haloAmp adds a broad Gaussian halo of this peak amplitude to every star,
+	// so the halo rule has something to measure. haloSigma defaults to 40 px.
+	// The frame must be large enough for the 350 px pedestal ring: the halo rule
+	// needs stars at least that far from every edge.
+	haloAmp   float64
+	haloSigma float64
+	// brightAmp adds four isolated bright stars with a broad halo of
+	// brightHalo ADU (sigma 40). They sit clear of the grid, so a test can have
+	// enough stars to score and a halo the rule can measure at the same time.
+	brightAmp  float64
+	brightHalo float64
 }
 
 // writeFrame builds a FITS frame containing a regular grid of Gaussian stars
@@ -48,6 +59,54 @@ func writeFrame(t *testing.T, dir, name string, o synthOpts) string {
 					r2 := float64(dx*dx)/(2*o.sigma*o.sigma) +
 						float64(dy*dy)/(2*o.sigma*o.sigma*o.ratio*o.ratio)
 					pix[(cy+dy)*o.width+cx+dx] += float32(o.amp * math.Exp(-r2))
+				}
+			}
+			if o.haloAmp > 0 {
+				hs := o.haloSigma
+				if hs <= 0 {
+					hs = 40
+				}
+				radius := int(3 * hs)
+				for dy := -radius; dy <= radius; dy++ {
+					for dx := -radius; dx <= radius; dx++ {
+						y2, x2 := cy+dy, cx+dx
+						if y2 < 0 || y2 >= o.height || x2 < 0 || x2 >= o.width {
+							continue
+						}
+						r2 := float64(dx*dx+dy*dy) / (2 * hs * hs)
+						pix[y2*o.width+x2] += float32(o.haloAmp * math.Exp(-r2))
+					}
+				}
+			}
+		}
+	}
+
+	if o.brightAmp > 0 {
+		for _, c := range [][2]int{
+			{o.width * 3 / 10, o.height * 3 / 10},
+			{o.width * 7 / 10, o.height * 3 / 10},
+			{o.width * 3 / 10, o.height * 7 / 10},
+			{o.width * 7 / 10, o.height * 7 / 10},
+		} {
+			cx, cy := c[0], c[1]
+			for dy := -8; dy <= 8; dy++ {
+				for dx := -8; dx <= 8; dx++ {
+					r2 := float64(dx*dx+dy*dy) / (2 * 1.5 * 1.5)
+					pix[(cy+dy)*o.width+cx+dx] += float32(o.brightAmp * math.Exp(-r2))
+				}
+			}
+			if o.brightHalo > 0 {
+				const hs = 40
+				const radius = 120
+				for dy := -radius; dy <= radius; dy++ {
+					for dx := -radius; dx <= radius; dx++ {
+						y2, x2 := cy+dy, cx+dx
+						if y2 < 0 || y2 >= o.height || x2 < 0 || x2 >= o.width {
+							continue
+						}
+						r2 := float64(dx*dx+dy*dy) / (2 * hs * hs)
+						pix[y2*o.width+x2] += float32(o.brightHalo * math.Exp(-r2))
+					}
 				}
 			}
 		}

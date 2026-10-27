@@ -107,24 +107,30 @@ type ImageResult struct {
 	Background  float64
 	Noise       float64
 	BgStructure float64
-	// CloudIndex is (1/SNR)/sqrt(background): the noise in excess of what the
-	// raised sky alone explains. CloudRatio is that value relative to the
-	// 25th percentile of its session, which is what the cloud rule compares.
-	CloudIndex  float64
-	CloudRatio  float64
+	// Halo is the median wing brightness of the brightest stars, in ADU above
+	// the local sky, and HaloRatio is that value relative to the 25th
+	// percentile of its session. HaloRatio is what the cloud rule compares:
+	// thin cloud scatters starlight into an aureole around bright stars, so the
+	// wings grow while the core and the PSF width barely move.
+	Halo      float64
+	HaloRatio float64
+	// StructRatio is the frame's bgStructure relative to its session. It is
+	// reported and gated separately as bad seeing: a strongly structured sky
+	// produces frames that no amount of stacking repairs.
 	StructRatio float64
 	Decision    string
 	Error       error
 }
 
 const (
-	decisionApproved = "APPROVED"
-	decisionNoStars  = "REJECTED NO STARS"
-	decisionEcc      = "REJECTED ECCENTRICITY"
-	decisionFWHM     = "REJECTED FWHM"
-	decisionSNR      = "REJECTED SNR"
-	decisionScoring  = "REJECTED SCORING"
-	decisionClouds   = "REJECTED CLOUDS"
+	decisionApproved  = "APPROVED"
+	decisionNoStars   = "REJECTED NO STARS"
+	decisionEcc       = "REJECTED ECCENTRICITY"
+	decisionFWHM      = "REJECTED FWHM"
+	decisionSNR       = "REJECTED SNR"
+	decisionScoring   = "REJECTED SCORING"
+	decisionClouds    = "REJECTED CLOUDS"
+	decisionBadSeeing = "REJECTED BAD SEEING"
 )
 
 func parseFilename(name string) (filter string, date string) {
@@ -193,6 +199,12 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 		return fieldStars[i].TotalFlux > fieldStars[j].TotalFlux
 	})
 
+	// The halo is measured over the full field, including the brightest stars
+	// the PSF metrics skip: the aureole cloud produces lives around exactly
+	// those stars, and a frame with too few ordinary stars to score may still
+	// carry a usable cloud signature.
+	halo, _ := starsmetrics.MeasureHalo(pixels, fieldStars, skyNoise, bgLevel)
+
 	if len(fieldStars) == 0 {
 		return ImageResult{
 			Filename: name, Filter: filter, Date: date,
@@ -227,6 +239,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 			Background:      bgLevel,
 			Noise:           skyNoise,
 			BgStructure:     bgStructure,
+			Halo:            halo,
 			Decision:        decisionNoStars,
 		}
 	}
@@ -277,6 +290,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 			Background:    bgLevel,
 			Noise:         skyNoise,
 			BgStructure:   bgStructure,
+			Halo:          halo,
 			Decision:      decisionNoStars,
 		}
 	}
@@ -315,6 +329,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 		Background:      bgLevel,
 		Noise:           skyNoise,
 		BgStructure:     bgStructure,
+		Halo:            halo,
 		Decision:        decision,
 	}
 }
@@ -344,7 +359,7 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // prepare's frames.csv.
 // background, noise and bgStructure are appended at the end so the position of
 // every pre-existing column is unchanged for anything already reading this file.
-var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "cloudIndex", "cloudRatio", "structRatio"}
+var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -370,8 +385,8 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.Background, 'f', 4, 64),
 		strconv.FormatFloat(r.Noise, 'f', 6, 64),
 		strconv.FormatFloat(r.BgStructure, 'f', 6, 64),
-		strconv.FormatFloat(r.CloudIndex, 'f', 8, 64),
-		strconv.FormatFloat(r.CloudRatio, 'f', 4, 64),
+		strconv.FormatFloat(r.Halo, 'f', 2, 64),
+		strconv.FormatFloat(r.HaloRatio, 'f', 4, 64),
 		strconv.FormatFloat(r.StructRatio, 'f', 4, 64),
 	}
 }
@@ -611,9 +626,9 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		reportPath = filepath.Join(opts.output, analyseReportName)
 	}
 	if !opts.quiet && showConsole {
-		fmt.Printf("\nProcessing %d FITS file(s) in %q (%d workers, conv=%d, max-cloud=%s, max-structure=%s)...\n\n",
+		fmt.Printf("\nProcessing %d FITS file(s) in %q (%d workers, conv=%d, max-halo=%s, max-structure=%s)...\n\n",
 			len(fitsFiles), dir, outerWorkers, convWorkers,
-			formatThreshold(opts.maxCloud), formatThreshold(opts.maxStructure))
+			formatThreshold(opts.maxHaloRatio), formatThreshold(opts.maxStructure))
 	}
 
 	results := make([]ImageResult, len(fitsFiles))
@@ -657,7 +672,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 
 	// Cloud is a session-level decision: it compares a frame against its own
 	// night, so it can only run once every frame has been measured.
-	applyCloudRuleBySession(results, opts.qualityThresholds)
+	applySessionRulesBySession(results, opts.qualityThresholds)
 
 	if !opts.quiet && showConsole {
 		for i, r := range results {
@@ -676,8 +691,8 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 			// when the session has too few frames to supply a baseline, and a
 			// console "cloud=0.000" would then read as "perfectly clear"
 			// instead of "no baseline, not tested".
-			if r.CloudRatio > 0 {
-				line += fmt.Sprintf(", cloud=%.3f", r.CloudRatio)
+			if r.HaloRatio > 0 {
+				line += fmt.Sprintf(", halo=%.2f", r.HaloRatio)
 			}
 			if r.StructRatio > 0 {
 				line += fmt.Sprintf(", struct=%.3f", r.StructRatio)
@@ -810,22 +825,9 @@ func medianOf(v []float64) float64 {
 	return s[len(s)/2]
 }
 
-// cloudIndexFor is the per-frame observable the cloud rule is built on.
-//
-// The naive reading is "SNR dropped, so it was cloudy". That is not enough:
-// moonlight also drops SNR by raising the sky. Dividing by sqrt(background)
-// removes the part explained by a brighter sky, leaving noise that came from
-// somewhere else -- scattering. A clear moonlit frame and a cloudy frame with
-// the same SNR are not the same, and this is what separates them.
-func cloudIndexFor(r ImageResult) float64 {
-	if r.SNR <= 0 || r.Background <= 0 {
-		return 0
-	}
-	return (1 / r.SNR) / math.Sqrt(r.Background)
-}
-
-// applyCloudRuleBySession groups results by acquisition session and filter, and
-// applies the rule within each group.
+// applySessionRulesBySession groups results by acquisition session and filter,
+// and applies the session-relative rules within each group: the star-halo cloud
+// rule and the sky-structure bad-seeing rule.
 //
 // Session, not date. A night's frames routinely cross midnight, so the date
 // token in the filename changes part-way through one session; and a date can
@@ -834,8 +836,8 @@ func cloudIndexFor(r ImageResult) float64 {
 // unrelated ones, which moves the baseline and produces false positives --
 // observed as a whole night of clean frames rejected when analyzing a target
 // directory rather than a single night.
-func applyCloudRuleBySession(results []ImageResult, q qualityThresholds) {
-	if q.maxCloud <= 0 && q.maxStructure <= 0 {
+func applySessionRulesBySession(results []ImageResult, q qualityThresholds) {
+	if q.maxHaloRatio <= 0 && q.maxStructure <= 0 {
 		return
 	}
 	keys := sessionKeys(results)
@@ -849,7 +851,7 @@ func applyCloudRuleBySession(results []ImageResult, q qualityThresholds) {
 		groups[k] = append(groups[k], &results[i])
 	}
 	for _, k := range order {
-		applyCloudRule(groups[k], q)
+		applySessionRules(groups[k], q)
 	}
 }
 
@@ -883,10 +885,9 @@ func frameTimestamp(name string) (time.Time, bool) {
 // frames, where there is no session directory to read and the filename date is
 // the thing that is unreliable.
 //
-// Filter is part of the key because the cloud index is built from SNR and sky
-// background, and those differ between filters and exposures. A B frame and an
-// L frame from the same night would otherwise share one baseline and pollute
-// each other.
+// Filter is part of the key because the halo and the sky differ between
+// filters and exposures. A B frame and an L frame from the same night would
+// otherwise share one baseline and pollute each other.
 //
 // Frames whose name carries no stamp cannot be placed in time; they are grouped
 // together by filter and, having no session, cannot supply a meaningful
@@ -917,37 +918,38 @@ func sessionKeys(results []ImageResult) []string {
 	return keys
 }
 
-// applyCloudRule sets the cloud numbers on one session's results and replaces
-// the decision on frames the rule considers clouded.
+// applySessionRules sets the session-relative numbers on one session's results
+// and replaces the decision on frames a rule rejects.
 //
 // Only APPROVED frames are changed. A frame already rejected for eccentricity
 // keeps the more specific reason; overwriting it would lose the diagnosis the
 // report exists to provide.
 //
+// Cloud is tested before bad seeing: when both fire, the aureole is the more
+// actionable diagnosis, and a cloudy frame's structure is a consequence.
+//
 // Both references need a baseline, and a baseline needs frames. With fewer than
 // four measured frames neither percentile is meaningful, so neither test runs
 // and the session is left alone.
-func applyCloudRule(results []*ImageResult, q qualityThresholds) {
-	var indices, structures []float64
+func applySessionRules(results []*ImageResult, q qualityThresholds) {
+	var halos, structures []float64
 	for _, r := range results {
-		c := cloudIndexFor(*r)
-		r.CloudIndex = c
-		r.CloudRatio = 0
+		r.HaloRatio = 0
 		r.StructRatio = 0
-		if c > 0 {
-			indices = append(indices, c)
+		if r.Halo > 0 {
+			halos = append(halos, r.Halo)
 		}
 		if r.BgStructure > 0 {
 			structures = append(structures, r.BgStructure)
 		}
 	}
 
-	// Both references are the 25th percentile of the session, for the same
-	// reason: the median would sit inside an event that affects several frames.
-	var cloudRef, structRef float64
-	if len(indices) >= 4 {
-		sort.Float64s(indices)
-		cloudRef = percentileSorted(indices, 0.25)
+	// Both references are the 25th percentile of the session: the median would
+	// sit inside an event that affects several frames.
+	var haloRef, structRef float64
+	if len(halos) >= 4 {
+		sort.Float64s(halos)
+		haloRef = percentileSorted(halos, 0.25)
 	}
 	if len(structures) >= 4 {
 		sort.Float64s(structures)
@@ -955,25 +957,21 @@ func applyCloudRule(results []*ImageResult, q qualityThresholds) {
 	}
 
 	for _, r := range results {
-		if cloudRef > 0 {
-			r.CloudRatio = r.CloudIndex / cloudRef
+		if haloRef > 0 {
+			r.HaloRatio = r.Halo / haloRef
 		}
 		if structRef > 0 {
 			r.StructRatio = r.BgStructure / structRef
 		}
-		clouded := false
-		// Structure is compared with its session, not with a constant. A night
-		// with more large-scale structure throughout -- moon, haze, light
-		// pollution -- would otherwise reject every frame in it, which is the
-		// opposite of detecting cloud within a night.
-		if q.maxStructure > 0 && r.StructRatio > q.maxStructure {
-			clouded = true
+		if r.Decision != decisionApproved {
+			continue
 		}
-		if q.maxCloud > 0 && r.CloudRatio > q.maxCloud {
-			clouded = true
-		}
-		if clouded && r.Decision == decisionApproved {
+		if q.maxHaloRatio > 0 && r.HaloRatio > q.maxHaloRatio {
 			r.Decision = decisionClouds
+			continue
+		}
+		if q.maxStructure > 0 && r.StructRatio > q.maxStructure {
+			r.Decision = decisionBadSeeing
 		}
 	}
 }
@@ -1009,12 +1007,13 @@ const rejectedOutDir = "rejected"
 // invent a folder the first time a value is added. Anything not listed is
 // placed under "other" so a new decision cannot drop frames on the floor.
 var rejectCategories = map[string]string{
-	decisionNoStars: "no-stars",
-	decisionEcc:     "eccentricity",
-	decisionFWHM:    "fwhm",
-	decisionSNR:     "snr",
-	decisionScoring: "scoring",
-	decisionClouds:  "clouds",
+	decisionNoStars:   "no-stars",
+	decisionEcc:       "eccentricity",
+	decisionFWHM:      "fwhm",
+	decisionSNR:       "snr",
+	decisionScoring:   "scoring",
+	decisionClouds:    "clouds",
+	decisionBadSeeing: "bad-seeing",
 }
 
 // rejectCategory returns the folder a rejected frame belongs in.
