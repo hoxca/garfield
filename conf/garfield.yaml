@@ -10,10 +10,10 @@
 # are discarded.
 thresholds:
   min-snr: 11.0
-  max-fwhm: 5.0
-  max-ecc: 0.50
+  max-fwhm: 3.8
+  max-ecc: 0.64
   min-score: 2.0
-  min-stars: 680
+  min-stars: 380
 
   # PSF profile used to measure width and shape.
   #
@@ -25,6 +25,24 @@ thresholds:
   # Applies to analyze AND prepare. Metrics from the two modes are not
   # comparable: scores rise when FWHM reads smaller.
   moffat: false
+
+  # Cloud rejection, per session.
+  #
+  # A frame is rejected when its cloudRatio exceeds max-cloud, or when its
+  # structureRatio exceeds max-structure. Both are relative to the frame's own
+  # session and filter, so a frame is compared with its night rather than
+  # against an absolute sky level. A uniformly brighter sky (moonlight, haze)
+  # stays near 1 on both; scattering from cloud does not.
+  #
+  # cloudRatio is (1/snr)/sqrt(background) over the session's 25th percentile;
+  # structureRatio is the sky's block-to-block variation over the session's
+  # 25th percentile. The structure half is relative because a night can have a
+  # uniformly more structured sky than another without any cloud in it.
+  #
+  # 0 disables either half. These defaults were calibrated against one target's
+  # clouded frames, so expect to retune them on your own data.
+  max-cloud: 1.08
+  max-structure: 1.12
 
 # Parallelism, read by analyze AND by prepare.
 # 0 = automatic (NumCPU/2 for workers, core count for conv-workers).

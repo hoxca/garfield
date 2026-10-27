@@ -13,6 +13,13 @@ type qualityThresholds struct {
 	maxEcc   float64
 	minScore float64
 	minStars int
+	// maxCloud and maxStructure are the cloud rule, both session-relative.
+	// maxCloud bounds the cloud index; maxStructure bounds the sky's
+	// block-to-block variation. Either may be 0 to disable that half. They
+	// are provisional: calibrated on one night, so they are configurable rather
+	// than baked in.
+	maxCloud     float64
+	maxStructure float64
 	// moffat selects the PSF profile used to measure width and shape. It is not
 	// a threshold: it decides how the metrics are obtained, not whether a frame
 	// passes. It lives here because this struct is the one thing analyze and
@@ -28,11 +35,13 @@ type qualityThresholds struct {
 // development after frames with eccentricities just above 0.50 were being
 // discarded. Editing a value here changes both commands at once.
 var defaultThresholds = qualityThresholds{
-	minSNR:   11.0,
-	maxFWHM:  5.0,
-	maxEcc:   0.54,
-	minScore: 2.0,
-	minStars: 680,
+	minSNR:       11.0,
+	maxFWHM:      5.0,
+	maxEcc:       0.54,
+	minScore:     2.0,
+	minStars:     680,
+	maxCloud:     1.08,
+	maxStructure: 1.12,
 }
 
 // registerQualityFlags binds the shared thresholds to dst. Keeping the flag
@@ -44,6 +53,10 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 	fs.Float64Var(&dst.maxEcc, "max-ecc", defaultThresholds.maxEcc, "maximum eccentricity for APPROVED")
 	fs.Float64Var(&dst.minScore, "min-score", defaultThresholds.minScore, "minimum score for APPROVED")
 	fs.IntVar(&dst.minStars, "min-stars", defaultThresholds.minStars, "minimum number of detected stars for APPROVED")
+	fs.Float64Var(&dst.maxCloud, "max-cloud", defaultThresholds.maxCloud,
+		"reject a frame whose session-relative cloud index exceeds this; 0 disables")
+	fs.Float64Var(&dst.maxStructure, "max-structure", defaultThresholds.maxStructure,
+		"reject a frame whose sky structure exceeds this multiple of its session's; 0 disables")
 	fs.BoolVar(&dst.moffat, "moffat", false,
 		"fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight)")
 }

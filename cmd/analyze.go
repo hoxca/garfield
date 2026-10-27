@@ -8,11 +8,13 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"garfield/internal/mrs"
 	"garfield/internal/readfits"
@@ -86,8 +88,25 @@ type ImageResult struct {
 	AvgEccentricity float64
 	SNR             float64
 	Score           float64
-	Decision        string
-	Error           error
+	// Background is the median sky level over the frame, in physical ADU:
+	// readfits applies BSCALE/BZERO, so this is not offset the way raw stored
+	// integers are. Noise is the per-pixel noise sigma the background/noise
+	// estimator reports. BgStructure is the median absolute deviation of 64x64
+	// block medians divided by Background: how much the sky varies across the
+	// frame at scales far larger than a star. It is the observable behind the
+	// cloud question -- patchy cirrus raises it, a uniformly brighter sky does
+	// not -- and is reported as data, not acted on.
+	Background  float64
+	Noise       float64
+	BgStructure float64
+	// CloudIndex is (1/SNR)/sqrt(background): the noise in excess of what the
+	// raised sky alone explains. CloudRatio is that value relative to the
+	// 25th percentile of its session, which is what the cloud rule compares.
+	CloudIndex  float64
+	CloudRatio  float64
+	StructRatio float64
+	Decision    string
+	Error       error
 }
 
 const (
@@ -97,6 +116,7 @@ const (
 	decisionFWHM     = "REJECTED FWHM"
 	decisionSNR      = "REJECTED SNR"
 	decisionScoring  = "REJECTED SCORING"
+	decisionClouds   = "REJECTED CLOUDS"
 )
 
 func parseFilename(name string) (filter string, date string) {
@@ -157,6 +177,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 	mrsResult := mrs.EstimateBackgroundAndNoiseBinned(pixels, scales)
 	bgMap := mrsResult.Background
 	skyNoise := mrsResult.NoiseSigma
+	bgLevel, bgStructure := backgroundStats(bgMap, skyNoise)
 
 	fieldStars := starsmetrics.FindStars(pixels, bgMap, skyNoise)
 
@@ -167,6 +188,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 	if len(fieldStars) == 0 {
 		return ImageResult{
 			Filename: name, Filter: filter, Date: date,
+			Background: bgLevel, Noise: skyNoise, BgStructure: bgStructure,
 			Error: fmt.Errorf("no star found"),
 		}
 	}
@@ -194,6 +216,9 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 			AvgEccentricity: 0,
 			SNR:             mrsResult.ImageSNR,
 			Score:           0,
+			Background:      bgLevel,
+			Noise:           skyNoise,
+			BgStructure:     bgStructure,
 			Decision:        decisionNoStars,
 		}
 	}
@@ -241,6 +266,9 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 			DetectedStars: len(fieldStars),
 			StarCount:     0,
 			SNR:           mrsResult.ImageSNR,
+			Background:    bgLevel,
+			Noise:         skyNoise,
+			BgStructure:   bgStructure,
 			Decision:      decisionNoStars,
 		}
 	}
@@ -276,6 +304,9 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 		AvgEccentricity: avgEcc,
 		SNR:             snrLinear,
 		Score:           finalScore,
+		Background:      bgLevel,
+		Noise:           skyNoise,
+		BgStructure:     bgStructure,
 		Decision:        decision,
 	}
 }
@@ -303,7 +334,9 @@ func newCSVReader(r io.Reader) *csv.Reader {
 
 // imageResultHeader names the metric columns shared by analyze's CSV and
 // prepare's frames.csv.
-var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error"}
+// background, noise and bgStructure are appended at the end so the position of
+// every pre-existing column is unchanged for anything already reading this file.
+var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "cloudIndex", "cloudRatio", "structRatio"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -326,6 +359,12 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.Score, 'f', 4, 64),
 		r.Decision,
 		errStr,
+		strconv.FormatFloat(r.Background, 'f', 4, 64),
+		strconv.FormatFloat(r.Noise, 'f', 6, 64),
+		strconv.FormatFloat(r.BgStructure, 'f', 6, 64),
+		strconv.FormatFloat(r.CloudIndex, 'f', 8, 64),
+		strconv.FormatFloat(r.CloudRatio, 'f', 4, 64),
+		strconv.FormatFloat(r.StructRatio, 'f', 4, 64),
 	}
 }
 
@@ -574,19 +613,13 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 				r := processImage(fitsFiles[idx], opts)
 				// Distinct indices: no lock needed for the write.
 				results[idx] = r
+				// Progress only. The verdict cannot be printed here: the cloud
+				// rule needs every frame's measurement before it can compare a
+				// session, so decisions are final only after the pool drains.
 				printMu.Lock()
 				done++
-				if !opts.quiet && showConsole {
-					if r.Error != nil {
-						fmt.Printf("  [%d/%d] %s ... ERROR: %v\n", done, len(fitsFiles), r.Filename, r.Error)
-					} else {
-						// Score is printed to three decimals, like Ecc, because the
-						// score gate is the finest of the six: a frame sitting just
-						// above --min-score would render as exactly on it at two.
-						fmt.Printf("  [%d/%d] %s ... OK (%d/%d stars, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f, %s)\n",
-							done, len(fitsFiles), r.Filename, r.StarCount, r.DetectedStars,
-							r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Score, r.Decision)
-					}
+				if !opts.quiet && showConsole && (done%10 == 0 || done == len(fitsFiles)) {
+					fmt.Printf("\r  analyse : %d/%d image(s)", done, len(fitsFiles))
 				}
 				printMu.Unlock()
 			}
@@ -597,6 +630,32 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	}
 	close(jobs)
 	wg.Wait()
+
+	if !opts.quiet && showConsole {
+		if len(fitsFiles) > 0 {
+			fmt.Println()
+			fmt.Println()
+		}
+	}
+
+	// Cloud is a session-level decision: it compares a frame against its own
+	// night, so it can only run once every frame has been measured.
+	applyCloudRuleBySession(results, opts.qualityThresholds)
+
+	if !opts.quiet && showConsole {
+		for i, r := range results {
+			if r.Error != nil {
+				fmt.Printf("  [%d/%d] %s ... ERROR: %v\n", i+1, len(results), r.Filename, r.Error)
+				continue
+			}
+			// Score is printed to three decimals, like Ecc, because the score
+			// gate is the finest of the seven: a frame sitting just above
+			// --min-score would render as exactly on it at two.
+			fmt.Printf("  [%d/%d] %s ... OK (%d/%d stars, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f, %s)\n",
+				i+1, len(results), r.Filename, r.StarCount, r.DetectedStars,
+				r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Score, r.Decision)
+		}
+	}
 
 	if opts.format == "csv" || opts.format == "both" {
 		if csvToStdout {
@@ -628,4 +687,261 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		fmt.Printf("\nDone: %d file(s) processed.\n", len(results))
 	}
 	return nil
+}
+
+// backgroundStats summarises the sky: its median level, and how much it varies
+// across the frame after dividing the image into large blocks.
+//
+// The block size matters. A star is a few pixels; thin cirrus is tens to
+// hundreds. Sixty-four pixels sits above the star scales and below the frame
+// scale, so the MAD of block medians responds to patchy cloud while a uniformly
+// brighter sky -- moonlight, haze -- leaves it almost unchanged.
+//
+// The level is offset-corrected by readfits, so it is a physical ADU value and
+// can be compared across frames and nights.
+//
+// Structure is divided by the noise sigma, not by the level. Dividing by the sky
+// looks natural and is wrong: cloud raises the sky, so a brighter frame would
+// have its own structure divided down, cancelling part of the signal it is meant
+// to measure. Noise is a much weaker function of cloud cover (it grows with the
+// square root of the sky), so the ratio stays a genuine measure of patchiness
+// and is dimensionless, in units of the per-pixel noise.
+func backgroundStats(bgMap [][]float64, noise float64) (level, structure float64) {
+	if len(bgMap) == 0 || len(bgMap[0]) == 0 {
+		return 0, 0
+	}
+	level = medianStrided(bgMap, 4)
+	if noise <= 0 {
+		return level, 0
+	}
+
+	const block = 64
+	var blocks []float64
+	for by := 0; by+block <= len(bgMap); by += block {
+		for bx := 0; bx+block <= len(bgMap[by]); bx += block {
+			var vals []float64
+			for y := by; y < by+block; y += 4 {
+				for x := bx; x < bx+block; x += 4 {
+					vals = append(vals, bgMap[y][x])
+				}
+			}
+			blocks = append(blocks, medianOf(vals))
+		}
+	}
+	if len(blocks) == 0 {
+		return level, 0
+	}
+	med := medianOf(blocks)
+	dev := make([]float64, len(blocks))
+	for i, v := range blocks {
+		dev[i] = math.Abs(v - med)
+	}
+	return level, medianOf(dev) / noise
+}
+
+// medianStrided takes a median over a regular subsample. The background map is
+// smooth at this scale, so every fourth pixel is representative and the whole
+// frame does not need sorting.
+func medianStrided(m [][]float64, step int) float64 {
+	var vals []float64
+	for y := 0; y < len(m); y += step {
+		for x := 0; x < len(m[y]); x += step {
+			vals = append(vals, m[y][x])
+		}
+	}
+	return medianOf(vals)
+}
+
+// medianOf returns the middle value of v, sorting a copy so the caller keeps its
+// slice. An empty slice yields 0, which the callers treat as "no measurement".
+func medianOf(v []float64) float64 {
+	if len(v) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), v...)
+	sort.Float64s(s)
+	return s[len(s)/2]
+}
+
+// cloudIndexFor is the per-frame observable the cloud rule is built on.
+//
+// The naive reading is "SNR dropped, so it was cloudy". That is not enough:
+// moonlight also drops SNR by raising the sky. Dividing by sqrt(background)
+// removes the part explained by a brighter sky, leaving noise that came from
+// somewhere else -- scattering. A clear moonlit frame and a cloudy frame with
+// the same SNR are not the same, and this is what separates them.
+func cloudIndexFor(r ImageResult) float64 {
+	if r.SNR <= 0 || r.Background <= 0 {
+		return 0
+	}
+	return (1 / r.SNR) / math.Sqrt(r.Background)
+}
+
+// applyCloudRuleBySession groups results by acquisition session and filter, and
+// applies the rule within each group.
+//
+// Session, not date. A night's frames routinely cross midnight, so the date
+// token in the filename changes part-way through one session; and a date can
+// appear in two different sessions (the tail of one night and the start of the
+// next). Grouping by date therefore both splits real sessions and merges
+// unrelated ones, which moves the baseline and produces false positives --
+// observed as a whole night of clean frames rejected when analyzing a target
+// directory rather than a single night.
+func applyCloudRuleBySession(results []ImageResult, q qualityThresholds) {
+	if q.maxCloud <= 0 && q.maxStructure <= 0 {
+		return
+	}
+	keys := sessionKeys(results)
+	groups := map[string][]*ImageResult{}
+	var order []string
+	for i := range results {
+		k := keys[i]
+		if _, seen := groups[k]; !seen {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], &results[i])
+	}
+	for _, k := range order {
+		applyCloudRule(groups[k], q)
+	}
+}
+
+// sessionGap is how long a pause between frames has to be before the run is
+// treated as a new session. Frames within a night are minutes apart; the gap
+// between nights is many hours. Two hours is comfortably between the two.
+const sessionGap = 2 * time.Hour
+
+// frameTimestampRe matches the acquisition stamp embedded in a frame name,
+// e.g. "_20220825_214936_".
+var frameTimestampRe = regexp.MustCompile(`_(\d{8})_(\d{6})_`)
+
+// frameTimestamp reads the acquisition time from a frame name.
+func frameTimestamp(name string) (time.Time, bool) {
+	m := frameTimestampRe.FindStringSubmatch(name)
+	if m == nil {
+		return time.Time{}, false
+	}
+	ts, err := time.Parse("20060102150405", m[1]+m[2])
+	if err != nil {
+		return time.Time{}, false
+	}
+	return ts, true
+}
+
+// sessionKeys assigns each result a grouping key of "<session>|<filter>".
+//
+// Sessions are found by clustering on time: sort every frame by its acquisition
+// stamp and start a new session whenever the gap exceeds sessionGap. That works
+// for a target tree walked recursively and for a flat directory of prepared
+// frames, where there is no session directory to read and the filename date is
+// the thing that is unreliable.
+//
+// Filter is part of the key because the cloud index is built from SNR and sky
+// background, and those differ between filters and exposures. A B frame and an
+// L frame from the same night would otherwise share one baseline and pollute
+// each other.
+//
+// Frames whose name carries no stamp cannot be placed in time; they are grouped
+// together by filter and, having no session, cannot supply a meaningful
+// baseline -- which the caller handles.
+func sessionKeys(results []ImageResult) []string {
+	type stamped struct {
+		idx int
+		ts  time.Time
+	}
+	keys := make([]string, len(results))
+	var items []stamped
+	for i, r := range results {
+		if ts, ok := frameTimestamp(r.Filename); ok {
+			items = append(items, stamped{i, ts})
+			continue
+		}
+		keys[i] = "unknown|" + r.Filter
+	}
+
+	sort.Slice(items, func(a, b int) bool { return items[a].ts.Before(items[b].ts) })
+	cluster := 0
+	for n, it := range items {
+		if n > 0 && it.ts.Sub(items[n-1].ts) > sessionGap {
+			cluster++
+		}
+		keys[it.idx] = fmt.Sprintf("%d|%s", cluster, results[it.idx].Filter)
+	}
+	return keys
+}
+
+// applyCloudRule sets the cloud numbers on one session's results and replaces
+// the decision on frames the rule considers clouded.
+//
+// Only APPROVED frames are changed. A frame already rejected for eccentricity
+// keeps the more specific reason; overwriting it would lose the diagnosis the
+// report exists to provide.
+//
+// Both references need a baseline, and a baseline needs frames. With fewer than
+// four measured frames neither percentile is meaningful, so neither test runs
+// and the session is left alone.
+func applyCloudRule(results []*ImageResult, q qualityThresholds) {
+	var indices, structures []float64
+	for _, r := range results {
+		c := cloudIndexFor(*r)
+		r.CloudIndex = c
+		r.CloudRatio = 0
+		r.StructRatio = 0
+		if c > 0 {
+			indices = append(indices, c)
+		}
+		if r.BgStructure > 0 {
+			structures = append(structures, r.BgStructure)
+		}
+	}
+
+	// Both references are the 25th percentile of the session, for the same
+	// reason: the median would sit inside an event that affects several frames.
+	var cloudRef, structRef float64
+	if len(indices) >= 4 {
+		sort.Float64s(indices)
+		cloudRef = percentileSorted(indices, 0.25)
+	}
+	if len(structures) >= 4 {
+		sort.Float64s(structures)
+		structRef = percentileSorted(structures, 0.25)
+	}
+
+	for _, r := range results {
+		if cloudRef > 0 {
+			r.CloudRatio = r.CloudIndex / cloudRef
+		}
+		if structRef > 0 {
+			r.StructRatio = r.BgStructure / structRef
+		}
+		clouded := false
+		// Structure is compared with its session, not with a constant. A night
+		// with more large-scale structure throughout -- moon, haze, light
+		// pollution -- would otherwise reject every frame in it, which is the
+		// opposite of detecting cloud within a night.
+		if q.maxStructure > 0 && r.StructRatio > q.maxStructure {
+			clouded = true
+		}
+		if q.maxCloud > 0 && r.CloudRatio > q.maxCloud {
+			clouded = true
+		}
+		if clouded && r.Decision == decisionApproved {
+			r.Decision = decisionClouds
+		}
+	}
+}
+
+// percentileSorted returns the p-quantile of an already sorted slice, with
+// linear interpolation between neighbours.
+func percentileSorted(sorted []float64, p float64) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	k := p * float64(len(sorted)-1)
+	lo := int(k)
+	hi := lo + 1
+	if hi >= len(sorted) {
+		return sorted[len(sorted)-1]
+	}
+	return sorted[lo] + (k-float64(lo))*(sorted[hi]-sorted[lo])
 }

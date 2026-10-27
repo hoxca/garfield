@@ -1008,10 +1008,10 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;cloudIndex;cloudRatio;structRatio
 ```
 
-`decision` holds one of six values, which are **data, not messages** — anything
+`decision` holds one of **seven** values, which are **data, not messages** — anything
 parsing this file must match on them, and the strings are part of the contract:
 
 | Value | Meaning |
@@ -1022,10 +1022,89 @@ parsing this file must match on them, and the strings are part of the contract:
 | `REJECTED FWHM` | failed `--max-fwhm` |
 | `REJECTED SNR` | failed `--min-snr` |
 | `REJECTED SCORING` | failed `--min-score` |
+| `REJECTED CLOUDS` | clouded relative to its own session (§10.1.1) |
 
 Both reports record the **bare** session name, never a path, so consumers join
 on the session column. Metric columns come from the same `imageResultRow` used
 by `analyze`, so the two commands' CSVs cannot disagree.
+
+The three columns after `error` are measurement, appended so the position of
+every existing column is unchanged:
+
+| Column | Meaning |
+|---|---|
+| `background` | median sky level in **physical ADU**. `readfits` applies `BSCALE`/`BZERO`, so a file storing unsigned 16-bit data with `BZERO=32768` reports its true sky, not the stored integer. |
+| `noise` | per-pixel noise sigma from the background/noise estimator |
+| `bgStructure` | MAD of 64×64 block medians divided by `noise`: sky variation at scales far larger than a star, dimensionless |
+
+`background`, `noise` and `bgStructure` are measurements. `cloudIndex` and
+`cloudRatio` are what the cloud rule acts on, and are described in §10.1.1.
+
+### 10.1.1 The cloud rule
+
+Cloud is the one decision that cannot be made from a frame alone: the same sky
+brightness means different things on a moonlit night and a dark one. So a frame
+is compared against its own session.
+
+```
+cloudIndex  = (1 / snr) / sqrt(background)
+cloudRatio  = cloudIndex  / p25(session cloudIndex)
+structRatio = bgStructure / p25(session bgStructure)
+clouded     = cloudRatio > --max-cloud  ||  structRatio > --max-structure
+```
+
+**Sessions are found by clustering on acquisition time**, not by directory or by
+the date in the filename. Frames are sorted by the `_YYYYMMDD_HHMMSS_` stamp and a
+gap of more than two hours starts a new session. This matters because:
+
+- a night routinely crosses midnight, so the filename date changes part-way
+  through one session;
+- one date string can appear in two different sessions (the tail of one night and
+  the start of the next), and grouping by date merges them;
+- a flat directory of prepared frames has no session directories to read at all.
+
+`analyze` and `prepare` then group by **(session, filter)**. Filter is part of the
+key because the index is built from SNR and sky background, which differ between
+filters and exposures; a B frame and an L frame from the same night cannot share a
+baseline. `prepare` uses its known session number instead of clustering.
+
+**Why divide by `sqrt(background)`.** A naive "SNR dropped, so it was cloudy"
+also fires on moonlight, which raises the sky and lowers SNR while leaving the
+stars intact. Dividing out the part explained by a brighter sky leaves noise that
+came from scattering instead, which is what cloud does.
+
+**Why two signals.** The ratio catches cloud that dims stars. `bgStructure` —
+the MAD of 64×64 block medians in units of noise — catches patchy cirrus that
+leaves the ratio untouched but varies the sky across the field. On the reference
+night each signal caught frames the other missed.
+
+**Why structure is relative too.** An absolute structure threshold depends on the
+instrument and the sky: one night measured 0.47–0.60 across all its frames and
+another 0.61–0.67, with no cloud in either. A constant cut rejected the whole of
+the second night. Dividing by the session's own 25th percentile leaves a night
+with a uniformly more structured sky alone and flags only frames that stand out
+within their night.
+
+**Why the 25th percentile.** The median would sit inside the cloud once several
+frames are affected, dragging the baseline up and masking the event. The 25th
+percentile stays on the clear frames as long as at least a quarter of the session
+is clear.
+
+A session with fewer than four measured frames has no meaningful percentile, so
+neither test runs and the session is left alone.
+
+Only `APPROVED` frames are changed. A frame already rejected for eccentricity or
+FWHM keeps that reason, so the report retains the more specific diagnosis.
+
+Both thresholds default to the values calibrated on the reference night
+(`1.08` and `1.12`) and both are configurable under `thresholds.max-cloud` and
+`thresholds.max-structure`; setting either to `0` disables that half. They are
+provisional: calibrated on one night's five clouded frames, with the margins
+noted in that comparison. Expect to retune after another cloudy target.
+
+`analyze` infers the session from acquisition time, which is exact except when a
+night contains a pause longer than two hours: that is treated as two sessions, so
+each half gets its own baseline. `prepare` uses the real session directory.
 
 ---
 

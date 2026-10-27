@@ -889,6 +889,22 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 		fmt.Println()
 	}
 
+	// Cloud is a per-session decision, and assessSessions is the one place that
+	// holds every session's measurements at once. Runs before verdicts are
+	// copied, so the routed counts and reject reasons already reflect it.
+	if aopts.maxCloud > 0 || aopts.maxStructure > 0 {
+		// Session and filter, matching analyze. A session's filters do not share
+		// a sky background or an exposure, so they cannot share a baseline.
+		groups := map[string][]*ImageResult{}
+		for i, j := range jobs {
+			k := fmt.Sprintf("%d|%s", j.session, j.filter)
+			groups[k] = append(groups[k], &results[i])
+		}
+		for _, g := range groups {
+			applyCloudRule(g, aopts.qualityThresholds)
+		}
+	}
+
 	for i, j := range jobs {
 		s := &sessions[j.session]
 		s.verdicts[j.name] = results[i]
@@ -1947,7 +1963,8 @@ var framesCSVHeader = []string{
 	"session", "sessionDate", "pa", "filter",
 	"filename", "detectedStars", "starCount",
 	"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
-	"decision", "error",
+	"decision", "error", "background", "noise", "bgStructure",
+	"cloudIndex", "cloudRatio", "structRatio",
 }
 
 // writeFramesCSV records the per-frame quality metrics that decided the split

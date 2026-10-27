@@ -1050,7 +1050,8 @@ func TestWriteFramesCSV(t *testing.T) {
 		"session", "sessionDate", "pa", "filter",
 		"filename", "detectedStars", "starCount",
 		"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
-		"decision", "error",
+		"decision", "error", "background", "noise", "bgStructure",
+		"cloudIndex", "cloudRatio", "structRatio",
 	}
 	if len(recs[0]) != len(wantHeader) {
 		t.Fatalf("header has %d columns, want %d: %v", len(recs[0]), len(wantHeader), recs[0])
@@ -1267,10 +1268,20 @@ func TestImageResultRowSharedByBothCommands(t *testing.T) {
 		}
 	}
 
-	// The error column is populated when there is one.
+	// The error column is populated when there is one. Looked up by name rather
+	// than assumed to be last: columns are appended after it now.
 	errRow := imageResultRow(ImageResult{Filename: "b.FIT", Error: errFake{}})
-	if errRow[len(errRow)-1] != "fake failure" {
-		t.Errorf("error column = %q, want %q", errRow[len(errRow)-1], "fake failure")
+	errCol := -1
+	for i, h := range imageResultHeader {
+		if h == "error" {
+			errCol = i
+		}
+	}
+	if errCol < 0 {
+		t.Fatal("no error column in imageResultHeader")
+	}
+	if errRow[errCol] != "fake failure" {
+		t.Errorf("error column = %q, want %q", errRow[errCol], "fake failure")
 	}
 }
 

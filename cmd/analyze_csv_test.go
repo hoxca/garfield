@@ -179,7 +179,8 @@ func TestWriteResultsCSVHeader(t *testing.T) {
 	want := []string{
 		"filename", "filter", "date", "detectedStars", "starCount",
 		"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
-		"decision", "error",
+		"decision", "error", "background", "noise", "bgStructure",
+		"cloudIndex", "cloudRatio", "structRatio",
 	}
 
 	var sb strings.Builder
@@ -316,8 +317,11 @@ func TestCSVSeparator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("output does not parse with the matching reader: %v", err)
 	}
-	if len(recs) != 2 || len(recs[0]) != 12 {
-		t.Errorf("got %d records, first with %d fields; want 2 records of 12", len(recs), len(recs[0]))
+	// The field count is the header's own length, so appending a column cannot
+	// leave this assertion behind.
+	if len(recs) != 2 || len(recs[0]) != len(imageResultHeader) {
+		t.Errorf("got %d records, first with %d fields; want 2 records of %d",
+			len(recs), len(recs[0]), len(imageResultHeader))
 	}
 }
 

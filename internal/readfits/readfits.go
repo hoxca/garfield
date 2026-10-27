@@ -27,6 +27,24 @@ func ReadFITSImage(filename string) ([][]float64, error) {
 		return nil, fmt.Errorf("primary HDU is not an image layer")
 	}
 
+	// BSCALE/BZERO place the stored integers on the physical scale. The common
+	// case is BITPIX=16 with BZERO=32768, the standard way to store unsigned
+	// 16-bit data; without this, physical ADU read back offset by 32768 and
+	// negative. All the pipeline's existing consumers are relative and are
+	// unaffected either way, but an absolute metric -- a sky level, a saturation
+	// check -- needs the decoded values to mean something.
+	bscale, bzero := 1.0, 0.0
+	if card := hdu.Header().Get("BSCALE"); card != nil {
+		if v, ok := numericCard(card.Value); ok {
+			bscale = v
+		}
+	}
+	if card := hdu.Header().Get("BZERO"); card != nil {
+		if v, ok := numericCard(card.Value); ok {
+			bzero = v
+		}
+	}
+
 	axes := hdu.Header().Axes()
 	if len(axes) < 2 {
 		return nil, fmt.Errorf("expected at least a 2D image matrix, got dimensions: %d", len(axes))
@@ -87,9 +105,30 @@ func ReadFITSImage(filename string) ([][]float64, error) {
 	for i := range matrix {
 		matrix[i] = make([]float64, width)
 		for j := 0; j < width; j++ {
-			matrix[i][j] = rawData[i*width+j]
+			matrix[i][j] = bzero + bscale*rawData[i*width+j]
 		}
 	}
 
 	return matrix, nil
+}
+
+// numericCard converts the integer and floating-point types a FITS header card
+// can hold to float64. Anything else leaves the default in place rather than
+// guessing.
+func numericCard(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	}
+	return 0, false
 }

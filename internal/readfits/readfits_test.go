@@ -354,27 +354,8 @@ func TestReadFITSImageFloat64Exact(t *testing.T) {
 	}
 }
 
-// TestReadFITSImageIgnoresBScaleBZero records that the BSCALE/BZERO rescaling
-// keywords are NOT applied.
-//
-// fitsio performs the rescaling in its Image() path, not in Read(), and
-// ReadFITSImage goes through Read(). A file declaring BSCALE=2, BZERO=100
-// therefore reads back as its raw stored integers.
-//
-// This matters for the real frames in images/, which all carry
-// BITPIX=16 with BSCALE=1 and BZERO=32768 -- the standard convention for
-// storing unsigned 16-bit data in a signed BITPIX. The master flat reads back
-// with min=-32295 and mean=-16582, i.e. offset by 32768 from physical ADU.
-// The pipeline appears to tolerate the offset because every consumer is
-// relative (background subtraction, noise thresholds, flux differences), which
-// is consistent with the measured agreement against the reference tool. It
-// would still be wrong for any consumer that treats a pixel as an absolute
-// ADU, such as a saturation check.
-//
-// If this test ever starts failing because the rescaling was added, that is an
-// improvement: the decoded values would then be physically correct, and the
-// absolute-value consumers would become trustworthy.
-func TestReadFITSImageIgnoresBScaleBZero(t *testing.T) {
+// TestReadFITSImageAppliesBScaleBZero pins the BSCALE/BZERO rescaling.
+func TestReadFITSImageAppliesBScaleBZero(t *testing.T) {
 	dir := t.TempDir()
 
 	data := ramp16(6)
@@ -407,12 +388,32 @@ func TestReadFITSImageIgnoresBScaleBZero(t *testing.T) {
 		t.Fatalf("ReadFITSImage: %v", err)
 	}
 
-	// Raw stored integers, not 100/102/104/106/108/110.
-	want := []float64{0, 1, 2, 3, 4, 5}
+	// physical = BZERO + BSCALE*stored = 100 + 2*stored.
+	want := []float64{100, 102, 104, 106, 108, 110}
 	for y := range m {
 		for x := range m[y] {
 			if w := want[y*3+x]; m[y][x] != w {
-				t.Errorf("m[%d][%d] = %v, want %v (BSCALE/BZERO are not applied)", y, x, m[y][x], w)
+				t.Errorf("m[%d][%d] = %v, want %v", y, x, m[y][x], w)
+			}
+		}
+	}
+}
+
+// TestReadFITSImageDefaultsWithoutRescaling checks a file that declares neither
+// keyword is unchanged: stored values are returned as they are.
+func TestReadFITSImageDefaultsWithoutRescaling(t *testing.T) {
+	dir := t.TempDir()
+	data := ramp16(6)
+	path := writeFITS(t, dir, "plain.fits", 16, []int{3, 2}, &data)
+
+	m, err := ReadFITSImage(path)
+	if err != nil {
+		t.Fatalf("ReadFITSImage: %v", err)
+	}
+	for y := range m {
+		for x := range m[y] {
+			if w := float64(y*3 + x); m[y][x] != w {
+				t.Errorf("m[%d][%d] = %v, want %v", y, x, m[y][x], w)
 			}
 		}
 	}

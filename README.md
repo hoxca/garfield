@@ -71,7 +71,9 @@ thresholds:
   max-ecc: 0.54
   min-score: 2.0
   min-stars: 680
-  moffat: false     # true = Moffat PSF fit (slower, FWHM matches PixInsight)
+  max-cloud: 1.08      # session-relative cloud index; 0 disables
+  max-structure: 1.12  # session-relative sky structure; 0 disables
+  moffat: false        # true = Moffat PSF fit (slower, FWHM matches PixInsight)
 
 concurrency:
   workers: 0        # 0 = NumCPU/2
@@ -162,11 +164,13 @@ Flags:
       --format string              output format: console, csv or both (default "console")
   -h, --help                       help for analyze
       --limit-computed-stars int   limit the number of bright stars measured (default 500)
-      --max-ecc float              maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.5)
-      --max-fwhm float             maximum FWHM for APPROVED [config: garfield.yaml] (default 5)
+      --max-cloud float            reject a frame whose session-relative cloud index exceeds this; 0 disables [config: garfield.yaml] (default 1.08)
+      --max-ecc float              maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
+      --max-fwhm float             maximum FWHM for APPROVED [config: garfield.yaml] (default 3.8)
+      --max-structure float        reject a frame whose sky structure exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 1.12)
       --min-score float            minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float              minimum SNR for APPROVED [config: garfield.yaml] (default 11)
-      --min-stars int              minimum number of detected stars for APPROVED [config: garfield.yaml] (default 680)
+      --min-stars int              minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
       --moffat                     fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
   -o, --output string              output CSV file (required for csv/both to a file)
       --quiet                      suppress console output
@@ -207,12 +211,46 @@ Done: 2 file(s) processed.
 CSV, `;`-separated to match the reference PixInsight tool's export format:
 
 ```
-filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error
+filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure
 ```
 
-`decision` is one of six values, which are **data, not messages** —
+`decision` holds one of **seven** values, which are **data, not messages** —
 `APPROVED`, `REJECTED NO STARS`, `REJECTED ECCENTRICITY`, `REJECTED FWHM`,
-`REJECTED SNR`, `REJECTED SCORING`. Match on them exactly.
+`REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`. Match on them exactly.
+
+The last three columns are measurement, not decision:
+
+| Column | Meaning |
+|---|---|
+| `background` | median sky level in physical ADU. `readfits` applies `BSCALE`/`BZERO`, so this is the true sky, not the offset integer the file stores. |
+| `noise` | per-pixel noise sigma from the background/noise estimator |
+| `bgStructure` | MAD of 64×64 block medians, in units of `noise`: how much the sky varies across the frame at scales far larger than a star |
+
+The last two columns are the cloud decision:
+
+| Column | Meaning |
+|---|---|
+| `cloudIndex` | `(1/snr) / sqrt(background)` — noise in excess of what the raised sky alone explains |
+| `cloudRatio` | that value relative to the 25th percentile of its session |
+| `structRatio` | `bgStructure` relative to the 25th percentile of its session |
+
+Both ratios are 0 when the session has fewer than four frames.
+
+A frame is `REJECTED CLOUDS` when `cloudRatio > --max-cloud` **or**
+`structRatio > --max-structure`. The two split the work: the ratio catches cloud
+that dims stars, structure catches patchy cirrus that leaves the ratio alone but
+varies the sky across the field. Neither alone found every clouded frame on the
+reference night. Set either threshold to `0` to disable that half.
+
+**Both are relative to the frame's own session and filter.** A night can have a
+uniformly more structured sky than another — moon, haze, light pollution — with
+no cloud in it, and an absolute structure threshold rejects every frame of such a
+night. Sessions are found by clustering frames on their acquisition time (a gap
+of more than two hours starts a new one), so a night that crosses midnight stays
+one session, and one attached to a flat directory of prepared frames works too.
+
+A frame already rejected for eccentricity or FWHM keeps that reason — the cloud
+rule only overrides `APPROVED`.
 
 ### Known limitation
 
@@ -258,23 +296,25 @@ Usage:
   garfield prepare [flags]
 
 Flags:
-      --camera string      camera the filenames come from: c3 (rotator and gain) or g4 (fixed angle, no gain) [config: garfield.yaml] (default "c3")
-      --conv-workers int   inner convolution workers (0 = auto) [config: garfield.yaml]
-      --dry-run            show the plan without copying
-      --flat-count int     flats to collect per filter and angle; 0 = the session's own date only [config: garfield.yaml]
-  -h, --help               help for prepare
-  -i, --input string       root of the acquisition data [config: garfield.yaml] (default "/Volumes/Kosmodrom_2022/Kosmodrom")
-      --max-ecc float      maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.5)
-      --max-fwhm float     maximum FWHM for APPROVED [config: garfield.yaml] (default 5)
-      --min-score float    minimum score for APPROVED [config: garfield.yaml] (default 2)
-      --min-snr float      minimum SNR for APPROVED [config: garfield.yaml] (default 11)
-      --min-stars int      minimum number of detected stars for APPROVED [config: garfield.yaml] (default 680)
-      --moffat             fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
-  -o, --output string      destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
-      --quiet              suppress console output
-      --skip-existing      do not overwrite existing files
-  -t, --target string      astronomical target (directory under Lights/)
-  -w, --workers int        processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
+      --camera string         camera the filenames come from: c3 (rotator and gain) or g4 (fixed angle, no gain) [config: garfield.yaml] (default "c3")
+      --conv-workers int      inner convolution workers (0 = auto) [config: garfield.yaml]
+      --dry-run               show the plan without copying
+      --flat-count int        flats to collect per filter and angle; 0 = the session's own date only [config: garfield.yaml]
+  -h, --help                  help for prepare
+  -i, --input string          root of the acquisition data [config: garfield.yaml] (default "/Volumes/Kosmodrom_2022/Kosmodrom")
+      --max-cloud float       reject a frame whose session-relative cloud index exceeds this; 0 disables [config: garfield.yaml] (default 1.08)
+      --max-ecc float         maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
+      --max-fwhm float        maximum FWHM for APPROVED [config: garfield.yaml] (default 3.8)
+      --max-structure float   reject a frame whose sky structure exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 1.12)
+      --min-score float       minimum score for APPROVED [config: garfield.yaml] (default 2)
+      --min-snr float         minimum SNR for APPROVED [config: garfield.yaml] (default 11)
+      --min-stars int         minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
+      --moffat                fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
+  -o, --output string         destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
+      --quiet                 suppress console output
+      --skip-existing         do not overwrite existing files
+  -t, --target string         astronomical target (directory under Lights/)
+  -w, --workers int           processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
 
 Global Flags:
       --config string   YAML configuration file (default: conf/garfield.yaml if it exists)
