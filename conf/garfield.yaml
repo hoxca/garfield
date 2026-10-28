@@ -26,12 +26,14 @@ thresholds:
   # comparable: scores rise when FWHM reads smaller.
   moffat: false
 
-  # Session-relative rejection: cloud and bad seeing.
+  # Outlier rejection: FWHM, cloud and bad seeing.
   #
+  # REJECTED FWHM when a frame's FWHM lies more than max-fwhm-sigma robust
+  # sigmas above the median of every frame of that filter in the run.
   # REJECTED CLOUDS when haloRatio exceeds max-halo-ratio; REJECTED BAD SEEING
-  # when structureRatio exceeds max-structure. Both compare a frame with the
-  # rest of its session and filter, so a night that is uniformly brighter or
-  # more structured does not reject itself.
+  # when structureRatio exceeds max-structure. The halo and structure rules
+  # compare a frame with the rest of its session and filter, so a night that is
+  # uniformly brighter or more structured does not reject itself.
   #
   # haloRatio is the wing brightness of the brightest stars relative to its
   # session's 25th percentile. Thin cloud scatters starlight into a wide
@@ -42,9 +44,16 @@ thresholds:
   # structureRatio is the sky's block-to-block variation relative to its
   # session's 25th percentile, used as a bad-seeing signal.
   #
-  # 0 disables either half. max-halo-ratio was calibrated on one target's
-  # clouded frames: 2.0 rejected all three obvious clouds and nothing else in
-  # 71 frames. Expect to retune it on your own data.
+  # FWHM uses median + max-fwhm-sigma * 1.4826 * MAD over the filter's whole
+  # population, upper tail only; a frame sharper than the median is never
+  # rejected. The gate needs at least 8 frames of that filter, and is skipped
+  # when the MAD is zero. Because the population is the run, analyzing one
+  # night and analyzing the whole target can produce different bounds.
+  #
+  # 0 disables a rule. max-halo-ratio was calibrated on one target's clouded
+  # frames: 2.0 rejected all three obvious clouds and nothing else in 71
+  # frames. Expect to retune it on your own data.
+  max-fwhm-sigma: 3.0
   max-halo-ratio: 2.0
   max-structure: 1.12
 

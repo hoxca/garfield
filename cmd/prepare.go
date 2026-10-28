@@ -618,9 +618,10 @@ func runPrepare(opts prepareOptions) error {
 		fmt.Printf("\n%s of %q (%d session(s)) into %q%s\n\n",
 			prepareVerb(opts.dryRun), opts.target, len(sessions), targetOut, dryRunSuffix(opts.dryRun))
 		if !opts.dryRun {
-			fmt.Printf("Analysing the quality of %d image(s) (max-halo=%s, max-structure=%s), this can take several minutes...\n\n",
+			fmt.Printf("Analysing the quality of %d image(s) (max-fwhm-sigma=%s, max-halo=%s, max-structure=%s), this can take several minutes...\n\n",
 				totalLightCount(sessions),
-				formatThreshold(opts.maxHaloRatio), formatThreshold(opts.maxStructure))
+				formatThreshold(opts.maxFWHMSigma), formatThreshold(opts.maxHaloRatio),
+				formatThreshold(opts.maxStructure))
 		}
 	}
 
@@ -889,6 +890,11 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 	if !opts.quiet && !opts.dryRun {
 		fmt.Println()
 	}
+
+	// The FWHM gate is per filter over every assessed frame of the target, so
+	// it runs here, where the whole set is in hand. It comes first: a soft
+	// frame should be reported as soft rather than clouded.
+	applyFWHMRuleByFilter(results, aopts.qualityThresholds)
 
 	// Cloud is a per-session decision, and assessSessions is the one place that
 	// holds every session's measurements at once. Runs before verdicts are
@@ -1965,7 +1971,7 @@ var framesCSVHeader = []string{
 	"filename", "detectedStars", "starCount",
 	"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
 	"decision", "error", "background", "noise", "bgStructure",
-	"halo", "haloRatio", "structRatio",
+	"halo", "haloRatio", "structRatio", "fwhmRatio",
 }
 
 // writeFramesCSV records the per-frame quality metrics that decided the split

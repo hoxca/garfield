@@ -107,6 +107,11 @@ type ImageResult struct {
 	Background  float64
 	Noise       float64
 	BgStructure float64
+	// FWHMRatio is the frame's FWHM relative to the median of every frame of
+	// the same filter in the run. The FWHM gate compares the value itself
+	// against a robust sigma bound of that population; the ratio is reported so
+	// a rejection can be read against the reference directly.
+	FWHMRatio float64
 	// Halo is the median wing brightness of the brightest stars, in ADU above
 	// the local sky, and HaloRatio is that value relative to the 25th
 	// percentile of its session. HaloRatio is what the cloud rule compares:
@@ -359,7 +364,7 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // prepare's frames.csv.
 // background, noise and bgStructure are appended at the end so the position of
 // every pre-existing column is unchanged for anything already reading this file.
-var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio"}
+var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -388,6 +393,7 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.Halo, 'f', 2, 64),
 		strconv.FormatFloat(r.HaloRatio, 'f', 4, 64),
 		strconv.FormatFloat(r.StructRatio, 'f', 4, 64),
+		strconv.FormatFloat(r.FWHMRatio, 'f', 4, 64),
 	}
 }
 
@@ -626,9 +632,10 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		reportPath = filepath.Join(opts.output, analyseReportName)
 	}
 	if !opts.quiet && showConsole {
-		fmt.Printf("\nProcessing %d FITS file(s) in %q (%d workers, conv=%d, max-halo=%s, max-structure=%s)...\n\n",
+		fmt.Printf("\nProcessing %d FITS file(s) in %q (%d workers, conv=%d, max-fwhm-sigma=%s, max-halo=%s, max-structure=%s)...\n\n",
 			len(fitsFiles), dir, outerWorkers, convWorkers,
-			formatThreshold(opts.maxHaloRatio), formatThreshold(opts.maxStructure))
+			formatThreshold(opts.maxFWHMSigma), formatThreshold(opts.maxHaloRatio),
+			formatThreshold(opts.maxStructure))
 	}
 
 	results := make([]ImageResult, len(fitsFiles))
@@ -672,6 +679,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 
 	// Cloud is a session-level decision: it compares a frame against its own
 	// night, so it can only run once every frame has been measured.
+	applyFWHMRuleByFilter(results, opts.qualityThresholds)
 	applySessionRulesBySession(results, opts.qualityThresholds)
 
 	if !opts.quiet && showConsole {
@@ -691,6 +699,9 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 			// when the session has too few frames to supply a baseline, and a
 			// console "cloud=0.000" would then read as "perfectly clear"
 			// instead of "no baseline, not tested".
+			if r.FWHMRatio > 0 {
+				line += fmt.Sprintf(", fwhm=%.2f", r.FWHMRatio)
+			}
 			if r.HaloRatio > 0 {
 				line += fmt.Sprintf(", halo=%.2f", r.HaloRatio)
 			}
@@ -823,6 +834,73 @@ func medianOf(v []float64) float64 {
 	s := append([]float64(nil), v...)
 	sort.Float64s(s)
 	return s[len(s)/2]
+}
+
+// fwhmMinSample is the smallest filter population a robust sigma bound can be
+// computed from. Below this the MAD is too unstable to place a 3-sigma line on,
+// and the FWHM gate is skipped rather than guessing.
+const fwhmMinSample = 8
+
+// applyFWHMRuleByFilter rejects frames whose FWHM is an upper outlier for their
+// filter, across the whole run.
+//
+// Filter, not session: the population is every measured frame of that filter
+// passed to the command, so the bound is stable even when a night has only a
+// handful of frames. The frame-to-frame reference is the median and the scale
+// is 1.4826*MAD, so a soft frame cannot move the bound it is measured against.
+// Only the upper tail is rejected; a frame sharper than its filter's median is
+// better than average, not faulty.
+//
+// FWHMRatio is set for every measured frame whenever the median is usable, but
+// the gate only runs when the filter has fwhmMinSample frames and a non-zero
+// scale. A degenerate MAD would put the bound exactly on the median and reject
+// half the filter, so that case is skipped too.
+func applyFWHMRuleByFilter(results []ImageResult, q qualityThresholds) {
+	byFilter := map[string][]*ImageResult{}
+	var order []string
+	for i := range results {
+		r := &results[i]
+		r.FWHMRatio = 0
+		if r.AvgFWHM <= 0 {
+			continue
+		}
+		if _, seen := byFilter[r.Filter]; !seen {
+			order = append(order, r.Filter)
+		}
+		byFilter[r.Filter] = append(byFilter[r.Filter], r)
+	}
+
+	for _, f := range order {
+		group := byFilter[f]
+		values := make([]float64, len(group))
+		for i, r := range group {
+			values[i] = r.AvgFWHM
+		}
+		median := medianOf(values)
+
+		if q.maxFWHMSigma > 0 && len(group) >= fwhmMinSample {
+			dev := make([]float64, len(values))
+			for i, v := range values {
+				dev[i] = math.Abs(v - median)
+			}
+			sigma := 1.4826 * medianOf(dev)
+			if sigma > 0 {
+				upper := median + q.maxFWHMSigma*sigma
+				for _, r := range group {
+					if r.Decision == decisionApproved && r.AvgFWHM > upper {
+						r.Decision = decisionFWHM
+					}
+				}
+			}
+		}
+
+		if median <= 0 {
+			continue
+		}
+		for _, r := range group {
+			r.FWHMRatio = r.AvgFWHM / median
+		}
+	}
 }
 
 // applySessionRulesBySession groups results by acquisition session and filter,

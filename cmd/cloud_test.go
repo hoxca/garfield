@@ -172,7 +172,7 @@ func TestPercentileSorted(t *testing.T) {
 
 func TestCloudThresholdsAreConfigKeys(t *testing.T) {
 	keys := knownConfigKeys()
-	for _, k := range []string{"thresholds.max-halo-ratio", "thresholds.max-structure"} {
+	for _, k := range []string{"thresholds.max-fwhm-sigma", "thresholds.max-halo-ratio", "thresholds.max-structure"} {
 		if !keys[k] {
 			t.Errorf("%s is not a known config key", k)
 		}

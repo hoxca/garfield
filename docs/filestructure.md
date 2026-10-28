@@ -1008,7 +1008,7 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio
 ```
 
 `decision` holds one of **eight** values, which are **data, not messages** —
@@ -1039,24 +1039,38 @@ every existing column is unchanged:
 | `noise` | per-pixel noise sigma from the background/noise estimator |
 | `bgStructure` | MAD of 64×64 block medians divided by `noise`: sky variation at scales far larger than a star, dimensionless |
 
-`background`, `noise` and `bgStructure` are measurements. `halo`, `haloRatio`
-and `structRatio` are what the session rules act on, and are described in
-§10.1.1.
+`background`, `noise` and `bgStructure` are measurements. `halo`, `haloRatio`,
+`structRatio` and `fwhmRatio` are what the outlier rules act on, and are
+described in §10.1.1.
 
-### 10.1.1 The cloud and bad-seeing rules
+### 10.1.1 The FWHM, cloud and bad-seeing rules
 
 Cloud is the one decision that cannot be made from a frame alone: the same sky
 brightness means different things on a moonlit night and a dark one. So a frame
 is compared against its own session.
 
 ```
-halo        = median over the 10 brightest stars of
-              (median(r 40-120 px) - median(r 250-350 px))
-haloRatio   = halo        / p25(session halo)
-structRatio = bgStructure / p25(session bgStructure)
-clouded     = haloRatio   > --max-halo-ratio
-badSeeing   = structRatio > --max-structure
+filterMedian = median(avgFWHM of every frame of that filter in the run)
+filterSigma  = 1.4826 * median(|avgFWHM - filterMedian|)
+soft         = avgFWHM > filterMedian + --max-fwhm-sigma * filterSigma
+
+halo         = median over the 10 brightest stars of
+               (median(r 40-120 px) - median(r 250-350 px))
+haloRatio    = halo        / p25(session halo)
+structRatio  = bgStructure / p25(session bgStructure)
+clouded      = haloRatio   > --max-halo-ratio
+badSeeing    = structRatio > --max-structure
 ```
+
+**Why FWHM is compared by filter across the run.** Seeing varies from night to
+night, so an absolute `--max-fwhm` either lets a bad night through or discards a
+good one. A robust sigma bound over the filter's whole population is stable even
+when a night has few frames, and MAD keeps a soft frame from moving the bound it
+is measured against. Only the upper tail is rejected; a frame sharper than the
+median is better than average. The gate needs at least eight frames of the
+filter and skips a zero MAD, which would otherwise place the bound exactly on
+the median. FWHM is tested before the session rules, so a soft frame is reported
+as FWHM rather than clouds.
 
 `halo` is the wing brightness of the brightest stars in ADU above the sky. The
 250–350 px ring is a local pedestal, so nebulosity and a brighter sky are
@@ -1118,12 +1132,12 @@ stars bright enough for a halo gets no `haloRatio` and is not cloud-tested.
 Only `APPROVED` frames are changed. A frame already rejected for eccentricity or
 FWHM keeps that reason, so the report retains the more specific diagnosis.
 
-The defaults are `2.0` and `1.12`, configurable under
-`thresholds.max-halo-ratio` and `thresholds.max-structure`; setting either to
-`0` disables that half. The halo threshold was calibrated on one target's
-frames: 2.0 rejected the three obvious clouded frames and nothing else in 71,
-with the next-highest frame at 1.44. It remains provisional — expect to retune
-after another cloudy target.
+The defaults are `3.0`, `2.0` and `1.12`, configurable under
+`thresholds.max-fwhm-sigma`, `thresholds.max-halo-ratio` and
+`thresholds.max-structure`; setting any to `0` disables that rule. The halo
+threshold was calibrated on one target's frames: 2.0 rejected the three obvious
+clouded frames and nothing else in 71, with the next-highest frame at 1.44. It
+remains provisional — expect to retune after another cloudy target.
 
 `analyze` infers the session from acquisition time, which is exact except when a
 night contains a pause longer than two hours: that is treated as two sessions, so

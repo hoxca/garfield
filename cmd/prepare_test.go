@@ -371,6 +371,7 @@ func TestPrepareConsoleShowsCloudThresholds(t *testing.T) {
 	})
 
 	for _, want := range []string{
+		"max-fwhm-sigma=" + formatThreshold(defaultThresholds.maxFWHMSigma),
 		"max-halo=" + formatThreshold(defaultThresholds.maxHaloRatio),
 		"max-structure=" + formatThreshold(defaultThresholds.maxStructure),
 	} {
@@ -1079,7 +1080,7 @@ func TestWriteFramesCSV(t *testing.T) {
 		"filename", "detectedStars", "starCount",
 		"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
 		"decision", "error", "background", "noise", "bgStructure",
-		"halo", "haloRatio", "structRatio",
+		"halo", "haloRatio", "structRatio", "fwhmRatio",
 	}
 	if len(recs[0]) != len(wantHeader) {
 		t.Fatalf("header has %d columns, want %d: %v", len(recs[0]), len(wantHeader), recs[0])

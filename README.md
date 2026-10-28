@@ -71,6 +71,7 @@ thresholds:
   max-ecc: 0.54
   min-score: 2.0
   min-stars: 680
+  max-fwhm-sigma: 3.0  # FWHM outliers above the filter's median; 0 disables
   max-halo-ratio: 2.0  # session-relative bright-star halo; 0 disables
   max-structure: 1.12  # session-relative sky structure (bad seeing); 0 disables
   moffat: false        # true = Moffat PSF fit (slower, FWHM matches PixInsight)
@@ -167,6 +168,7 @@ Flags:
       --limit-computed-stars int   limit the number of bright stars measured (default 500)
       --max-ecc float              maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
       --max-fwhm float             maximum FWHM for APPROVED [config: garfield.yaml] (default 3.2)
+      --max-fwhm-sigma float       reject a frame whose FWHM is more than this many robust sigmas above its filter's median; 0 disables [config: garfield.yaml] (default 3)
       --max-halo-ratio float       reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 2)
       --max-structure float        reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables [config: garfield.yaml] (default 1.12)
       --min-score float            minimum score for APPROVED [config: garfield.yaml] (default 2)
@@ -202,7 +204,7 @@ Global Flags:
 Console, one line per frame:
 
 ```
-Processing 2 FITS file(s) in "images" (8 workers, conv=10, max-halo=2, max-structure=1.12)...
+Processing 2 FITS file(s) in "images" (8 workers, conv=10, max-fwhm-sigma=3, max-halo=2, max-structure=1.12)...
 
   [1/2] LBN527_LIGHT_B_..._PA310_E.FIT ... OK (478/2594 stars, FWHM=3.62, Ecc=0.303, SNR=32.27, Score=6.224, APPROVED)
   [2/2] LBN527_LIGHT_B_..._PA310_E.FIT ... OK (477/2920 stars, FWHM=3.31, Ecc=0.329, SNR=32.67, Score=6.619, APPROVED)
@@ -219,7 +221,7 @@ When the session had at least four frames to establish a baseline, each frame
 line also carries the two ratios those thresholds are compared against:
 
 ```
-  [3/9] VDB149_..._035_....FIT ... OK (455/2710 stars, FWHM=1.69, Ecc=0.412, SNR=22.38, Score=5.1, halo=3.33, struct=1.02, REJECTED CLOUDS)
+  [3/9] VDB149_..._035_....FIT ... OK (455/2710 stars, FWHM=1.69, Ecc=0.412, SNR=22.38, Score=5.1, fwhm=1.05, halo=3.33, struct=1.02, REJECTED CLOUDS)
 ```
 
 A ratio above the threshold is why the frame was rejected. Both fields are
@@ -253,13 +255,31 @@ The last three columns are the session-relative decisions:
 | `halo` | median wing brightness of the brightest stars, in ADU above the local sky: the aureole thin cloud scatters around bright stars |
 | `haloRatio` | `halo` relative to the 25th percentile of its session |
 | `structRatio` | `bgStructure` relative to the 25th percentile of its session |
+| `fwhmRatio` | `avgFWHM` relative to the median of every frame of that filter in the run |
 
 Both ratios are 0 when the session has fewer than four measured frames, or when
 too few stars were bright enough to measure a halo.
 
+A frame is `REJECTED FWHM` when its `avgFWHM` lies more than
+`--max-fwhm-sigma` robust sigmas above the median of its filter's whole
+population:
+
+```
+median   = median(avgFWHM of every frame of that filter)
+madSigma = 1.4826 * median(|avgFWHM - median|)
+rejected = avgFWHM > median + max-fwhm-sigma * madSigma
+```
+
+Only the upper tail is rejected — a frame sharper than its filter's median is
+better than average, not faulty. The gate needs at least eight frames of the
+filter, and is skipped when the MAD is zero, because the bound would then sit
+exactly on the median. Because the population is every frame passed to the
+command, analyzing a single night and analyzing the whole target can produce
+different bounds.
+
 A frame is `REJECTED CLOUDS` when `haloRatio > --max-halo-ratio`; it is
-`REJECTED BAD SEEING` when `structRatio > --max-structure`. Set either threshold
-to `0` to disable that half.
+`REJECTED BAD SEEING` when `structRatio > --max-structure`. Set any threshold to
+`0` to disable that rule.
 
 The halo is the cloud signal because it is a **shape** measurement, not a sky
 level: thin cloud scatters starlight into a wide aureole around the brightest
@@ -278,8 +298,8 @@ of more than two hours starts a new one), so a night that crosses midnight stays
 one session, and one attached to a flat directory of prepared frames works too.
 
 A frame already rejected for eccentricity or FWHM keeps that reason — the rules
-only override `APPROVED`, and cloud takes precedence over bad seeing when both
-fire.
+only override `APPROVED`. FWHM is tested first, then cloud, then bad seeing: a
+soft frame is reported as soft rather than clouded.
 
 ### Copying rejected frames
 
@@ -360,6 +380,7 @@ Flags:
   -i, --input string           root of the acquisition data [config: garfield.yaml] (default "/Volumes/Kosmodrom_2022/Kosmodrom")
       --max-ecc float          maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
       --max-fwhm float         maximum FWHM for APPROVED [config: garfield.yaml] (default 3.2)
+      --max-fwhm-sigma float   reject a frame whose FWHM is more than this many robust sigmas above its filter's median; 0 disables [config: garfield.yaml] (default 3)
       --max-halo-ratio float   reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 2)
       --max-structure float    reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables [config: garfield.yaml] (default 1.12)
       --min-score float        minimum score for APPROVED [config: garfield.yaml] (default 2)

@@ -36,9 +36,11 @@ func TestAnalyzeConsoleShowsHaloThresholds(t *testing.T) {
 		}
 	})
 
+	wantSigma := formatThreshold(defaultThresholds.maxFWHMSigma)
 	wantHalo := formatThreshold(defaultThresholds.maxHaloRatio)
 	wantStruct := formatThreshold(defaultThresholds.maxStructure)
 	for _, want := range []string{
+		"max-fwhm-sigma=" + wantSigma,
 		"max-halo=" + wantHalo,
 		"max-structure=" + wantStruct,
 	} {
@@ -66,6 +68,7 @@ func TestAnalyzeConsoleShowsThresholdsDisabled(t *testing.T) {
 	}
 
 	o := defaultOpts()
+	o.maxFWHMSigma = 0
 	o.maxHaloRatio = 0
 	o.maxStructure = 0
 
@@ -75,7 +78,7 @@ func TestAnalyzeConsoleShowsThresholdsDisabled(t *testing.T) {
 		}
 	})
 
-	for _, want := range []string{"max-halo=disabled", "max-structure=disabled"} {
+	for _, want := range []string{"max-fwhm-sigma=disabled", "max-halo=disabled", "max-structure=disabled"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("console output missing %q:\n%s", want, out)
 		}

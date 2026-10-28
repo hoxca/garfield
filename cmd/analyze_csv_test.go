@@ -183,7 +183,7 @@ func TestWriteResultsCSVHeader(t *testing.T) {
 		"filename", "filter", "date", "detectedStars", "starCount",
 		"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
 		"decision", "error", "background", "noise", "bgStructure",
-		"halo", "haloRatio", "structRatio",
+		"halo", "haloRatio", "structRatio", "fwhmRatio",
 	}
 
 	var sb strings.Builder

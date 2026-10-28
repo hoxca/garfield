@@ -15,13 +15,18 @@ type qualityThresholds struct {
 	maxEcc   float64
 	minScore float64
 	minStars int
-	// maxHaloRatio and maxStructure are the session-relative rules.
+	// maxFWHMSigma, maxHaloRatio and maxStructure are the outlier rules.
 	//
+	// maxFWHMSigma is how many robust standard deviations above the median a
+	// frame's FWHM may sit before it is rejected. The reference is every frame
+	// of that filter in the run, not one night: seeing varies, but a frame far
+	// softer than the filter's own population is unusable whatever the cause.
 	// maxHaloRatio bounds the bright-star halo relative to its session: thin
 	// cloud scatters starlight into a wide aureole, so the wings of the
 	// brightest stars grow before the sky level or the PSF do. maxStructure
 	// bounds the sky's block-to-block variation and is used as a bad-seeing
-	// signal. Either may be 0 to disable that half.
+	// signal. Any of them may be 0 to disable that rule.
+	maxFWHMSigma float64
 	maxHaloRatio float64
 	maxStructure float64
 	// moffat selects the PSF profile used to measure width and shape. It is not
@@ -44,6 +49,7 @@ var defaultThresholds = qualityThresholds{
 	maxEcc:       0.54,
 	minScore:     2.0,
 	minStars:     680,
+	maxFWHMSigma: 3.0,
 	maxHaloRatio: 2.0,
 	maxStructure: 1.12,
 }
@@ -57,6 +63,8 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 	fs.Float64Var(&dst.maxEcc, "max-ecc", defaultThresholds.maxEcc, "maximum eccentricity for APPROVED")
 	fs.Float64Var(&dst.minScore, "min-score", defaultThresholds.minScore, "minimum score for APPROVED")
 	fs.IntVar(&dst.minStars, "min-stars", defaultThresholds.minStars, "minimum number of detected stars for APPROVED")
+	fs.Float64Var(&dst.maxFWHMSigma, "max-fwhm-sigma", defaultThresholds.maxFWHMSigma,
+		"reject a frame whose FWHM is more than this many robust sigmas above its filter's median; 0 disables")
 	fs.Float64Var(&dst.maxHaloRatio, "max-halo-ratio", defaultThresholds.maxHaloRatio,
 		"reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables")
 	fs.Float64Var(&dst.maxStructure, "max-structure", defaultThresholds.maxStructure,
