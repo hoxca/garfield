@@ -83,7 +83,7 @@ concurrency:
 prepare:
   input: /Volumes/Dyno/Kosmodrom
   output: /Volumes/T7/Workspace
-  camera: auto      # auto (INSTRUME), c3 (rotator + gain) or g4 (fixed angle, no gain)
+  camera: auto      # auto (INSTRUME), c3 (rotator + gain), g4 (fixed angle, no gain) or asi2600
   flat-count: 0     # 0 = the session's own date only
 
 analyze:
@@ -372,7 +372,7 @@ Usage:
   garfield prepare [flags]
 
 Flags:
-      --camera string          camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (detected, not implemented yet) [config: garfield.yaml] (default "auto")
+      --camera string          camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (rotator and gain) [config: garfield.yaml] (default "auto")
       --conv-workers int       inner convolution workers (0 = auto) [config: garfield.yaml]
       --dry-run                show the plan without copying
       --flat-count int         flats to collect per filter and angle; 0 = the session's own date only [config: garfield.yaml]
@@ -484,43 +484,40 @@ previous date, so its walk starts at the following one.
 Only `Lights/<target>` is required. Everything missing produces warnings, not
 errors — the frames are still usable and calibration can be supplied later.
 
-### Two cameras
+### Three cameras
 
-`--camera` selects the filename convention. Both write into the same tree.
+`--camera` selects the filename convention. All three write into the same tree.
 
 The default, `--camera auto`, reads `INSTRUME` from the target's first light
 frame and picks the profile from it: `C3-61000` is the C3, `Gx/Cx USB` is the
-G4. Detection is **mandatory** in auto mode — a missing, unreadable or
-unrecognised `INSTRUME` is fatal, and the error names both explicit choices.
-Guessing the instrument would silently match the wrong flats and masters. The
-result is logged:
+G4, `ASI2600` is the ASI2600. Detection is **mandatory** in auto mode — a
+missing, unreadable or unrecognised `INSTRUME` is fatal, and the error names the
+explicit choices. Guessing the instrument would silently match the wrong flats
+and masters. The result is logged:
 
 ```
 camera: c3 detected from FITS header
 ```
 
-`--camera c3` or `--camera g4` skips the header read and pins the profile.
+`--camera c3`, `g4` or `asi2600` skips the header read and pins the profile.
 
-A third instrument is recognised but not preparable yet. `INSTRUME` containing
-`ASI2600` resolves to the name `asi2600`, and `--camera asi2600` is a valid
-value, but its filename structure is not implemented: `prepare` stops with a
-`not implemented` error rather than applying another camera's rules.
+| | `c3` | `g4` | `asi2600` |
+|---|---|---|---|
+| Camera | Moravian C3, CMOS | Moravian G4, CCD | ZWO ASI2600MM Pro, CMOS |
+| Light name | `<target>_LIGHT_<F>_<exp>s_BIN<t>_<temp>_GA0_<date>_<time>_<ms>_PA310_E` | `<prefix>_LIGHT_<F>_<exp>s_BIN<t>_<temp>_<idx>_<date>_<time>_<ms>_W` | `<target>_LIGHT_<F>_<exp>s_BIN<t>_<temp>_<idx>_<date>_<time>_<ms>_GA_100_OF_50_PA97_W` |
+| Flat name | `FLAT_<F>_<exp>s_BIN<t>_<temp>_GA2750_…_PA310.FIT` | `<prefix>_FLAT_<F>_BIN<t>_<temp>_<idx>_…` | `<prefix>_FLAT_<F>_BIN<t>_<temp>_<idx>_…_GA_100_OF_50_PA120.FIT` |
+| Position angle | present, matched | **absent** — no rotator, ignored | present, matched |
+| Gain | present (`GA0`), keys the bias | **absent** — one gain setting | present (`GA_100`), keys the bias |
+| Offset | — | — | present (`OF_50`), fixed, **ignored** |
+| Bias key | gain | sensor temperature setpoint | gain |
+| Dark key | gain + exposure + setpoint | exposure + setpoint | gain + exposure + setpoint |
+| Dark subdirectories | one level per gain | none | one level per gain |
 
-| | `c3` | `g4` |
-|---|---|---|
-| Camera | Moravian C3, CMOS | Moravian G4, CCD |
-| Light name | `<target>_LIGHT_<F>_<exp>_BIN_<temp>_GA0_<date>_<time>_<ms>_PA310_E` | `<prefix>_LIGHT_<F>_<exp>_BIN_<temp>_<idx>_<date>_<time>_<ms>_W` |
-| Position angle | present, matched | **absent** — no rotator, so ignored |
-| Gain | present, keys the bias | **absent** — one gain setting |
-| Bias key | gain | **sensor temperature setpoint** |
-| Dark key | gain + exposure + setpoint | exposure + setpoint |
-| Dark subdirectories | one level per gain | none |
-
-The patterns are mutually exclusive, so a shared `Flats/` or `Darks/Masters/`
-holding both cameras' files is safe: the inactive camera's files are left alone
-rather than reported as malformed. An unknown `--camera` is rejected instead of
-defaulting, and a switch that contradicts every light frame warns once and names
-the likely fix.
+Each run selects exactly one profile, so a shared `Flats/` or `Darks/Masters/`
+holding several cameras' files is safe: the inactive camera's files are left
+alone rather than reported as malformed. An unknown `--camera` is rejected
+instead of defaulting, and a switch that contradicts every light frame warns
+once and names the likely fix.
 
 ### The rules that bite
 
@@ -651,7 +648,6 @@ Fatal — nothing is written, or the run stops:
 | `--flat-count` negative |
 | No `YYYY-MM-DD` directories under the target |
 | `--camera auto` (the default) and the first light has no usable `INSTRUME` |
-| `--camera asi2600`, or ASI2600 detected from `INSTRUME` — no filename structure yet |
 | More than one position angle in a session, or across a target's sessions |
 | Malformed config YAML (deliberate — the config decides what gets discarded) |
 
@@ -681,12 +677,12 @@ Ranked by how quietly they fail. The full list is
    after it renumbers.
 4. **Only seven filters are known** — the wheel's full inventory, so this is not
    a pending limitation. Narrowband needs different hardware.
-5. **A rotated target cannot be prepared at all** — on a C3. The G4 has no
-   rotator; see the Two cameras table.
+5. **A rotated target cannot be prepared at all** — on a C3 or ASI2600. The G4
+   has no rotator; see the Three cameras table.
 6. **`--camera auto` needs a usable `INSTRUME`.** The header of the target's
-   first light frame must name the C3 or the G4; a missing or unrecognised
-   value stops the run before anything is written. Pass `--camera c3` or
-   `--camera g4` to bypass detection.
+   first light frame must name a known camera; a missing or unrecognised value
+   stops the run before anything is written. Pass `--camera c3`, `g4` or
+   `asi2600` to bypass detection.
 7. **Masters must be `.xisf`.**
 
 ---

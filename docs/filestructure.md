@@ -50,13 +50,10 @@ session tree that can be imported into WBPP (PixInsight) in one step.
 | `--target`, `-t` | *(required)* |
 | `--camera` | `auto` |
 
-Two cameras have written into this tree, and their filenames differ. `--camera`
-selects which convention is read; the directory structure is the same for both.
+Three cameras have written into this tree, and their filenames differ. `--camera`
+selects which convention is read; the directory structure is the same for all.
 The default, `auto`, reads `INSTRUME` from the target's first light frame and
-chooses `c3` or `g4` from it (§7.1). A third instrument, the ZWO ASI2600, is
-recognised from `INSTRUME` but has no filename grammar yet: it is detected, then
-refused with a `not implemented` error rather than prepared under another
-camera's rules.
+chooses `c3`, `g4` or `asi2600` from it (§7.1).
 
 ```
 <input>/
@@ -93,12 +90,14 @@ Only `Lights/<target>` is required. A missing `Flats`, `Bias/Masters` or
 `Darks/Masters` produces warnings, not errors — see
 [§11 Failure modes](#11-failure-modes).
 
-**The two cameras' files coexist safely.** Every pattern is disjoint: a C3 flat
-starts with `FLAT_` and so contains no `_FLAT_` substring for the G4 pattern to
-find, and the gain and setpoint tokens at the corresponding position of a master
-name cannot both be present. A file belonging to the other camera does not parse
-under the active `--camera` and is left alone silently, which is correct — it is
-valid data for the other instrument, not a malformed frame.
+**Cameras coexist safely because one profile is selected per run.** A C3 flat
+starts with `FLAT_` and so contains no `_FLAT_` substring for the prefixed
+patterns to find, and the gain and setpoint tokens at the corresponding position
+of a master name cannot both be present. The G4 and ASI2600 flat patterns are
+identical in shape, so filenames cannot tell those two apart; `INSTRUME` does,
+before any file is matched. A file belonging to another camera is left alone
+silently, which is correct — it is valid data for the other instrument, not a
+malformed frame.
 
 Directory names are exact: `Lights`, `Flats`, `Bias`, `Darks`, `Masters`.
 These are case-sensitive, unlike file extensions. So `lights/` or `masters/`
@@ -119,7 +118,7 @@ Each subtree is scanned to a **fixed depth**, and nothing recurses further:
 | Flag | Default | Effect |
 |---|---|---|
 | `--flat-count` | `0` | Flats per filter and angle. `0` keeps a session to its own date; `N` tops it up from neighbouring nights (§3.2). |
-| `--camera` | `auto` | Filename convention and matching policy: `auto` reads `INSTRUME` from the first light, `c3` (rotator and gain) and `g4` (fixed angle, no gain) pin it. `asi2600` is recognised but has no grammar yet. An unknown value is rejected. |
+| `--camera` | `auto` | Filename convention and matching policy: `auto` reads `INSTRUME` from the first light, while `c3` (rotator and gain), `g4` (fixed angle, no gain) and `asi2600` (rotator and gain) pin it. An unknown value is rejected. |
 
 `conf/garfield.yaml` ships `flat-count: 0`, so borrowing is opt-in.
 
@@ -195,8 +194,8 @@ The set is the wheel (§3.1.3).
 
 ### 2.3 Light filename grammar
 
-The two cameras name their frames differently. `--camera` picks which grammar is
-read; a frame from the other camera simply does not match, and is left alone.
+The cameras name their frames differently. `--camera` picks which grammar is
+read; a frame from another camera simply does not match, and is left alone.
 
 **Moravian C3** — `.LIGHT.<filter>.<exp>.BIN.<temp>.GA<gain>.<date>.<time>.<ms>.PA<angle>.<flip>`
 
@@ -213,6 +212,17 @@ prefix  type  filter  exp    bin    temp   index  date      time    ms   flip
   │      │      │      │      │      │       │      │         │      │    │
 IC1805HA_LIGHT_H_900s_BIN1_-20C_001_20201024_204428_998_W.FIT
 ```
+
+**ZWO ASI2600** — `.LIGHT.<filter>.<exp>.BIN.<temp>.<index>.<date>.<time>.<ms>.GA_<gain>.OF_<offset>.PA<angle>.<flip>`
+
+```
+target  type  filter  exp    bin    temp  index  date      time    ms   GA gain OF off  PA     flip
+  │      │      │      │      │      │      │      │         │      │       │    │   │    │      │
+SH2-142_LIGHT_H_300s_BIN1_-10C_001_20260812_001427_410_GA_100_OF_50_PA97_W.FIT
+```
+
+The ASI2600 writes gain and offset as two tokens each, `GA_100` and `OF_50`,
+where the C3 writes one, `GA0`. The offset is fixed at 50 and never read.
 
 `<flip>` is `E` or `W` side of pier, and is cosmetic in both grammars. On the G4
 the `<index>` sits exactly where the C3 carries its gain — which is why `gainRe`
@@ -235,30 +245,40 @@ setting as the directory, which is the authoritative one (§2.2).
 A frame missing a token still gets analysed and copied — the token is simply
 absent from the report.
 
-| Token | C3 regex | G4 regex | Consequence if absent |
-|---|---|---|---|
-| frame date | `_(\d{8})_\d{6}_\d+` | *(same)* | `frameDateMin/Max` stay empty in `sessions.csv` |
-| PA | `_PA(\d+)` | *(not present)* | C3 only: session PA is empty, so **no flats match** |
-| gain | `_(GA\d+)_` | *(not present)* | C3 only: no bias copied for that gain |
-| exposure + setpoint + gain | `_(\d+)s_BIN\d_([-+]?\d+C)_(GA\d+)_` | `_(\d+)s_BIN\d_([-+]?\d+C)_(\d+)_` | **No master dark** for this frame |
+| Token | C3 regex | G4 regex | ASI2600 regex | Consequence if absent |
+|---|---|---|---|---|
+| frame date | `_(\d{8})_\d{6}_\d+` | *(same)* | *(same)* | `frameDateMin/Max` stay empty in `sessions.csv` |
+| PA | `_PA(\d+)` | *(not present)* | `_PA(\d+)` | C3/ASI2600: session PA is empty, so **no flats match** |
+| gain | `_(GA\d+)_` | *(not present)* | `_GA_(\d+)_OF_\d+_` | C3/ASI2600: no bias copied for that gain |
+| exposure + setpoint + gain | `_(\d+)s_BIN\d_([-+]?\d+C)_(GA\d+)_` | `_(\d+)s_BIN\d_([-+]?\d+C)_(\d+)_` | `_(\d+)s_BIN\d_([-+]?\d+C)_\d+_` + gain above | **No master dark** for this frame |
+
+On the ASI2600 the dark key is assembled from two independent matches: exposure
+and setpoint before the unused index, and gain from `GA_<n>`, normalised to the
+`GA0`/`GA100` form the masters use.
 
 `frameDateRe` deliberately omits the `_PA` terminator the C3 name carries, so the
-same pattern reads both grammars and needs no profile branch.
+same pattern reads every grammar and needs no profile branch.
 
 Frame date, time, milliseconds and flip are not used for matching at all.
 
-Never read at all: **filter**, exposure, binning, the `LIGHT` type marker, and —
-on the G4 — the prefix and frame index. The sensor temperature setpoint *is*
-read, but only to pair a light with its dark (§5.2); it never affects the
-frame's own routing.
+Never read at all: **filter**, binning, the `LIGHT` type marker, the G4 prefix
+and frame index, and the ASI2600 index and `OF_<offset>` token. The sensor
+temperature setpoint *is* read, but only to pair a light with its dark (§5.2); it
+never affects the frame's own routing.
 
 What a missing token costs depends on the camera. A missing **frame date** costs
-a report column and nothing else. On the C3, a missing **PA**, **gain**, or
-**exposure + setpoint + gain** triple costs data: the frame is still copied into
-`lights/`, but it never reaches a flat, a bias, or a dark. On the G4 only the
-**exposure + setpoint** pair matters, because that is all the dark key holds.
+a report column and nothing else. On the C3 and ASI2600, a missing **PA**,
+**gain**, or **exposure + setpoint + gain** triple costs data: the frame is still
+copied into `lights/`, but it never reaches a flat, a bias, or a dark. On the G4
+only the **exposure + setpoint** pair matters, because that is all the dark key
+holds.
 
-### 2.4 Position angles (C3 only)
+One overlap is worth knowing: an ASI2600 light also satisfies the G4
+`exposure + setpoint` pattern, because both carry `<exp>s_BIN<n>_<temp>C_<index>_`.
+That is harmless because a run selects exactly one profile from `INSTRUME`; the
+two are never evaluated against the same frame.
+
+### 2.4 Position angles (rotating cameras)
 
 **The G4 has no rotator, so this whole section does not apply to it.** A G4 frame
 carries no angle, sessions record none, and flats are matched on filter alone
@@ -266,8 +286,9 @@ carries no angle, sessions record none, and flats are matched on filter alone
 under `--camera g4` rather than passing vacuously — there is no angle to have a
 fault about.
 
-On the C3, a target is acquired at **one position angle, chosen before
-acquisition starts.** Two faults contradict that and are both **fatal**:
+The C3 and ASI2600 both rotate. On either, a target is acquired at **one
+position angle, chosen before acquisition starts.** Two faults contradict that
+and are both **fatal**:
 
 | Fault | Means | Reported as |
 |---|---|---|
@@ -328,28 +349,40 @@ prefix      FLAT  filter  bin    temp   index  date      time    ms   flip
 H_AutoFlat_FLAT_H_BIN1_-10C_001_20220822_071017_086_E.FIT
 ```
 
+**ASI2600 flat**: a per-filter prefix before `_FLAT_`, **no exposure**, and an
+angle like the C3. Prefixes seen in practice are `FlatRGB_`, `FlatL_`, `FlatHA3_`,
+`FlatS3_` and `FlatO3_`; the filter token itself is still one character:
+
+```
+prefix    FLAT  filter  bin    temp   index  date      time    ms   GA gain OF off  PA
+  │        │      │      │      │       │      │         │      │       │    │   │    │
+FlatL_FLAT_L_BIN1_-10C_001_20260318_073630_129_GA_100_OF_50_PA120_E.FIT
+```
+
 Which tokens are load-bearing differs by camera:
 
-| Token | C3 | G4 |
-|---|---|---|
-| filter | `^FLAT_([LRGBSHO])_` — required | `^.+_FLAT_([LRGBSHO])_` — required |
-| PA | `_PA(\d+)` — required, part of the match key | **not present**, not read |
-| prefix | absent | required by the pattern, **never read** |
-| everything else | never read | never read |
+| Token | C3 | G4 | ASI2600 |
+|---|---|---|---|
+| filter | `^FLAT_([LRGBSHO])_` — required | `^.+_FLAT_([LRGBSHO])_` — required | `^.+_FLAT_([LRGBSHO])_` — required |
+| PA | `_PA(\d+)` — required, part of the match key | **not present**, not read | `_PA(\d+)` — required, part of the match key |
+| prefix | absent | required by the pattern, **never read** | required by the pattern, **never read** |
+| exposure | never read | never read | **absent** in practice, never read |
+| everything else | never read | never read | never read (`GA_100`, `OF_50` included) |
 
 A flat whose filter token is not one of the seven is dropped with a warning
-naming it (§3.1.1). A C3 flat with no PA is dropped with a warning. Exposure,
-binning, setpoint, gain, date, time, milliseconds and flip are **never read** on
-the flat side in either grammar: `67.02s` and `GA2750` in the C3 name are
+naming it (§3.1.1). A C3 or ASI2600 flat with no PA is dropped with a warning.
+Exposure, binning, setpoint, gain, date, time, milliseconds and flip are **never
+read** on the flat side in any grammar: `67.02s`, `GA2750` and `GA_100` are
 decoration, and no flat is ever matched to a light by exposure or gain. That is
 the opposite of the dark side, where both are part of the key (§5).
 
-The two patterns are disjoint on purpose. A C3 flat begins with `FLAT_`, so it
-contains no `_FLAT_` substring for the G4 pattern to find; a G4 flat has a prefix,
-so it cannot match the C3 pattern anchored at the start. Consequently a shared
-`Flats/<date>/` holding both cameras' flats is safe: the inactive camera's files
-are left alone silently rather than reported as malformed, because they are valid
-data for the other instrument.
+The C3 pattern is disjoint from the other two on purpose: a C3 flat begins with
+`FLAT_`, so it contains no `_FLAT_` substring for the prefixed patterns to find.
+The G4 and ASI2600 patterns are identical in shape and are told apart by the
+selected profile, not by the name. Because a run selects exactly one profile from
+`INSTRUME`, a shared `Flats/<date>/` holding several cameras' flats is still
+safe: the inactive camera's files are valid data for another instrument and are
+left alone silently.
 
 ### 3.1.1 The seven known filters
 
@@ -357,14 +390,18 @@ There is one pattern per camera, each **anchored** and each splicing
 `knownFilters` in as a character class:
 
 ```
-c3:  ^FLAT_([LRGBSHO])_
-g4:  ^.+_FLAT_([LRGBSHO])_
+c3:      ^FLAT_([LRGBSHO])_
+g4:      ^.+_FLAT_([LRGBSHO])_
+asi2600: ^.+_FLAT_([LRGBSHO])_
 ```
 
 `FLATL_41s_..._PA310.FIT` does not match the C3 pattern, because after `FLAT`
 comes `L` rather than `_`. Neither does a `masterFlat_...` file or any light
-frame. The G4 pattern requires a prefix before `_FLAT_`, which is what keeps it
-off a C3 flat and keeps the C3 pattern off a G4 flat.
+frame. The prefixed patterns require a prefix before `_FLAT_`, which is what keeps them
+off a C3 flat and keeps the C3 pattern off a prefixed flat. The G4 and ASI2600
+entries are the same shape because the G4 and ASI2600 write a prefix and no exposure;
+which one applies is decided by the profile selected from `INSTRUME`, never by
+the name.
 
 The recognised set is **exactly one character** from `LRGBSHO` — L, R, G, B,
 S, H, O:
@@ -543,30 +580,30 @@ masterBias_GA0_-10C_257f_20251117.xisf
 
 The key differs by camera, and so does what is read:
 
-| | C3 | G4 |
-|---|---|---|
-| name | `masterBias_GA0_-10C_257f_20251117.xisf` | `masterBias_-20C_257f_20201024.xisf` |
-| key | **gain** (`GA0`) | **sensor temperature setpoint** (`-20C`) |
-| pattern | `_(GA\d+)_` | `masterBias_([-+]?\d+C)_` |
+| | C3 | G4 | ASI2600 |
+|---|---|---|---|
+| name | `masterBias_GA0_-10C_257f_20251117.xisf` | `masterBias_-20C_257f_20201024.xisf` | `masterBias_GA100_-10C_257f_20260901.xisf` |
+| key | **gain** (`GA0`) | **sensor temperature setpoint** (`-20C`) | **gain** (`GA100`) |
+| pattern | `_(GA\d+)_` | `masterBias_([-+]?\d+C)_` | `_(GA\d+)_` |
 
 - The frame count (`257f`) is **not read** — see §6.
-- On the C3 the setpoint (`-10C`) is **not read** here: a C3 bias matches a gain,
-  not a gain and a temperature. Only the *light* side carries a setpoint, and
-  only to pair a light with its dark (§5.2).
+- On the C3 and ASI2600 the setpoint (`-10C`) is **not read** here: their bias
+  matches a gain, not a gain and a temperature. Only the *light* side carries a
+  setpoint, and only to pair a light with its dark (§5.2).
 - On the G4 the gain does not exist, so the setpoint is the key instead. A CCD
   runs at one gain setting; the temperature is what varies between sessions.
 - The date suffix must be eight digits directly before `.xisf`. A master with
   no parseable date cannot be tiebroken, so it loses to any dated rival (§6).
 - A file whose key token is missing is skipped with a warning that names what it
-  was looking for — a "gain setting" on the C3, a "sensor temperature setpoint"
-  on the G4.
+  was looking for — a "gain setting" on the C3 and ASI2600, a "sensor temperature
+  setpoint" on the G4.
 - Only **one** master bias is copied per key, for the whole target.
-- The directory is flat for both cameras: `Bias/Masters/` has no subdirectories
-  in either convention.
+- The directory is flat for all three cameras: `Bias/Masters/` has no
+  subdirectories in any convention.
 
 The asymmetry with darks is deliberate and worth knowing before it surprises
-you: `Bias/Masters/` is flat for both cameras, while `Darks/Masters/` accepts one
-level of per-gain subdirectories — but only on the C3 (§5).
+you: `Bias/Masters/` is flat for all three, while `Darks/Masters/` accepts one
+level of per-gain subdirectories — on the C3 and ASI2600, but not the G4 (§5).
 
 ---
 
@@ -592,6 +629,17 @@ level of per-gain subdirectories — but only on the C3 (§5).
 └── masterDark_900s_-20C_20220901.xisf
 ```
 
+**ASI2600** — same shape as the C3, per-gain subdirectories or flat:
+
+```
+<input>/Darks/Masters/
+├── G0/
+│   └── masterDark_300s_GA0_-10C_20260901.xisf
+└── G100/
+    ├── masterDark_180s_GA100_-10C_20260901.xisf
+    └── masterDark_300s_GA100_-10C_20260901.xisf
+```
+
 The scan recurses **exactly one level**: files directly under `Masters/` are
 accepted alongside subdirectories, and a directory two levels down
 (`Darks/Masters/G0/30s/`) is not visited at all. That cap is what keeps the raw
@@ -601,8 +649,9 @@ subdirectories in it.
 
 ### 5.1 The key is the filename, not the directory
 
-The directory names and the filenames **deliberately disagree** on the C3:
-`G2750/` holds `GA2750` files. The key comes from the filename alone.
+The directory names and the filenames **deliberately disagree** on the C3 and
+ASI2600: `G2750/` holds `GA2750` files, `G100/` holds `GA100` files. The key
+comes from the filename alone.
 
 Keying on the directory would yield `G2750`, which matches no light frame, and
 **nothing would be copied at all**. This is the single sharpest edge in the
@@ -619,6 +668,7 @@ The key renders as:
 |---|---|---|
 | C3 | `gain/exposure/setpoint` | `GA2750/600s/-10C` |
 | G4 | `exposure/setpoint` | `600s/-20C` |
+| ASI2600 | `gain/exposure/setpoint` | `GA100/300s/-10C` |
 
 The G4 form omits the gain field rather than emitting an empty one: `/600s/-20C`
 would read as a missing value instead of an absent property.
@@ -628,12 +678,15 @@ would read as a missing value instead of an absent property.
 A light's needed dark is computed with a pattern per camera:
 
 ```
-c3:  _(\d+)s_BIN\d_([-+]?\d+C)_(GA\d+)_
-g4:  _(\d+)s_BIN\d_([-+]?\d+C)_(\d+)_
+c3:      _(\d+)s_BIN\d_([-+]?\d+C)_(GA\d+)_
+g4:      _(\d+)s_BIN\d_([-+]?\d+C)_(\d+)_
+asi2600: _(\d+)s_BIN\d_([-+]?\d+C)_\d+_   +   _GA_(\d+)_OF_\d+_
 ```
 
-On the C3 that is exposure, sensor temperature setpoint and gain — the three
-properties that together make a dark necessary. On the G4 it is exposure and
+On the C3 and ASI2600 that is exposure, sensor temperature setpoint and gain —
+the three properties that together make a dark necessary. The ASI2600 writes the
+gain in a separate token, so the key is assembled from two matches and
+normalised to the masters' `GA0`/`GA100` form. On the G4 it is exposure and
 setpoint: the third group is the frame index, captured only because it terminates
 the setpoint token, and the gain does not exist. A dark is **thermal**, so a `-10C` dark does not
 calibrate a `0C` light, and the setpoint is therefore part of the key rather than
@@ -661,11 +714,11 @@ throughout — the filter wheel has positions (§3.1.3) and a rotator has angles
 the unqualified word is genuinely ambiguous in this document. It is easy to
 over-apply the rule, so explicitly:
 
-| Pairing | C3 key | G4 key | Sensor temperature setpoint? |
-|---|---|---|---|
-| light → dark | exposure + gain + **setpoint** | exposure + **setpoint** | yes, both |
-| light → bias | gain | **setpoint** | C3: no · **G4: yes** |
-| light → flat | filter + angle | filter | no, either camera |
+| Pairing | C3 key | G4 key | ASI2600 key | Sensor temperature setpoint? |
+|---|---|---|---|---|
+| light → dark | exposure + gain + **setpoint** | exposure + **setpoint** | exposure + gain + **setpoint** | yes, all three |
+| light → bias | gain | **setpoint** | gain | C3/ASI2600: no · **G4: yes** |
+| light → flat | filter + angle | filter | filter + angle | no, any camera |
 
 A **flat** is a shuttered frame of sky, so its dark current is negligible and the
 setpoint does not change what it corrects. A flat shot at `0C` calibrates a
@@ -673,7 +726,7 @@ setpoint does not change what it corrects. A flat shot at `0C` calibrates a
 flats for no physical reason. Pinned by
 `TestFlatsAreNotFilteredByTemperature`.
 
-A **C3 bias** is keyed on gain alone even though `masterBias_GA0_-10C_...` carries
+A **C3 or ASI2600 bias** is keyed on gain alone even though `masterBias_GA0_-10C_...` carries
 a setpoint. Bias is a much weaker function of temperature than a dark, and
 reading it would double the bias key and the copy count for no stated need.
 
@@ -699,6 +752,10 @@ the only symptom is a missing dark. Pinned by
 The G4 patterns avoid the problem differently: both sides are
 `exposure, setpoint`, in that order, so the two are interchangeable. The cost is
 that the light pattern carries an unused third group where the C3 has its gain.
+
+The ASI2600 sidesteps it by matching exposure and setpoint together and reading
+the gain from its own `GA_<n>` token; the key is then assembled in the C3 order,
+so the same `masterDark_<exp>s_GA<n>_<temp>C_...` index applies.
 
 #### `-0C` and `0C` are one key
 
@@ -785,12 +842,13 @@ test in the appendix.
 
 ### 7.1 `cameraProfile`
 
-`cameraProfile` (in `cmd/prepare.go`) is the single place the two cameras differ:
+`cameraProfile` (in `cmd/prepare.go`) is the single place the cameras differ:
 
 | Field | Purpose |
 |---|---|
 | `hasPA` | whether a position angle is read and matched (§2.4) |
 | `hasGain` | whether a gain key exists (§4, §5) |
+| `gainToken` | light filename → gain token, when `hasGain` |
 | `flatFilterRe` | the flat filter pattern (§3.1) |
 | `isFlat` | whether a rejected name is worth reporting (§3.1.2) |
 | `lightDark` | light filename → master dark key |
@@ -798,32 +856,33 @@ test in the appendix.
 | `biasKey` | master bias filename → key |
 
 `cameraProfileFor` resolves an explicit `--camera` and **rejects an unknown
-value** rather than falling back. `resolveCamera` is the entry point: `c3` and
-`g4` return their profile without touching the data, while `auto` (the default)
-calls `cameraNameFromLights`.
+value** rather than falling back. `resolveCamera` is the entry point: `c3`, `g4`
+and `asi2600` return their profile without touching the data, while `auto` (the
+default) calls `cameraNameFromLights`.
 
 `cameraNameFromLights` reads `INSTRUME` from the first FITS frame of the
 chronologically first `YYYY-MM-DD` session, in sorted filter and filename order.
 `C3-61000` selects `c3`; `Gx/Cx USB` selects `g4`; `ASI2600` selects
 `asi2600`. Matching is case-insensitive and by substring, so a model or firmware
-suffix still resolves. A frame whose header cannot be read, or which carries no
-`INSTRUME`, is skipped in favour of the next; a frame naming an unrecognised
-instrument stops the search. In auto mode a failure is fatal and names
-`--camera c3` / `--camera g4`, because guessing the profile would silently match
-the wrong flats and masters.
+suffix still resolves (the real value is `ZWO ASI2600MM Pro`). A frame whose
+header cannot be read, or which carries no `INSTRUME`, is skipped in favour of
+the next; a frame naming an unrecognised instrument stops the search. In auto
+mode a failure is fatal and names `--camera c3` / `--camera g4`, because guessing
+the profile would silently match the wrong flats and masters.
 
-`asi2600` is in `knownCameras` but not in `cameraProfiles`: detection can name
-it, and doing so is fatal with `filename structure is not implemented yet`.
-That distinction matters — the operator is told the camera was seen and the
-grammar is missing, rather than that the flag is wrong. Adding the grammar later
-only fills in `cameraProfiles`.
+The ASI2600 shares the C3's master naming, so `biasKey` and `darkMaster` are the
+C3 functions. Its own additions are `asi2600ComboRe` (exposure + setpoint),
+`asi2600GainRe` (`GA_<n>`, normalised to `GA<n>`) and `asi2600FlatFilterRe` (the
+prefixed, exposure-less flat shape). The fixed `OF_<offset>` token is never read.
 
 Silently preparing a target with the other camera's rules would match flats
 across angles that never shared them, or find no calibration at all.
 
-The patterns are mutually exclusive, which is what lets both cameras' files share
-one acquisition tree: a name belonging to the inactive profile does not match and
-is left alone, not reported as malformed.
+The profiles are selected once per run, so a tree holding several cameras' files
+is safe: a name belonging to the inactive profile is left alone, not reported as
+malformed. The ASI2600 and G4 patterns overlap in shape (prefixed flats, an
+exposure/setpoint/index light prefix), which is why selection is by `INSTRUME`
+rather than by trying to classify filenames.
 
 ---
 
@@ -1180,7 +1239,6 @@ each half gets its own baseline. `prepare` uses the real session directory.
 | `--flat-count` negative | `--flat-count cannot be negative, got %d` |
 | `--camera` not `auto`/`c3`/`g4`/`asi2600` | `unknown --camera %q, want auto, c3, g4 or asi2600` |
 | `--camera auto` and no usable `INSTRUME` | `cannot detect the camera: ...; pass --camera c3 or --camera g4 ...` |
-| `--camera asi2600`, or ASI2600 detected | `camera "asi2600" is recognised but its filename structure is not implemented yet` |
 | `Lights/<target>` absent | `target %q not found in %q` |
 | No date directories | `no session (YYYY-MM-DD directory) found in %q` |
 | More than one angle in a session | `mixed angles: session ... multiple angles ...` (§2.4) |
@@ -1219,7 +1277,7 @@ carry one; is this G4 data?
 ```
 
 It fires only when **every** light frame contradicts the profile. A field mixing
-both cameras' shapes is a contradiction no camera switch resolves, so it is left
+several cameras' shapes is a contradiction no camera switch resolves, so it is left
 to the ordinary warnings rather than guessing.
 
 A session missing its masters is still usable data; calibration can be supplied
@@ -1285,9 +1343,7 @@ Things that will bite, ranked by how quietly they fail:
 
 9. **`--camera auto` needs a usable `INSTRUME`.** The default reads the first
    light's header and stops the run if it is missing or unrecognised. Pass
-   `--camera c3` or `--camera g4` to bypass detection (§7.1, §11.1). An
-   ASI2600 is recognised but has no filename grammar yet, so it is detected and
-   then refused explicitly.
+   `--camera c3`, `g4` or `asi2600` to bypass detection (§7.1, §11.1).
 
 ---
 
@@ -1338,7 +1394,7 @@ Layout claims in this document are enforced by tests, not just documented:
 | analyze master-name filter limitation | `TestParseFilenameMasterFlat` |
 | documented output paths in help | `TestPrepareLongHelpDocumentsLayout` |
 | G4 patterns extract exposure and setpoint, not gain | `TestG4PatternsExtractKeys` |
-| the two cameras' patterns never match each other | `TestCameraProfilesAreDisjoint` |
+| the C3 patterns never match G4 or ASI2600 names | `TestCameraProfilesAreDisjoint` |
 | G4 records no angle and matches flats on filter alone | `TestG4PlanHasNoAngleAndMatchesFlatsByFilter` |
 | a C3 flat in a shared Flats tree is ignored by a G4 run | `TestG4IgnoresC3FlatsInTheSameDirectory` |
 | G4 bias/dark copied under setpoint keys | `TestG4PrepareCopiesMastersKeyedOnSetpoint` |
