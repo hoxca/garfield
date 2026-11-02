@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -835,26 +834,15 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 	results := make([]ImageResult, len(jobs))
 
 	// Mirror analyze's worker split: outer workers over frames, inner workers
-	// inside the convolution, sized so the total stays near NumCPU.
-	numCPU := runtime.NumCPU()
-	workers := opts.workers
-	if workers <= 0 {
-		workers = numCPU / 2
-		if workers < 2 {
-			workers = 2
-		}
-	}
-	if workers > len(jobs) {
-		workers = len(jobs)
-	}
-	convWorkers := opts.convWorkers
-	if convWorkers <= 0 {
-		convWorkers = numCPU / workers
-		if convWorkers < 1 {
-			convWorkers = 1
-		}
-	}
+	// inside the convolution, with the outer count capped by the memory one
+	// frame's analysis needs.
+	plan := resolveWorkers(opts.workers, opts.convWorkers, len(jobs),
+		frameWorkingSetFor(jobs[0].path), physicalMemory())
+	workers, convWorkers := plan.Outer, plan.Conv
 	mrs.ConvWorkers = convWorkers
+	if warn := plan.workerWarning(opts.workers); warn != "" {
+		fmt.Fprintf(os.Stderr, "  warning: %s\n", warn)
+	}
 
 	aopts := opts.qualityThresholds.analyze()
 

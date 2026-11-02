@@ -7,6 +7,34 @@ import (
 	"github.com/astrogo/fitsio"
 )
 
+// ReadDimensions reports the width and height of the primary image HDU without
+// reading the pixel data. The worker planner uses it to size a frame's working
+// set before any full decode, so a run can decide how many frames to process
+// concurrently without first allocating one.
+func ReadDimensions(filename string) (width, height int, err error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return 0, 0, fmt.Errorf("unable to open file: %w", err)
+	}
+	defer f.Close()
+
+	r, err := fitsio.Open(f)
+	if err != nil {
+		return 0, 0, fmt.Errorf("unable to initialize FITS reader: %w", err)
+	}
+	defer r.Close()
+
+	hdu := r.HDU(0)
+	if _, ok := hdu.(fitsio.Image); !ok {
+		return 0, 0, fmt.Errorf("primary HDU is not an image layer")
+	}
+	axes := hdu.Header().Axes()
+	if len(axes) < 2 {
+		return 0, 0, fmt.Errorf("expected at least a 2D image matrix, got dimensions: %d", len(axes))
+	}
+	return axes[0], axes[1], nil
+}
+
 // ReadFITSImage opens a FITS file and converts its primary ImageHDU to a 2D float64 slice matrix
 func ReadFITSImage(filename string) ([][]float64, error) {
 	f, err := os.Open(filename)

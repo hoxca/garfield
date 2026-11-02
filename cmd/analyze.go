@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -596,26 +595,16 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 
 	// Outer workers scale with CPUs; inner convolution workers are divided
 	// accordingly so total threads stay close to NumCPU instead of
-	// oversubscribing (outer x NumCPU as before).
-	numCPU := runtime.NumCPU()
-	outerWorkers := opts.workers
-	if outerWorkers <= 0 {
-		outerWorkers = numCPU / 2
-		if outerWorkers < 2 {
-			outerWorkers = 2
-		}
-	}
-	if outerWorkers > len(fitsFiles) {
-		outerWorkers = len(fitsFiles)
-	}
-	convWorkers := opts.convWorkers
-	if convWorkers <= 0 {
-		convWorkers = numCPU / outerWorkers
-		if convWorkers < 1 {
-			convWorkers = 1
-		}
-	}
+	// oversubscribing. The outer count is also capped by the memory one frame's
+	// analysis needs, since NumCPU/2 frames of a 61 Mpx sensor is far more RAM
+	// than most machines hold.
+	plan := resolveWorkers(opts.workers, opts.convWorkers, len(fitsFiles),
+		frameWorkingSetFor(fitsFiles[0]), physicalMemory())
+	outerWorkers, convWorkers := plan.Outer, plan.Conv
 	mrs.ConvWorkers = convWorkers
+	if warn := plan.workerWarning(opts.workers); warn != "" {
+		fmt.Fprintf(os.Stderr, "  warning: %s\n", warn)
+	}
 
 	// Only reachable when recursing: within a single directory names are
 	// unique, so a flat scan cannot produce a collision.

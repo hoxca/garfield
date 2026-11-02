@@ -684,3 +684,23 @@ func TestReadFITSImageRowsAreIndependentSlices(t *testing.T) {
 		}
 	}
 }
+
+func TestReadDimensionsMatchesPixelData(t *testing.T) {
+	dir := t.TempDir()
+	data := ramp16(12)
+	path := writeFITS(t, dir, "dims.fits", 16, []int{4, 3}, &data)
+
+	w, h, err := ReadDimensions(path)
+	if err != nil {
+		t.Fatalf("ReadDimensions: %v", err)
+	}
+	if w != 4 || h != 3 {
+		t.Errorf("ReadDimensions = %dx%d, want 4x3", w, h)
+	}
+}
+
+func TestReadDimensionsRejectsMissingFile(t *testing.T) {
+	if _, _, err := ReadDimensions(filepath.Join(t.TempDir(), "absent.fits")); err == nil {
+		t.Fatal("ReadDimensions succeeded on a missing file")
+	}
+}
