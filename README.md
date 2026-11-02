@@ -372,7 +372,7 @@ Usage:
   garfield prepare [flags]
 
 Flags:
-      --camera string          camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain) or g4 (fixed angle, no gain) [config: garfield.yaml] (default "auto")
+      --camera string          camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (detected, not implemented yet) [config: garfield.yaml] (default "auto")
       --conv-workers int       inner convolution workers (0 = auto) [config: garfield.yaml]
       --dry-run                show the plan without copying
       --flat-count int         flats to collect per filter and angle; 0 = the session's own date only [config: garfield.yaml]
@@ -500,6 +500,11 @@ camera: c3 detected from FITS header
 ```
 
 `--camera c3` or `--camera g4` skips the header read and pins the profile.
+
+A third instrument is recognised but not preparable yet. `INSTRUME` containing
+`ASI2600` resolves to the name `asi2600`, and `--camera asi2600` is a valid
+value, but its filename structure is not implemented: `prepare` stops with a
+`not implemented` error rather than applying another camera's rules.
 
 | | `c3` | `g4` |
 |---|---|---|
@@ -646,6 +651,7 @@ Fatal — nothing is written, or the run stops:
 | `--flat-count` negative |
 | No `YYYY-MM-DD` directories under the target |
 | `--camera auto` (the default) and the first light has no usable `INSTRUME` |
+| `--camera asi2600`, or ASI2600 detected from `INSTRUME` — no filename structure yet |
 | More than one position angle in a session, or across a target's sessions |
 | Malformed config YAML (deliberate — the config decides what gets discarded) |
 

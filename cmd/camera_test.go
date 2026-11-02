@@ -14,7 +14,7 @@ const (
 	g4Instrume = "Gx/Cx USB"
 )
 
-func TestDetectCamera(t *testing.T) {
+func TestDetectCameraName(t *testing.T) {
 	tests := []struct {
 		name      string
 		instrume  string
@@ -26,18 +26,20 @@ func TestDetectCamera(t *testing.T) {
 		{"c3 case-insensitive", "MORAVIAN INSTRUMENTS, C3-61000EC PRO", "c3", true},
 		{"g4 padded", "  Gx/Cx USB  ", "g4", true},
 		{"c3 with firmware suffix", "Moravian Instruments, C3-61000EC PRO (fw 1.2)", "c3", true},
-		{"another camera", "ZWO ASI2600MM Pro", "", false},
+		{"asi2600 exact", "ZWO ASI2600MM Pro", "asi2600", true},
+		{"asi2600 colour", "zwo asi2600mc pro", "asi2600", true},
+		{"another camera", "QHY268M", "", false},
 		{"empty", "", "", false},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			profile, ok := detectCamera(tc.instrume)
+			name, ok := detectCameraName(tc.instrume)
 			if ok != tc.wantFound {
-				t.Fatalf("detectCamera(%q) found = %v, want %v", tc.instrume, ok, tc.wantFound)
+				t.Fatalf("detectCameraName(%q) found = %v, want %v", tc.instrume, ok, tc.wantFound)
 			}
-			if ok && profile.name != tc.want {
-				t.Errorf("detectCamera(%q) = %q, want %q", tc.instrume, profile.name, tc.want)
+			if ok && name != tc.want {
+				t.Errorf("detectCameraName(%q) = %q, want %q", tc.instrume, name, tc.want)
 			}
 		})
 	}
@@ -71,12 +73,12 @@ func TestCameraFromLightsUsesEarliestSession(t *testing.T) {
 	writeLight("2026-09-11", "S", g4Instrume)
 	writeLight("2026-09-10", "H", c3Instrume)
 
-	profile, err := cameraFromLights(filepath.Join(root, lightsDir, target))
+	name, err := cameraNameFromLights(filepath.Join(root, lightsDir, target))
 	if err != nil {
-		t.Fatalf("cameraFromLights: %v", err)
+		t.Fatalf("cameraNameFromLights: %v", err)
 	}
-	if profile.name != "c3" {
-		t.Errorf("profile = %q, want c3 from the earliest session", profile.name)
+	if name != "c3" {
+		t.Errorf("camera = %q, want c3 from the earliest session", name)
 	}
 }
 
@@ -101,12 +103,12 @@ func TestCameraFromLightsSkipsUnreadableFrames(t *testing.T) {
 	writeStarFrame(t, good, 200, 200, 1000, 5, 3000, 1.3, 25, 1,
 		fitsio.Card{Name: "INSTRUME", Value: g4Instrume})
 
-	profile, err := cameraFromLights(filepath.Join(root, lightsDir, target))
+	name, err := cameraNameFromLights(filepath.Join(root, lightsDir, target))
 	if err != nil {
-		t.Fatalf("cameraFromLights: %v", err)
+		t.Fatalf("cameraNameFromLights: %v", err)
 	}
-	if profile.name != "g4" {
-		t.Errorf("profile = %q, want g4 after skipping the unreadable frame", profile.name)
+	if name != "g4" {
+		t.Errorf("camera = %q, want g4 after skipping the unreadable frame", name)
 	}
 }
 
@@ -115,18 +117,18 @@ func TestCameraFromLightsUnknownInstrumeIsFatalWithHint(t *testing.T) {
 	root := t.TempDir()
 
 	f := prepareFixture{
-		instrume: "ZWO ASI2600MM Pro",
+		instrume: "QHY268M",
 		lights: map[string]map[string]map[string][]string{
 			target: {"2026-09-10": {"H": {lightName(target, "H", "20260910", "220000", "000", "310")}}},
 		},
 	}
 	f.build(t, root)
 
-	_, err := cameraFromLights(filepath.Join(root, lightsDir, target))
+	_, err := cameraNameFromLights(filepath.Join(root, lightsDir, target))
 	if err == nil {
-		t.Fatal("cameraFromLights accepted an unknown INSTRUME")
+		t.Fatal("cameraNameFromLights accepted an unknown INSTRUME")
 	}
-	for _, want := range []string{"ZWO ASI2600MM Pro", "--camera c3", "--camera g4"} {
+	for _, want := range []string{"QHY268M", "--camera c3", "--camera g4"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
@@ -227,5 +229,47 @@ func TestPrepareExplicitCameraDoesNotNeedInstrume(t *testing.T) {
 
 	if err := runPrepare(opts); err != nil {
 		t.Fatalf("an explicit --camera must not require INSTRUME: %v", err)
+	}
+}
+
+// TestResolveCameraASI2600NotImplemented pins the distinction between a typo and
+// a camera we can identify but cannot prepare yet. The lookup must not fall back
+// to another camera's filename rules.
+func TestResolveCameraASI2600NotImplemented(t *testing.T) {
+	// The lights directory need not exist: an explicit name is resolved without
+	// reading any file.
+	_, err := resolveCamera("asi2600", filepath.Join(t.TempDir(), "absent"))
+	if err == nil {
+		t.Fatal("resolveCamera accepted asi2600 without a profile")
+	}
+	for _, want := range []string{"asi2600", "not implemented"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestPrepareAutoASI2600NotImplemented(t *testing.T) {
+	const target = "M51"
+	root := t.TempDir()
+	f := simpleFixture(target)
+	f.instrume = "ZWO ASI2600MM Pro"
+	f.build(t, root)
+
+	out := t.TempDir()
+	opts := prepareOptionsForTest(target, root, out)
+	opts.camera = cameraAuto
+
+	err := runPrepare(opts)
+	if err == nil {
+		t.Fatal("runPrepare prepared an ASI2600 target without a filename structure")
+	}
+	for _, want := range []string{"asi2600", "not implemented"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(out, target)); !os.IsNotExist(statErr) {
+		t.Errorf("output was written despite the camera having no profile (stat err: %v)", statErr)
 	}
 }

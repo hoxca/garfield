@@ -74,6 +74,9 @@ prepare:
   #        from it. Detection is mandatory in this mode: a missing or
   #        unrecognised INSTRUME is fatal, because guessing the instrument
   #        would silently match the wrong flats and masters.
+  #        The ZWO ASI2600 is recognised too (INSTRUME ASI2600), but its
+  #        filename structure is not implemented yet, so preparing it stops
+  #        with an explicit error.
   #
   # c3 = Moravian C3: filenames carry a position angle and a gain setting.
   # g4 = Moravian G4 (CCD): no rotator and no gain, so position angle is

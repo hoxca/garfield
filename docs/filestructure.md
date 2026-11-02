@@ -53,7 +53,10 @@ session tree that can be imported into WBPP (PixInsight) in one step.
 Two cameras have written into this tree, and their filenames differ. `--camera`
 selects which convention is read; the directory structure is the same for both.
 The default, `auto`, reads `INSTRUME` from the target's first light frame and
-chooses `c3` or `g4` from it (§7.1).
+chooses `c3` or `g4` from it (§7.1). A third instrument, the ZWO ASI2600, is
+recognised from `INSTRUME` but has no filename grammar yet: it is detected, then
+refused with a `not implemented` error rather than prepared under another
+camera's rules.
 
 ```
 <input>/
@@ -116,7 +119,7 @@ Each subtree is scanned to a **fixed depth**, and nothing recurses further:
 | Flag | Default | Effect |
 |---|---|---|
 | `--flat-count` | `0` | Flats per filter and angle. `0` keeps a session to its own date; `N` tops it up from neighbouring nights (§3.2). |
-| `--camera` | `auto` | Filename convention and matching policy: `auto` reads `INSTRUME` from the first light, `c3` (rotator and gain) and `g4` (fixed angle, no gain) pin it. An unknown value is rejected. |
+| `--camera` | `auto` | Filename convention and matching policy: `auto` reads `INSTRUME` from the first light, `c3` (rotator and gain) and `g4` (fixed angle, no gain) pin it. `asi2600` is recognised but has no grammar yet. An unknown value is rejected. |
 
 `conf/garfield.yaml` ships `flat-count: 0`, so borrowing is opt-in.
 
@@ -797,16 +800,23 @@ test in the appendix.
 `cameraProfileFor` resolves an explicit `--camera` and **rejects an unknown
 value** rather than falling back. `resolveCamera` is the entry point: `c3` and
 `g4` return their profile without touching the data, while `auto` (the default)
-calls `cameraFromLights`.
+calls `cameraNameFromLights`.
 
-`cameraFromLights` reads `INSTRUME` from the first FITS frame of the
+`cameraNameFromLights` reads `INSTRUME` from the first FITS frame of the
 chronologically first `YYYY-MM-DD` session, in sorted filter and filename order.
-`C3-61000` selects `c3`; `Gx/Cx USB` selects `g4`; matching is case-insensitive
-and by substring, so a model or firmware suffix still resolves. A frame whose
-header cannot be read, or which carries no `INSTRUME`, is skipped in favour of
-the next; a frame naming an unrecognised instrument stops the search. In auto
-mode a failure is fatal and names `--camera c3` / `--camera g4`, because guessing
-the profile would silently match the wrong flats and masters.
+`C3-61000` selects `c3`; `Gx/Cx USB` selects `g4`; `ASI2600` selects
+`asi2600`. Matching is case-insensitive and by substring, so a model or firmware
+suffix still resolves. A frame whose header cannot be read, or which carries no
+`INSTRUME`, is skipped in favour of the next; a frame naming an unrecognised
+instrument stops the search. In auto mode a failure is fatal and names
+`--camera c3` / `--camera g4`, because guessing the profile would silently match
+the wrong flats and masters.
+
+`asi2600` is in `knownCameras` but not in `cameraProfiles`: detection can name
+it, and doing so is fatal with `filename structure is not implemented yet`.
+That distinction matters — the operator is told the camera was seen and the
+grammar is missing, rather than that the flag is wrong. Adding the grammar later
+only fills in `cameraProfiles`.
 
 Silently preparing a target with the other camera's rules would match flats
 across angles that never shared them, or find no calibration at all.
@@ -1168,8 +1178,9 @@ each half gets its own baseline. `prepare` uses the real session directory.
 | `--target` missing | `--target is required` |
 | `--input` or `--output` empty | `... cannot be empty` |
 | `--flat-count` negative | `--flat-count cannot be negative, got %d` |
-| `--camera` not `auto`/`c3`/`g4` | `unknown --camera %q, want auto, c3 or g4` |
+| `--camera` not `auto`/`c3`/`g4`/`asi2600` | `unknown --camera %q, want auto, c3, g4 or asi2600` |
 | `--camera auto` and no usable `INSTRUME` | `cannot detect the camera: ...; pass --camera c3 or --camera g4 ...` |
+| `--camera asi2600`, or ASI2600 detected | `camera "asi2600" is recognised but its filename structure is not implemented yet` |
 | `Lights/<target>` absent | `target %q not found in %q` |
 | No date directories | `no session (YYYY-MM-DD directory) found in %q` |
 | More than one angle in a session | `mixed angles: session ... multiple angles ...` (§2.4) |
@@ -1274,7 +1285,9 @@ Things that will bite, ranked by how quietly they fail:
 
 9. **`--camera auto` needs a usable `INSTRUME`.** The default reads the first
    light's header and stops the run if it is missing or unrecognised. Pass
-   `--camera c3` or `--camera g4` to bypass detection (§7.1, §11.1).
+   `--camera c3` or `--camera g4` to bypass detection (§7.1, §11.1). An
+   ASI2600 is recognised but has no filename grammar yet, so it is detected and
+   then refused explicitly.
 
 ---
 

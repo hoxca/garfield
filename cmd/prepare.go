@@ -330,8 +330,10 @@ var g4Camera = cameraProfile{
 	},
 }
 
-// cameraProfiles maps the --camera values to their profiles. Order is not
-// meaningful; the map is only a lookup.
+// cameraProfiles maps the implemented --camera values to their profiles. Order
+// is not meaningful; the map is only a lookup. A camera listed in knownCameras
+// but absent here is recognised by header detection yet has no filename grammar
+// implemented, which cameraProfileFor reports as such rather than as a typo.
 var cameraProfiles = map[string]cameraProfile{
 	"c3": c3Camera,
 	"g4": g4Camera,
@@ -340,13 +342,18 @@ var cameraProfiles = map[string]cameraProfile{
 // cameraProfileFor resolves a --camera value. An unknown value is rejected
 // rather than falling back to a default: silently preparing a target with the
 // wrong matching rules would match flats across angles that never shared them,
-// or find no calibration at all.
+// or find no calibration at all. A known camera whose grammar is not implemented
+// yet gets its own message, so the operator can tell "not built" from "typed
+// wrong".
 func cameraProfileFor(name string) (cameraProfile, error) {
-	p, ok := cameraProfiles[name]
-	if !ok {
-		return cameraProfile{}, fmt.Errorf("unknown --camera %q, want auto, c3 or g4", name)
+	if p, ok := cameraProfiles[name]; ok {
+		return p, nil
 	}
-	return p, nil
+	if knownCameras[name] {
+		return cameraProfile{}, fmt.Errorf(
+			"camera %q is recognised but its filename structure is not implemented yet", name)
+	}
+	return cameraProfile{}, fmt.Errorf("unknown --camera %q, want auto, c3, g4 or asi2600", name)
 }
 
 // biasKeyNoun names what this camera keys a master bias on, for messages. The
@@ -430,7 +437,7 @@ func init() {
 	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "show the plan without copying")
 	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "do not overwrite existing files")
 	prepareCmd.Flags().StringVar(&prepareOpts.camera, "camera", cameraAuto,
-		"camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain) or g4 (fixed angle, no gain)")
+		"camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (detected, not implemented yet)")
 	prepareCmd.Flags().IntVar(&prepareOpts.targetFlats, "flat-count", 0,
 		"flats to collect per filter and angle; 0 = the session's own date only")
 	prepareCmd.Flags().BoolVar(&prepareOpts.quiet, "quiet", false, "suppress console output")
