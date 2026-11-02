@@ -965,8 +965,12 @@ func planSessions(lightsRoot, flatsRoot, target string, targetFlats int, profile
 		fatal    []string
 	)
 
+	// One cache for the whole target: neighbouring sessions borrow from the
+	// same dates, and each date's flats are read once.
+	flats := newFlatCache(flatsRoot, profile)
+
 	for i, date := range dates {
-		s, warns, err := planSession(filepath.Join(lightsRoot, date), flatsRoot, i+1, date, dates, targetFlats, profile)
+		s, warns, err := planSession(filepath.Join(lightsRoot, date), flats, i+1, date, dates, targetFlats, profile)
 		if err != nil {
 			// A fault in the data is collected and reported with the others; a
 			// directory that could not be read is not, since planning on from
@@ -1026,16 +1030,17 @@ func mixedAnglesAcrossSessions(sessions []sessionPlan, target string) string {
 
 // planSession builds the plan for a single session directory.
 //
-// flatsRoot is the Flats directory of the acquisition tree, not this session's
-// flat directory: a session short of flats borrows from its neighbours, so the
-// neighbouring dates have to be reachable. targetDates is every date directory
-// this target acquired on, in order, and bounds where a borrowed flat may come
-// from -- only dates the target itself observed.
+// flats is the run-scoped index of the acquisition tree's Flats directory, not
+// a path: a session short of flats borrows from its neighbours, so the
+// neighbouring dates have to be reachable, and the cache keeps that from
+// re-reading the same dates once per session. targetDates is every date
+// directory this target acquired on, in order, and bounds where a borrowed flat
+// may come from -- only dates the target itself observed.
 //
 // targetFlats is how many flats the session wants per filter and angle. At zero
 // there is no goal: the session keeps its own date's frames, reaches into no
 // neighbour, and is never reported short.
-func planSession(sessionDir, flatsRoot string, number int, date string, targetDates []string, targetFlats int, profile cameraProfile) (sessionPlan, []string, error) {
+func planSession(sessionDir string, flats *flatCache, number int, date string, targetDates []string, targetFlats int, profile cameraProfile) (sessionPlan, []string, error) {
 	s := sessionPlan{
 		number:  number,
 		date:    date,
@@ -1130,7 +1135,8 @@ func planSession(sessionDir, flatsRoot string, number int, date string, targetDa
 		paLabel = fmt.Sprintf(" (PA%s)", s.pa)
 	}
 	for _, filter := range s.filterNames() {
-		matched, searched := collectFlats(flatsRoot, date, s.pa, filter, targetDates, targetFlats, profile)
+		matched, searched, flatWarnings := collectFlatsWithCache(flats, date, s.pa, filter, targetDates, targetFlats)
+		warnings = append(warnings, flatWarnings...)
 		switch {
 		case len(matched) == 0:
 			s.missingFlats = append(s.missingFlats, filter)
@@ -1155,6 +1161,38 @@ func planSession(sessionDir, flatsRoot string, number int, date string, targetDa
 	return s, warnings, nil
 }
 
+// flatCache indexes a target's Flats directory once per date for the whole run.
+// Each session consults several dates (its own and, when borrowing, its
+// neighbours), and neighbouring sessions consult the same dates again, so
+// re-reading them per filter and per session is both wasted I/O and a way to
+// repeat the same warning once per filter. The cache is per run, not per
+// session, so a malformed flat is reported once.
+type flatCache struct {
+	root    string
+	profile cameraProfile
+	indexes map[string]map[string][]string
+}
+
+func newFlatCache(root string, profile cameraProfile) *flatCache {
+	return &flatCache{
+		root:    root,
+		profile: profile,
+		indexes: map[string]map[string][]string{},
+	}
+}
+
+// index returns the flats under date grouped by filter and angle. Warnings are
+// returned only the first time a date is read, which is what keeps a single
+// unusable flat from being reported once per filter that consults the date.
+func (c *flatCache) index(date string) (map[string][]string, []string) {
+	if idx, ok := c.indexes[date]; ok {
+		return idx, nil
+	}
+	idx, warnings := indexFlats(filepath.Join(c.root, date), c.profile)
+	c.indexes[date] = idx
+	return idx, warnings
+}
+
 // collectFlats gathers up to target flats for one filter and angle,
 // starting on the session's own date and then walking outward through the
 // target's dates -- previous first, then next -- until the count is reached or
@@ -1171,10 +1209,16 @@ func planSession(sessionDir, flatsRoot string, number int, date string, targetDa
 // unguarded would be true immediately at zero and hand back no flats at all,
 // which would look like a night that shot none rather than a run that declined
 // to borrow.
-func collectFlats(flatRoot, date, pa, filter string, targetDates []string, target int, profile cameraProfile) ([]flatRef, []string) {
+//
+// The caller receives indexFlats's warnings alongside the matches, so a flat
+// that carried an unknown filter or no position angle is reported rather than
+// silently dropped. The uncached wrapper below keeps the old two-value shape
+// for the tests that only care about matching.
+func collectFlatsWithCache(c *flatCache, date, pa, filter string, targetDates []string, target int) ([]flatRef, []string, []string) {
 	var (
 		matched  []flatRef
 		searched []string
+		warnings []string
 	)
 
 	pos := -1
@@ -1187,7 +1231,7 @@ func collectFlats(flatRoot, date, pa, filter string, targetDates []string, targe
 	if pos < 0 {
 		// The session's own date is not in the target's list, so there is
 		// nothing to walk outward from. Reported as searched-but-empty.
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// The session's own date first, then each neighbour in turn. Distance
@@ -1198,7 +1242,8 @@ func collectFlats(flatRoot, date, pa, filter string, targetDates []string, targe
 		if target > 0 {
 			searched = append(searched, d)
 		}
-		index, _ := indexFlats(filepath.Join(flatRoot, d), profile)
+		index, indexWarnings := c.index(d)
+		warnings = append(warnings, indexWarnings...)
 		for _, name := range index[flatKey(filter, pa)] {
 			if target > 0 && len(matched) >= target {
 				break
@@ -1214,6 +1259,16 @@ func collectFlats(flatRoot, date, pa, filter string, targetDates []string, targe
 		}
 	}
 
+	return matched, searched, warnings
+}
+
+// collectFlats is the uncached convenience form used by tests and single-shot
+// callers: one fresh cache, warnings discarded. Production planning goes
+// through collectFlatsWithCache with a run-scoped cache so warnings reach the
+// operator.
+func collectFlats(flatRoot, date, pa, filter string, targetDates []string, target int, profile cameraProfile) ([]flatRef, []string) {
+	c := newFlatCache(flatRoot, profile)
+	matched, searched, _ := collectFlatsWithCache(c, date, pa, filter, targetDates, target)
 	return matched, searched
 }
 

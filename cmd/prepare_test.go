@@ -2190,3 +2190,58 @@ func TestPrepareSessionDirPadding(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanSessionsReportsUnusableFlatsOnce checks the two directions of the
+// flat-index warning path: a flat the parser cannot use is surfaced instead of
+// being dropped silently, and it is reported once per run even though every
+// filter of the session consults the same date.
+func TestPlanSessionsReportsUnusableFlatsOnce(t *testing.T) {
+	const target = "TEST"
+	root := t.TempDir()
+
+	f := prepareFixture{
+		lights: map[string]map[string]map[string][]string{
+			target: {
+				"2026-09-10": {
+					"S": {lightName(target, "S", "20260910", "220000", "000", "310")},
+					"H": {lightName(target, "H", "20260910", "230000", "000", "310")},
+				},
+			},
+		},
+		flats: map[string][]string{
+			"2026-09-10": {
+				flatName("S", "41.4", "20260910", "070000", "000", "310"),
+				"FLAT_Ha_41.4s_BIN1_-10C_GA0_20260910_071000_000_PA310.FIT",
+				"FLAT_S_41.4s_BIN1_-10C_GA0_20260910_072000_000.FIT",
+			},
+		},
+	}
+	f.build(t, root)
+
+	_, warnings, err := planSessions(
+		filepath.Join(root, lightsDir, target),
+		filepath.Join(root, flatsDir),
+		target, 0, c3Camera)
+	if err != nil {
+		t.Fatalf("planSessions: %v", err)
+	}
+
+	joined := strings.Join(warnings, "\n")
+	for _, tc := range []struct {
+		name string
+		want int
+	}{
+		{"FLAT_Ha_41.4s_BIN1_-10C_GA0_20260910_071000_000_PA310.FIT", 1},
+		{"FLAT_S_41.4s_BIN1_-10C_GA0_20260910_072000_000.FIT", 1},
+	} {
+		if got := strings.Count(joined, tc.name); got != tc.want {
+			t.Errorf("warnings mention %s %d time(s), want %d:\n%s", tc.name, got, tc.want, joined)
+		}
+	}
+	if !strings.Contains(joined, "no known filter") {
+		t.Errorf("warnings do not name the unknown filter:\n%s", joined)
+	}
+	if !strings.Contains(joined, "no position angle") {
+		t.Errorf("warnings do not name the missing position angle:\n%s", joined)
+	}
+}

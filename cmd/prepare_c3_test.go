@@ -487,8 +487,9 @@ func TestPlanSessionLeavesAngleUnsetOnMixedAngles(t *testing.T) {
 	}
 	f.build(t, root)
 
+	flats := newFlatCache(filepath.Join(root, flatsDir), c3Camera)
 	s, _, err := planSession(filepath.Join(root, lightsDir, target, "2026-09-10"),
-		filepath.Join(root, flatsDir), 1, "2026-09-10", []string{"2026-09-10"}, 0, c3Camera)
+		flats, 1, "2026-09-10", []string{"2026-09-10"}, 0, c3Camera)
 	if err == nil {
 		t.Fatal("planSession succeeded on a mixed-angle session, want a failure")
 	}
