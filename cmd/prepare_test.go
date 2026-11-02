@@ -995,8 +995,19 @@ func TestPrepareUnreadableFrameIsRejected(t *testing.T) {
 	}
 
 	out := t.TempDir()
-	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
-		t.Fatalf("runPrepare: %v", err)
+	opts := prepareOptionsForTest(target, root, out)
+	opts.quiet = false
+	stdout := captureStdout(t, func() {
+		if err := runPrepare(opts); err != nil {
+			t.Errorf("runPrepare: %v", err)
+		}
+	})
+
+	if !strings.Contains(stdout, "reject reason: "+reasonError) {
+		t.Errorf("console does not report the unreadable frame as %q:\n%s", reasonError, stdout)
+	}
+	if strings.Contains(stdout, "ERREUR") {
+		t.Errorf("console still carries the French label:\n%s", stdout)
 	}
 
 	if _, err := os.Stat(filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), sessionLightsDir, "H")); err == nil {
@@ -1008,6 +1019,21 @@ func TestPrepareUnreadableFrameIsRejected(t *testing.T) {
 	}
 	if len(files) != 1 {
 		t.Errorf("got %d rejected frames, want 1", len(files))
+	}
+}
+
+// TestDominantRejectReasonUsesEnglishTokens pins the labels used when a frame
+// has no quality decision. They are console-only, but the operator reads them,
+// and a non-English token would be the odd one out among the decision values.
+func TestDominantRejectReasonUsesEnglishTokens(t *testing.T) {
+	s := sessionPlan{rejectReasons: map[string]int{reasonError: 2, reasonUnknown: 1}}
+	if got, want := s.dominantRejectReason(), "ERROR (2)"; got != want {
+		t.Errorf("dominantRejectReason() = %q, want %q", got, want)
+	}
+
+	empty := sessionPlan{}
+	if got := empty.dominantRejectReason(); got != "" {
+		t.Errorf("dominantRejectReason() on an empty session = %q, want empty", got)
 	}
 }
 

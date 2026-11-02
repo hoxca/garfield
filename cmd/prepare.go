@@ -912,9 +912,9 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 
 		reason := results[i].Decision
 		if results[i].Error != nil {
-			reason = "ERREUR"
+			reason = reasonError
 		} else if reason == "" {
-			reason = "INCONNU"
+			reason = reasonUnknown
 		}
 		s.rejectReasons[reason]++
 	}

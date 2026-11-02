@@ -137,6 +137,20 @@ const (
 	decisionBadSeeing = "REJECTED BAD SEEING"
 )
 
+// Reasons recorded for frames that were rejected without a quality verdict.
+// They live beside the decision values because prepare reports both through the
+// same console summary, and a reason printed to the operator should be a known
+// token rather than an ad-hoc string.
+const (
+	// reasonError marks a frame that could not be analysed at all, e.g. an
+	// unreadable file or one with no HDU.
+	reasonError = "ERROR"
+	// reasonUnknown marks a frame rejected with an empty decision, which the
+	// cascade should never produce; recording it separately makes the bug
+	// visible instead of hiding it under an empty label.
+	reasonUnknown = "UNKNOWN"
+)
+
 func parseFilename(name string) (filter string, date string) {
 	base := strings.TrimSuffix(name, filepath.Ext(name))
 	parts := strings.Split(base, "_")
