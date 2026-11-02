@@ -222,6 +222,21 @@ var g4DarkComboRe = regexp.MustCompile(`masterDark_(\d+)s_([-+]?\d+C)_`)
 // because each requires its token immediately after "masterBias_".
 var g4BiasKeyRe = regexp.MustCompile(`masterBias_([-+]?\d+C)_`)
 
+// asi2600GainRe extracts the gain from a ZWO ASI2600 light. The camera writes
+// the prefix and the value as separate tokens, "_GA_100_OF_50_", where the C3
+// writes one token, "GA100". The offset that follows is fixed and never read.
+var asi2600GainRe = regexp.MustCompile(`_GA_(\d+)_OF_\d+_`)
+
+// asi2600ComboRe extracts the exposure and sensor temperature setpoint of an
+// ASI2600 light. The frame index that follows them is unused; it is matched
+// only to keep the setpoint token terminated, as with g4LightComboRe.
+var asi2600ComboRe = regexp.MustCompile(`_(\d+)s_BIN\d_([-+]?\d+C)_\d+_`)
+
+// asi2600FlatFilterRe extracts the filter from an ASI2600 flat. The frame leads
+// with a per-filter prefix ("FlatRGB_", "FlatHA3_", ...) before _FLAT_, and has
+// no exposure token, so it shares the G4 shape rather than the C3 one.
+var asi2600FlatFilterRe = regexp.MustCompile(`^.+_FLAT_([` + knownFilters + `])_`)
+
 // cameraProfile is the filename convention and matching policy of one
 // acquisition camera. The two are genuinely different instruments -- a C3 has a
 // rotator and a gain setting, the G4 that preceded it has neither -- so the
@@ -244,6 +259,10 @@ type cameraProfile struct {
 
 	// lightDark returns the master dark key a light frame needs.
 	lightDark func(name string) (darkKey, bool)
+	// gainToken returns the gain a light frame was taken at. Set only when
+	// hasGain is true; the token format differs per camera (the C3 writes
+	// "GA0", the ASI2600 writes "GA_0").
+	gainToken func(name string) (string, bool)
 	// darkMaster returns the key a master dark file is indexed under.
 	darkMaster func(base string) (darkKey, bool)
 	// biasKey returns the key a master bias file is indexed under.
@@ -268,6 +287,13 @@ var c3Camera = cameraProfile{
 			return darkKey{}, false
 		}
 		return darkKey{gain: m[3], exposure: exposure, temp: normaliseTemp(m[2])}, true
+	},
+	gainToken: func(name string) (string, bool) {
+		m := gainRe.FindStringSubmatch(name)
+		if m == nil {
+			return "", false
+		}
+		return m[1], true
 	},
 	darkMaster: func(base string) (darkKey, bool) {
 		m := darkComboRe.FindStringSubmatch(base)
@@ -330,28 +356,61 @@ var g4Camera = cameraProfile{
 	},
 }
 
+// asi2600LightDark returns the master dark key an ASI2600 light needs. The
+// camera writes gain as two tokens ("GA_100") and the offset after it, so the
+// key is assembled in the same "GA100" form the masters use, which is also the
+// C3 form. The offset is fixed and deliberately ignored.
+func asi2600LightDark(name string) (darkKey, bool) {
+	combo := asi2600ComboRe.FindStringSubmatch(name)
+	gain := asi2600GainRe.FindStringSubmatch(name)
+	if combo == nil || gain == nil {
+		return darkKey{}, false
+	}
+	exposure, err := strconv.Atoi(combo[1])
+	if err != nil {
+		return darkKey{}, false
+	}
+	return darkKey{gain: "GA" + gain[1], exposure: exposure, temp: normaliseTemp(combo[2])}, true
+}
+
+// asi2600Camera is the ZWO ASI2600. It has a rotator and a numeric gain but a
+// different filename grammar from the C3: the target/type/filter lead is the
+// same, then an unused index, then the gain and offset as separate tokens.
+// Master bias and master dark names are identical to the C3's, so those lookups
+// are shared rather than reimplemented.
+var asi2600Camera = cameraProfile{
+	name:         "asi2600",
+	hasPA:        true,
+	hasGain:      true,
+	flatFilterRe: asi2600FlatFilterRe,
+	isFlat:       func(name string) bool { return strings.Contains(name, "_FLAT_") },
+	lightDark:    asi2600LightDark,
+	gainToken: func(name string) (string, bool) {
+		m := asi2600GainRe.FindStringSubmatch(name)
+		if m == nil {
+			return "", false
+		}
+		return "GA" + m[1], true
+	},
+	darkMaster: c3Camera.darkMaster,
+	biasKey:    c3Camera.biasKey,
+}
+
 // cameraProfiles maps the implemented --camera values to their profiles. Order
-// is not meaningful; the map is only a lookup. A camera listed in knownCameras
-// but absent here is recognised by header detection yet has no filename grammar
-// implemented, which cameraProfileFor reports as such rather than as a typo.
+// is not meaningful; the map is only a lookup.
 var cameraProfiles = map[string]cameraProfile{
-	"c3": c3Camera,
-	"g4": g4Camera,
+	"c3":      c3Camera,
+	"g4":      g4Camera,
+	"asi2600": asi2600Camera,
 }
 
 // cameraProfileFor resolves a --camera value. An unknown value is rejected
 // rather than falling back to a default: silently preparing a target with the
 // wrong matching rules would match flats across angles that never shared them,
-// or find no calibration at all. A known camera whose grammar is not implemented
-// yet gets its own message, so the operator can tell "not built" from "typed
-// wrong".
+// or find no calibration at all.
 func cameraProfileFor(name string) (cameraProfile, error) {
 	if p, ok := cameraProfiles[name]; ok {
 		return p, nil
-	}
-	if knownCameras[name] {
-		return cameraProfile{}, fmt.Errorf(
-			"camera %q is recognised but its filename structure is not implemented yet", name)
 	}
 	return cameraProfile{}, fmt.Errorf("unknown --camera %q, want auto, c3, g4 or asi2600", name)
 }
@@ -437,7 +496,7 @@ func init() {
 	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "show the plan without copying")
 	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "do not overwrite existing files")
 	prepareCmd.Flags().StringVar(&prepareOpts.camera, "camera", cameraAuto,
-		"camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (detected, not implemented yet)")
+		"camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (rotator and gain)")
 	prepareCmd.Flags().IntVar(&prepareOpts.targetFlats, "flat-count", 0,
 		"flats to collect per filter and angle; 0 = the session's own date only")
 	prepareCmd.Flags().BoolVar(&prepareOpts.quiet, "quiet", false, "suppress console output")
@@ -1097,9 +1156,11 @@ func planSession(sessionDir string, flats *flatCache, number int, date string, t
 				}
 			}
 			if profile.hasGain {
-				if m := gainRe.FindStringSubmatch(f); m != nil {
-					gainSeen[m[1]] = true
-					biasSeen[m[1]] = true
+				if profile.gainToken != nil {
+					if gain, ok := profile.gainToken(f); ok {
+						gainSeen[gain] = true
+						biasSeen[gain] = true
+					}
 				}
 			} else if key, ok := profile.lightDark(f); ok {
 				// Without a gain token the bias is keyed on the setpoint, so

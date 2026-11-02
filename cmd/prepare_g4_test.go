@@ -98,6 +98,9 @@ func TestCameraProfilesAreDisjoint(t *testing.T) {
 	g4Light := g4LightName("IC1805HA", "H", "900s", "-20C", "20201024", "204428", "998")
 	g4Flat := g4FlatName("IC1805", "S", "-20C", "20201024", "071758", "808")
 
+	asiLight := asiLightName("SH2-142", "H", "20260812", "001427", "410", "97")
+	asiFlat := asiFlatName("FlatHA3", "H", "20260818", "055255", "451", "97")
+
 	t.Run("c3 names do not parse as g4", func(t *testing.T) {
 		if _, ok := g4Camera.lightDark(c3Light); ok {
 			t.Error("g4Camera accepted a C3 light")
@@ -131,6 +134,24 @@ func TestCameraProfilesAreDisjoint(t *testing.T) {
 		}
 		if c3Camera.isFlat(g4Flat) {
 			t.Error("c3Camera claims a G4 flat as its own, so it would be reported")
+		}
+	})
+
+	t.Run("c3 names do not parse as asi2600", func(t *testing.T) {
+		if _, ok := asi2600Camera.lightDark(c3Light); ok {
+			t.Error("asi2600Camera accepted a C3 light")
+		}
+		if asi2600Camera.flatFilterRe.MatchString(c3Flat) {
+			t.Error("asi2600Camera accepted a C3 flat")
+		}
+	})
+
+	t.Run("asi2600 names do not parse as c3", func(t *testing.T) {
+		if _, ok := c3Camera.lightDark(asiLight); ok {
+			t.Error("c3Camera accepted an ASI2600 light")
+		}
+		if c3Camera.flatFilterRe.MatchString(asiFlat) {
+			t.Error("c3Camera accepted an ASI2600 flat")
 		}
 	})
 }

@@ -28,17 +28,6 @@ const (
 	asi2600Instrument = "ASI2600"
 )
 
-// knownCameras lists every --camera value that names an acquisition camera.
-// It includes instruments whose filename structure is not implemented yet: an
-// exclusion from cameraProfiles means "recognised but not preparable", which is
-// a different message from a typo. Adding the profile later needs no change
-// here.
-var knownCameras = map[string]bool{
-	"c3":      true,
-	"g4":      true,
-	"asi2600": true,
-}
-
 // detectCameraName maps an INSTRUME value to the camera it names. ok is false
 // for a value that names no camera this tool knows.
 func detectCameraName(instrume string) (name string, ok bool) {
@@ -127,9 +116,7 @@ func cameraNameFromLights(lightsRoot string) (string, error) {
 
 // resolveCamera turns the --camera value into a profile. "auto" (and the empty
 // value, which a zero prepareOptions carries) reads the header; an explicit
-// name is resolved directly, without touching the FITS files. A recognised
-// camera without a profile fails here rather than planning with another
-// camera's rules.
+// name is resolved directly, without touching the FITS files.
 func resolveCamera(name, lightsRoot string) (cameraProfile, error) {
 	if name == "" || name == cameraAuto {
 		detected, err := cameraNameFromLights(lightsRoot)
