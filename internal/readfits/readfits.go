@@ -3,9 +3,41 @@ package readfits
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/astrogo/fitsio"
 )
+
+// ReadHeaderString reads one string-valued card from the primary image header.
+// found is false when the card is absent or holds a non-string value, which
+// callers treat as "not recorded" rather than as an error.
+func ReadHeaderString(filename, keyword string) (value string, found bool, err error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return "", false, fmt.Errorf("unable to open file: %w", err)
+	}
+	defer f.Close()
+
+	r, err := fitsio.Open(f)
+	if err != nil {
+		return "", false, fmt.Errorf("unable to initialize FITS reader: %w", err)
+	}
+	defer r.Close()
+
+	hdu := r.HDU(0)
+	if _, ok := hdu.(fitsio.Image); !ok {
+		return "", false, fmt.Errorf("primary HDU is not an image layer")
+	}
+	card := hdu.Header().Get(keyword)
+	if card == nil {
+		return "", false, nil
+	}
+	s, ok := card.Value.(string)
+	if !ok {
+		return "", false, nil
+	}
+	return strings.TrimSpace(s), true, nil
+}
 
 // ReadDimensions reports the width and height of the primary image HDU without
 // reading the pixel data. The worker planner uses it to size a frame's working

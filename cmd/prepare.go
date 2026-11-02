@@ -344,7 +344,7 @@ var cameraProfiles = map[string]cameraProfile{
 func cameraProfileFor(name string) (cameraProfile, error) {
 	p, ok := cameraProfiles[name]
 	if !ok {
-		return cameraProfile{}, fmt.Errorf("unknown --camera %q, want c3 or g4", name)
+		return cameraProfile{}, fmt.Errorf("unknown --camera %q, want auto, c3 or g4", name)
 	}
 	return p, nil
 }
@@ -376,7 +376,7 @@ type prepareOptions struct {
 	target       string
 	input        string
 	output       string
-	camera       string // "c3" or "g4"; see cameraProfile
+	camera       string // "auto", "c3" or "g4"; see cameraProfile and resolveCamera
 	dryRun       bool
 	skipExisting bool
 	quiet        bool
@@ -429,8 +429,8 @@ func init() {
 	prepareCmd.Flags().StringVarP(&prepareOpts.output, "output", "o", defaultPrepareOutput, "destination root")
 	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "show the plan without copying")
 	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "do not overwrite existing files")
-	prepareCmd.Flags().StringVar(&prepareOpts.camera, "camera", "c3",
-		"camera the filenames come from: c3 (rotator and gain) or g4 (fixed angle, no gain)")
+	prepareCmd.Flags().StringVar(&prepareOpts.camera, "camera", cameraAuto,
+		"camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain) or g4 (fixed angle, no gain)")
 	prepareCmd.Flags().IntVar(&prepareOpts.targetFlats, "flat-count", 0,
 		"flats to collect per filter and angle; 0 = the session's own date only")
 	prepareCmd.Flags().BoolVar(&prepareOpts.quiet, "quiet", false, "suppress console output")
@@ -557,11 +557,6 @@ func runPrepare(opts prepareOptions) error {
 	if opts.targetFlats < 0 {
 		return fmt.Errorf("--flat-count cannot be negative, got %d", opts.targetFlats)
 	}
-	profile, err := cameraProfileFor(opts.camera)
-	if err != nil {
-		return err
-	}
-
 	lightsRoot := filepath.Join(opts.input, lightsDir, opts.target)
 	info, err := os.Stat(lightsRoot)
 	if err != nil {
@@ -572,6 +567,16 @@ func runPrepare(opts prepareOptions) error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("%q is not a directory", lightsRoot)
+	}
+
+	// Camera detection reads the header of the target's first light frame, so
+	// it needs the Lights directory to exist first. In auto mode a missing or
+	// unrecognised INSTRUME is fatal: guessing the instrument would silently
+	// match the wrong flats and masters.
+	detectedCamera := opts.camera == "" || opts.camera == cameraAuto
+	profile, err := resolveCamera(opts.camera, lightsRoot)
+	if err != nil {
+		return err
 	}
 
 	targetOut := filepath.Join(opts.output, opts.target)
@@ -613,8 +618,12 @@ func runPrepare(opts prepareOptions) error {
 	}
 
 	if !opts.quiet {
-		fmt.Printf("\n%s of %q (%d session(s)) into %q%s\n\n",
+		fmt.Printf("\n%s of %q (%d session(s)) into %q%s\n",
 			prepareVerb(opts.dryRun), opts.target, len(sessions), targetOut, dryRunSuffix(opts.dryRun))
+		if detectedCamera {
+			fmt.Printf("camera: %s detected from FITS header\n", profile.name)
+		}
+		fmt.Println()
 		if !opts.dryRun {
 			fmt.Printf("Analysing the quality of %d image(s) (max-fwhm-sigma=%s, max-halo=%s, max-structure=%s), this can take several minutes...\n\n",
 				totalLightCount(sessions),

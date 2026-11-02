@@ -704,3 +704,25 @@ func TestReadDimensionsRejectsMissingFile(t *testing.T) {
 		t.Fatal("ReadDimensions succeeded on a missing file")
 	}
 }
+
+func TestReadHeaderString(t *testing.T) {
+	dir := t.TempDir()
+	data := ramp16(4)
+	path := writeFITS(t, dir, "header.fits", 16, []int{2, 2}, &data,
+		fitsio.Card{Name: "INSTRUME", Value: "Gx/Cx USB"})
+
+	got, found, err := ReadHeaderString(path, "INSTRUME")
+	if err != nil {
+		t.Fatalf("ReadHeaderString: %v", err)
+	}
+	if !found {
+		t.Fatal("INSTRUME card was not found")
+	}
+	if got != "Gx/Cx USB" {
+		t.Errorf("INSTRUME = %q, want %q", got, "Gx/Cx USB")
+	}
+
+	if _, found, err := ReadHeaderString(path, "ABSENT"); err != nil || found {
+		t.Errorf("absent card: found=%v err=%v, want found=false and no error", found, err)
+	}
+}

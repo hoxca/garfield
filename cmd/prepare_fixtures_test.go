@@ -40,6 +40,10 @@ type prepareFixture struct {
 	darks map[string]string
 	// camera selects the filename convention. Empty means c3.
 	camera string
+	// instrume is written into the primary header of every light frame as
+	// INSTRUME. Empty writes no card, which is right for a fixture that pins
+	// --camera explicitly and never runs detection.
+	instrume string
 }
 
 // build writes the fixture under root and returns it.
@@ -54,7 +58,7 @@ func (f prepareFixture) build(t *testing.T, root string) {
 					t.Fatalf("mkdir %s: %v", dir, err)
 				}
 				for _, n := range names {
-					writeFixtureFrame(t, dir, n)
+					writeFixtureFrame(t, dir, n, f.instrume)
 				}
 			}
 		}
@@ -132,7 +136,7 @@ func writeStub(t *testing.T, path string) {
 // Light frames carry a dense grid of Gaussian stars so processImage approves
 // them under the default thresholds. Flat frames are never analysed, so they
 // stay cheap stubs.
-func writeFixtureFrame(t *testing.T, dir, name string) string {
+func writeFixtureFrame(t *testing.T, dir, name, instrume string) string {
 	t.Helper()
 
 	path := filepath.Join(dir, name)
@@ -140,7 +144,11 @@ func writeFixtureFrame(t *testing.T, dir, name string) string {
 		writeStub(t, path)
 		return path
 	}
-	writeStarFrame(t, path, 900, 900, 1000, 5, 3000, 1.3, 25, 11)
+	var cards []fitsio.Card
+	if instrume != "" {
+		cards = append(cards, fitsio.Card{Name: "INSTRUME", Value: instrume})
+	}
+	writeStarFrame(t, path, 900, 900, 1000, 5, 3000, 1.3, 25, 11, cards...)
 	return path
 }
 
@@ -150,7 +158,7 @@ func writeFixtureFrame(t *testing.T, dir, name string) string {
 // than that to be approved. At a 25px spacing a 900x900 frame yields roughly
 // 1200 detections, comfortably over the bar, while still analysing in a few
 // milliseconds.
-func writeStarFrame(t *testing.T, path string, w, h int, level, noise, amp, sigma float64, spacing int, seed int64) {
+func writeStarFrame(t *testing.T, path string, w, h int, level, noise, amp, sigma float64, spacing int, seed int64, cards ...fitsio.Card) {
 	t.Helper()
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -186,6 +194,11 @@ func writeStarFrame(t *testing.T, path string, w, h int, level, noise, amp, sigm
 	defer tf.Close()
 
 	img := fitsio.NewImage(-32, []int{w, h})
+	for _, c := range cards {
+		if err := img.Header().Append(c); err != nil {
+			t.Fatalf("append card %s to %s: %v", c.Name, path, err)
+		}
+	}
 	if err := img.Write(&pix); err != nil {
 		t.Fatalf("write pixels to %s: %v", path, err)
 	}
