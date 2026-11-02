@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1501,10 +1500,6 @@ func prepareSession(s sessionPlan, targetOut string, opts prepareOptions) (int, 
 	return lights, flats, nil
 }
 
-// copyBufferSize is the chunk size used when streaming a frame. Frames are
-// around 120 MB, so copying them whole would spike memory across sessions.
-const copyBufferSize = 1 << 20
-
 // biasMaster is one master bias file and the key it is held under: the gain on a
 // C3, the sensor temperature setpoint on the G4.
 type biasMaster struct {
@@ -1972,7 +1967,8 @@ func prepareDarks(targetOut string, keys []darkKey, need map[darkKey][]string,
 
 // copyFITS copies one file, reporting whether it actually wrote anything. In
 // dry-run mode nothing is touched, and with skip-existing an already-present
-// destination is left alone.
+// destination is left alone. The copy itself is atomic: a partial write never
+// lands under the destination name.
 func copyFITS(src, dst string, opts prepareOptions) (bool, error) {
 	if opts.dryRun {
 		return true, nil
@@ -1983,24 +1979,8 @@ func copyFITS(src, dst string, opts prepareOptions) (bool, error) {
 		}
 	}
 
-	in, err := os.Open(src)
-	if err != nil {
-		return false, fmt.Errorf("unable to open %q: %w", src, err)
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return false, fmt.Errorf("unable to create %q: %w", dst, err)
-	}
-
-	buf := make([]byte, copyBufferSize)
-	if _, err := io.CopyBuffer(out, in, buf); err != nil {
-		out.Close()
-		return false, fmt.Errorf("copy failed %q -> %q: %w", src, dst, err)
-	}
-	if err := out.Close(); err != nil {
-		return false, fmt.Errorf("closing %q: %w", dst, err)
+	if err := copyFileAtomic(src, dst); err != nil {
+		return false, err
 	}
 	return true, nil
 }

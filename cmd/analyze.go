@@ -1123,33 +1123,10 @@ func copyRejectedFrames(results []ImageResult, paths []string, opts analyzeOptio
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return copied, warnings, fmt.Errorf("unable to create %q: %w", dir, err)
 		}
-		if err := copyFile(paths[i], dst); err != nil {
+		if err := copyFileAtomic(paths[i], dst); err != nil {
 			return copied, warnings, err
 		}
 		copied++
 	}
 	return copied, warnings, nil
-}
-
-// copyFile streams src to dst. Frames are around 120 MB, so they are not read
-// into memory whole.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("unable to open %q: %w", src, err)
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return fmt.Errorf("unable to create %q: %w", dst, err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return fmt.Errorf("copying to %q: %w", dst, err)
-	}
-	if err := out.Close(); err != nil {
-		return fmt.Errorf("closing %q: %w", dst, err)
-	}
-	return nil
 }
