@@ -48,10 +48,12 @@ session tree that can be imported into WBPP (PixInsight) in one step.
 | `--input`, `-i` | `/Volumes/Dyno/Kosmodrom` |
 | `--output`, `-o` | `/Volumes/T7/Workspace` |
 | `--target`, `-t` | *(required)* |
-| `--camera` | `c3` |
+| `--camera` | `auto` |
 
 Two cameras have written into this tree, and their filenames differ. `--camera`
 selects which convention is read; the directory structure is the same for both.
+The default, `auto`, reads `INSTRUME` from the target's first light frame and
+chooses `c3` or `g4` from it (§7.1).
 
 ```
 <input>/
@@ -114,7 +116,7 @@ Each subtree is scanned to a **fixed depth**, and nothing recurses further:
 | Flag | Default | Effect |
 |---|---|---|
 | `--flat-count` | `0` | Flats per filter and angle. `0` keeps a session to its own date; `N` tops it up from neighbouring nights (§3.2). |
-| `--camera` | `c3` | Filename convention and matching policy: `c3` (rotator and gain) or `g4` (fixed angle, no gain). An unknown value is rejected. |
+| `--camera` | `auto` | Filename convention and matching policy: `auto` reads `INSTRUME` from the first light, `c3` (rotator and gain) and `g4` (fixed angle, no gain) pin it. An unknown value is rejected. |
 
 `conf/garfield.yaml` ships `flat-count: 0`, so borrowing is opt-in.
 
@@ -792,10 +794,22 @@ test in the appendix.
 | `darkMaster` | master dark filename → key |
 | `biasKey` | master bias filename → key |
 
-`cameraProfileFor` resolves `--camera` and **rejects an unknown value** rather
-than falling back. Silently preparing a target with the other camera's rules
-would match flats across angles that never shared them, or find no calibration
-at all.
+`cameraProfileFor` resolves an explicit `--camera` and **rejects an unknown
+value** rather than falling back. `resolveCamera` is the entry point: `c3` and
+`g4` return their profile without touching the data, while `auto` (the default)
+calls `cameraFromLights`.
+
+`cameraFromLights` reads `INSTRUME` from the first FITS frame of the
+chronologically first `YYYY-MM-DD` session, in sorted filter and filename order.
+`C3-61000` selects `c3`; `Gx/Cx USB` selects `g4`; matching is case-insensitive
+and by substring, so a model or firmware suffix still resolves. A frame whose
+header cannot be read, or which carries no `INSTRUME`, is skipped in favour of
+the next; a frame naming an unrecognised instrument stops the search. In auto
+mode a failure is fatal and names `--camera c3` / `--camera g4`, because guessing
+the profile would silently match the wrong flats and masters.
+
+Silently preparing a target with the other camera's rules would match flats
+across angles that never shared them, or find no calibration at all.
 
 The patterns are mutually exclusive, which is what lets both cameras' files share
 one acquisition tree: a name belonging to the inactive profile does not match and
@@ -1154,7 +1168,8 @@ each half gets its own baseline. `prepare` uses the real session directory.
 | `--target` missing | `--target is required` |
 | `--input` or `--output` empty | `... cannot be empty` |
 | `--flat-count` negative | `--flat-count cannot be negative, got %d` |
-| `--camera` not `c3`/`g4` | `unknown --camera %q, want c3 or g4` |
+| `--camera` not `auto`/`c3`/`g4` | `unknown --camera %q, want auto, c3 or g4` |
+| `--camera auto` and no usable `INSTRUME` | `cannot detect the camera: ...; pass --camera c3 or --camera g4 ...` |
 | `Lights/<target>` absent | `target %q not found in %q` |
 | No date directories | `no session (YYYY-MM-DD directory) found in %q` |
 | More than one angle in a session | `mixed angles: session ... multiple angles ...` (§2.4) |
@@ -1181,9 +1196,11 @@ and an earlier revision of this document listed it in both places.
 
 ### 11.1 A wrong `--camera` is loud, and now says so
 
-Pointing the wrong profile at a target still fails safely — nothing matches, and
-the usual warnings fire — but they name filters and masters rather than the
-cause. One extra warning names it:
+With the default `--camera auto`, the wrong profile is normally avoided before
+matching starts: the header decides, and a target with no usable `INSTRUME` stops
+the run. When detection is bypassed with an explicit `--camera`, a contradiction
+still fails safely — nothing matches, and the usual warnings fire — but they name
+filters and masters rather than the cause. One extra warning names it:
 
 ```
 warning: --camera c3 expects a position angle but none of the 15 light frame(s)
@@ -1255,9 +1272,9 @@ Things that will bite, ranked by how quietly they fail:
    `masterFlat_BIN-1_9576x6388_...fit` reports `9576x6388` as its filter
    (§9.1).
 
-9. **`--camera` defaults to `c3`.** A G4 run that omits it finds no position
-   angles, no flats and no masters, and warns once about the likely cause
-   (§11.1). It fails safely, but it does fail — the switch is not inferred.
+9. **`--camera auto` needs a usable `INSTRUME`.** The default reads the first
+   light's header and stops the run if it is missing or unrecognised. Pass
+   `--camera c3` or `--camera g4` to bypass detection (§7.1, §11.1).
 
 ---
 

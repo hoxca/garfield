@@ -83,7 +83,7 @@ concurrency:
 prepare:
   input: /Volumes/Dyno/Kosmodrom
   output: /Volumes/T7/Workspace
-  camera: c3        # c3 (rotator + gain) or g4 (fixed angle, no gain)
+  camera: auto      # auto (INSTRUME), c3 (rotator + gain) or g4 (fixed angle, no gain)
   flat-count: 0     # 0 = the session's own date only
 
 analyze:
@@ -372,7 +372,7 @@ Usage:
   garfield prepare [flags]
 
 Flags:
-      --camera string          camera the filenames come from: c3 (rotator and gain) or g4 (fixed angle, no gain) [config: garfield.yaml] (default "c3")
+      --camera string          camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain) or g4 (fixed angle, no gain) [config: garfield.yaml] (default "auto")
       --conv-workers int       inner convolution workers (0 = auto) [config: garfield.yaml]
       --dry-run                show the plan without copying
       --flat-count int         flats to collect per filter and angle; 0 = the session's own date only [config: garfield.yaml]
@@ -399,18 +399,20 @@ Global Flags:
 
 ### What a run does
 
-1. **Index** the target's date directories as sessions, numbered in
+1. **Detect the camera** from the first light's `INSTRUME` when `--camera` is
+   `auto`; a missing or unrecognised value is fatal.
+2. **Index** the target's date directories as sessions, numbered in
    chronological order.
-2. **Check the angle.** One target must be acquired at one position angle; more
+3. **Check the angle.** One target must be acquired at one position angle; more
    than one is a fatal error, before anything is written.
-3. **Analyse** every light frame and record a verdict.
-4. **Route** each frame: `APPROVED` to `lights/<filter>/`, everything else to
+4. **Analyse** every light frame and record a verdict.
+5. **Route** each frame: `APPROVED` to `lights/<filter>/`, everything else to
    the target-level `rejected/` tree.
-5. **Match flats** by filter *and* angle, on the session's date.
-6. **Copy masters**: biases by gain (C3) or setpoint (G4), darks by gain,
+6. **Match flats** by filter *and* angle, on the session's date.
+7. **Copy masters**: biases by gain (C3) or setpoint (G4), darks by gain,
    exposure *and* setpoint (C3) or exposure and setpoint (G4), only those the
    approved frames actually need.
-7. **Write** `metrics/sessions.csv` and `metrics/frames.csv`.
+8. **Write** `metrics/sessions.csv` and `metrics/frames.csv`.
 
 Start with `--dry-run`. It prints the whole plan without copying, and it costs
 nothing:
@@ -486,7 +488,20 @@ errors — the frames are still usable and calibration can be supplied later.
 
 `--camera` selects the filename convention. Both write into the same tree.
 
-| | `c3` (default) | `g4` |
+The default, `--camera auto`, reads `INSTRUME` from the target's first light
+frame and picks the profile from it: `C3-61000` is the C3, `Gx/Cx USB` is the
+G4. Detection is **mandatory** in auto mode — a missing, unreadable or
+unrecognised `INSTRUME` is fatal, and the error names both explicit choices.
+Guessing the instrument would silently match the wrong flats and masters. The
+result is logged:
+
+```
+camera: c3 detected from FITS header
+```
+
+`--camera c3` or `--camera g4` skips the header read and pins the profile.
+
+| | `c3` | `g4` |
 |---|---|---|
 | Camera | Moravian C3, CMOS | Moravian G4, CCD |
 | Light name | `<target>_LIGHT_<F>_<exp>_BIN_<temp>_GA0_<date>_<time>_<ms>_PA310_E` | `<prefix>_LIGHT_<F>_<exp>_BIN_<temp>_<idx>_<date>_<time>_<ms>_W` |
@@ -630,6 +645,7 @@ Fatal — nothing is written, or the run stops:
 | `--target` missing or `Lights/<target>` absent |
 | `--flat-count` negative |
 | No `YYYY-MM-DD` directories under the target |
+| `--camera auto` (the default) and the first light has no usable `INSTRUME` |
 | More than one position angle in a session, or across a target's sessions |
 | Malformed config YAML (deliberate — the config decides what gets discarded) |
 
@@ -661,9 +677,10 @@ Ranked by how quietly they fail. The full list is
    a pending limitation. Narrowband needs different hardware.
 5. **A rotated target cannot be prepared at all** — on a C3. The G4 has no
    rotator; see the Two cameras table.
-6. **`--camera` defaults to `c3`.** A G4 run that omits it finds no angles, no
-   flats and no masters, then warns once about the likely cause. It fails safely,
-   but it does fail — the switch is not inferred.
+6. **`--camera auto` needs a usable `INSTRUME`.** The header of the target's
+   first light frame must name the C3 or the G4; a missing or unrecognised
+   value stops the run before anything is written. Pass `--camera c3` or
+   `--camera g4` to bypass detection.
 7. **Masters must be `.xisf`.**
 
 ---
