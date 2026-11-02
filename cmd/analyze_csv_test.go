@@ -1015,11 +1015,11 @@ func TestRunAnalyzeRowOrderIsSorted(t *testing.T) {
 	// that emitted rows as they completed would also produce the wrong order.
 	slow := synthOpts{
 		width: 600, height: 600, level: 1000, noise: 5,
-		amp: 3000, sigma: 1.5, spacing: 25, seed: 1,
+		amp: 3000, sigma: 1.3, spacing: 25, seed: 1,
 	}
 	fast := synthOpts{
 		width: 200, height: 200, level: 1000, noise: 5,
-		amp: 3000, sigma: 1.5, spacing: 25, seed: 11,
+		amp: 3000, sigma: 1.3, spacing: 25, seed: 11,
 	}
 
 	// Written in the order: a_slow, e_fast, c_fast, d_fast, b_fast.
@@ -1099,7 +1099,7 @@ func TestRunAnalyzeWorkerInvariance(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		writeFrame(t, dir, string(rune('a'+i))+".FIT", synthOpts{
 			width: 300, height: 300, level: 1000, noise: 5,
-			amp: 3000, sigma: 1.5, spacing: 25, seed: int64(i),
+			amp: 3000, sigma: 1.3, spacing: 25, seed: int64(i),
 		})
 	}
 
@@ -1133,7 +1133,7 @@ func TestRunAnalyzeFormats(t *testing.T) {
 	dir := t.TempDir()
 	writeFrame(t, dir, "a.FIT", synthOpts{
 		width: 300, height: 300, level: 1000, noise: 5,
-		amp: 3000, sigma: 1.5, spacing: 25, seed: 1,
+		amp: 3000, sigma: 1.3, spacing: 25, seed: 1,
 	})
 
 	t.Run("csv to stdout", func(t *testing.T) {
@@ -1353,7 +1353,7 @@ func TestRunAnalyzeErrors(t *testing.T) {
 		frameDir := t.TempDir()
 		writeFrame(t, frameDir, "a.FIT", synthOpts{
 			width: 200, height: 200, level: 1000, noise: 5,
-			amp: 3000, sigma: 1.5, spacing: 25, seed: 1,
+			amp: 3000, sigma: 1.3, spacing: 25, seed: 1,
 		})
 
 		// The output is a directory now, so a missing one is created. Block it
@@ -1381,7 +1381,7 @@ func TestRunAnalyzeRecordsPerFileError(t *testing.T) {
 	dir := t.TempDir()
 	writeFrame(t, dir, "good.FIT", synthOpts{
 		width: 300, height: 300, level: 1000, noise: 5,
-		amp: 3000, sigma: 1.5, spacing: 25, seed: 1,
+		amp: 3000, sigma: 1.3, spacing: 25, seed: 1,
 	})
 	if err := os.WriteFile(filepath.Join(dir, "bad.FIT"), []byte("garbage"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)

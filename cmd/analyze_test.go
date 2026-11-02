@@ -12,13 +12,13 @@ import (
 )
 
 // goodFrameOpts produces a frame that clears every default gate, so each gate
-// can be tripped in isolation. The field is dense enough to exceed minStars=680
-// and sharp enough to stay under maxFWHM=5.
+// can be tripped in isolation. The field is dense enough to exceed minStars=380
+// and sharp enough to stay under maxFWHM=3.2.
 func goodFrameOpts() synthOpts {
 	return synthOpts{
 		width: 1400, height: 1400,
 		level: 1000, noise: 5,
-		amp: 3000, sigma: 1.5,
+		amp: 3000, sigma: 1.3,
 		spacing: 25, seed: 21,
 	}
 }
@@ -39,8 +39,8 @@ func TestDecisionCascadeIsApprovedOnAGoodFrame(t *testing.T) {
 			r.Decision, decisionApproved, r.DetectedStars, r.StarCount,
 			r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Score)
 	}
-	if r.DetectedStars < 680 {
-		t.Fatalf("detected %d stars, the fixture must exceed minStars=680 to exercise the gates", r.DetectedStars)
+	if r.DetectedStars < 380 {
+		t.Fatalf("detected %d stars, the fixture must exceed minStars=380 to exercise the gates", r.DetectedStars)
 	}
 	if r.StarCount == 0 {
 		t.Fatal("starCount is 0; the fixture must produce measurable stars")
@@ -226,9 +226,10 @@ func TestFWHMGateOnDefocusedField(t *testing.T) {
 		wantFWHM float64
 	}{
 		{sigma: 1.0, want: decisionApproved, wantFWHM: 2.355},
-		{sigma: 1.5, want: decisionApproved, wantFWHM: 3.532},
-		{sigma: 2.0, want: decisionApproved, wantFWHM: 4.710},
-		// Past the default maxFWHM of 5.
+		{sigma: 1.3, want: decisionApproved, wantFWHM: 3.061},
+		// Past the default maxFWHM of 3.2.
+		{sigma: 1.5, want: decisionFWHM, wantFWHM: 3.532},
+		{sigma: 2.0, want: decisionFWHM, wantFWHM: 4.710},
 		{sigma: 2.5, want: decisionFWHM, wantFWHM: 5.887},
 		{sigma: 2.9, want: decisionFWHM, wantFWHM: 6.829},
 	}

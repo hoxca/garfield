@@ -13,7 +13,7 @@ func consoleHaloFrame(t *testing.T, dir, name string, haloAmp float64) {
 	t.Helper()
 	writeFrame(t, dir, name, synthOpts{
 		width: 1400, height: 1400, level: 1000, noise: 5,
-		amp: 300, sigma: 1.5, spacing: 40,
+		amp: 300, sigma: 1.3, spacing: 40,
 		brightAmp: 5000, brightHalo: haloAmp,
 		seed: 7,
 	})
@@ -26,7 +26,7 @@ func TestAnalyzeConsoleShowsHaloThresholds(t *testing.T) {
 	dir := t.TempDir()
 	writeFrame(t, dir, "a.FIT", synthOpts{
 		width: 300, height: 300, level: 1000, noise: 5,
-		amp: 3000, sigma: 1.5, spacing: 25, seed: 1,
+		amp: 3000, sigma: 1.3, spacing: 25, seed: 1,
 	})
 
 	o := defaultOpts()
@@ -63,7 +63,7 @@ func TestAnalyzeConsoleShowsThresholdsDisabled(t *testing.T) {
 	for _, name := range []string{"a.FIT", "b.FIT", "c.FIT", "d.FIT", "e.FIT"} {
 		writeFrame(t, dir, name, synthOpts{
 			width: 300, height: 300, level: 1000, noise: 5,
-			amp: 3000, sigma: 1.5, spacing: 25, seed: 1,
+			amp: 3000, sigma: 1.3, spacing: 25, seed: 1,
 		})
 	}
 

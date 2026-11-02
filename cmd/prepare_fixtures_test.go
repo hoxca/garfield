@@ -140,13 +140,13 @@ func writeFixtureFrame(t *testing.T, dir, name string) string {
 		writeStub(t, path)
 		return path
 	}
-	writeStarFrame(t, path, 900, 900, 1000, 5, 3000, 1.5, 25, 11)
+	writeStarFrame(t, path, 900, 900, 1000, 5, 3000, 1.3, 25, 11)
 	return path
 }
 
 // writeStarFrame stamps a synthetic sky of Gaussian stars into a real FITS file.
 //
-// The dimensions matter: minStars defaults to 680, so a field must detect more
+// The dimensions matter: minStars defaults to 380, so a field must detect more
 // than that to be approved. At a 25px spacing a 900x900 frame yields roughly
 // 1200 detections, comfortably over the bar, while still analysing in a few
 // milliseconds.

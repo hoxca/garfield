@@ -1421,10 +1421,10 @@ func TestPrepareFlagDefaults(t *testing.T) {
 		// The quality thresholds must match analyze's defaults exactly, or the
 		// two commands would silently disagree on which frames are usable.
 		"min-snr":   "11",
-		"max-fwhm":  "5",
-		"max-ecc":   "0.54",
+		"max-fwhm":  "3.2",
+		"max-ecc":   "0.64",
 		"min-score": "2",
-		"min-stars": "680",
+		"min-stars": "380",
 		"workers":   "0",
 	}
 	for name, def := range want {

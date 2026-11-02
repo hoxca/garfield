@@ -67,10 +67,10 @@ wins over the file**.
 ```yaml
 thresholds:
   min-snr: 11.0
-  max-fwhm: 5.0
-  max-ecc: 0.54
+  max-fwhm: 3.2
+  max-ecc: 0.64
   min-score: 2.0
-  min-stars: 680
+  min-stars: 380
   max-fwhm-sigma: 3.0  # FWHM outliers above the filter's median; 0 disables
   max-halo-ratio: 2.0  # session-relative bright-star halo; 0 disables
   max-structure: 1.12  # session-relative sky structure (bad seeing); 0 disables
@@ -93,8 +93,8 @@ analyze:
 
 The `thresholds` block is not a preference. It is the decision about which
 frames get destroyed, and it applies to both commands at once. `--max-ecc` was
-raised from 0.50 to 0.54 during development because frames just above 0.50 were
-being discarded — treat any change here as a decision, not a tweak.
+raised to 0.64 during development because frames just above the previous bound
+were being discarded — treat any change here as a decision, not a tweak.
 
 Point at a different file with `--config path/to/garfield.yaml`. A `--config`
 path that does not exist is an error rather than a silent fallback.

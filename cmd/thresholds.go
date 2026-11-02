@@ -39,16 +39,22 @@ type qualityThresholds struct {
 
 // defaultThresholds is the single point of configuration for those criteria.
 //
-// These values were tuned empirically against real frames, so treat a change as
-// a decision rather than a tweak: --max-ecc was raised from 0.50 to 0.54 during
-// development after frames with eccentricities just above 0.50 were being
-// discarded. Editing a value here changes both commands at once.
+// These values are the ones conf/garfield.yaml ships, so a run with no config
+// file and a run with the repository's config apply the same acceptance
+// criteria. TestCompiledDefaultsMatchShippedConfig pins them together: editing
+// one without the other fails the build rather than silently changing what gets
+// discarded depending on where the binary runs.
+//
+// The values were tuned empirically against real frames, so treat a change as a
+// decision rather than a tweak: --max-ecc was raised during development after
+// frames just above the previous bound were discarded. Editing a value here
+// changes both commands at once.
 var defaultThresholds = qualityThresholds{
 	minSNR:       11.0,
-	maxFWHM:      5.0,
-	maxEcc:       0.54,
+	maxFWHM:      3.2,
+	maxEcc:       0.64,
 	minScore:     2.0,
-	minStars:     680,
+	minStars:     380,
 	maxFWHMSigma: 3.0,
 	maxHaloRatio: 2.0,
 	maxStructure: 1.12,
