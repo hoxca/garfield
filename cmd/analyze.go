@@ -26,6 +26,10 @@ type analyzeOptions struct {
 	qualityThresholds
 
 	dir string
+	// filter restricts the run to one colour filter (L R G B S H O). Empty
+	// analyses every discovered frame. It is matched against the filename token
+	// parseFilename reports, which is also the CSV's filter column.
+	filter string
 	// recursive extends the search to subdirectories of dir. Off by default, so
 	// pointing analyze at a directory containing frames analyses exactly those.
 	recursive          bool
@@ -76,6 +80,8 @@ func init() {
 	registerQualityFlags(analyzeCmd.Flags(), &analyzeOpts.qualityThresholds)
 	analyzeCmd.Flags().IntVar(&analyzeOpts.limitComputedStars, "limit-computed-stars", 500, "limit the number of bright stars measured")
 	analyzeCmd.Flags().StringVar(&analyzeOpts.format, "format", "console", "output format: console, csv or both")
+	analyzeCmd.Flags().StringVar(&analyzeOpts.filter, "filter", "",
+		"only analyse frames of this filter (one of LRGBSHO)")
 	analyzeCmd.Flags().StringVarP(&analyzeOpts.output, "output", "o", "",
 		"output directory for the report and copied rejected frames")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.copyRejected, "copy-rejected", false,
@@ -164,6 +170,37 @@ func parseFilename(name string) (filter string, date string) {
 		}
 	}
 	return
+}
+
+// normaliseFilter canonicalises --filter. Empty means no restriction; any other
+// value must be one of the single-letter filters, so a typo fails before a scan
+// rather than producing an empty report under a misspelled filename.
+func normaliseFilter(value string) (string, error) {
+	filter := strings.ToUpper(strings.TrimSpace(value))
+	if filter == "" {
+		return "", nil
+	}
+	if !isKnownFilter(filter) {
+		return "", fmt.Errorf("invalid --filter %q: expected one of %s", value, knownFilters)
+	}
+	return filter, nil
+}
+
+// framesForFilter keeps the frames whose parsed filter matches. The comparison is
+// against parseFilename, the same positional rule the report's filter column
+// uses, so the selection and the CSV can never disagree.
+func framesForFilter(paths []string, filter string) []string {
+	if filter == "" {
+		return paths
+	}
+	kept := make([]string, 0, len(paths))
+	for _, path := range paths {
+		fileFilter, _ := parseFilename(filepath.Base(path))
+		if fileFilter == filter {
+			kept = append(kept, path)
+		}
+	}
+	return kept
 }
 
 // fitBoxScale sets the half-width of the box the star profile is fitted in, as
@@ -573,10 +610,17 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		return fmt.Errorf("--copy-rejected requires --output")
 	}
 
+	filter, err := normaliseFilter(opts.filter)
+	if err != nil {
+		return err
+	}
+	opts.filter = filter
+
 	fitsFiles, truncated, err := discoverFITSFiles(dir, opts.recursive)
 	if err != nil {
 		return err
 	}
+	fitsFiles = framesForFilter(fitsFiles, filter)
 
 	// WalkDir visits each directory in lexical order, but that is per directory,
 	// so a/z.FIT is still reached before b/a.FIT. Sorting the full paths is what
@@ -586,6 +630,16 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	sort.Strings(fitsFiles)
 
 	if len(fitsFiles) == 0 {
+		if filter != "" {
+			if opts.recursive {
+				return fmt.Errorf(
+					"no FITS file for filter %s in %q within %d subdirectory levels",
+					filter, dir, maxRecursiveDepth)
+			}
+			return fmt.Errorf(
+				"no FITS file for filter %s in %q; use -r to walk the subdirectories too",
+				filter, dir)
+		}
 		// The flat case is where someone pointed at the wrong level of a tree,
 		// so it names the flag rather than just reporting an empty directory.
 		if opts.recursive {
@@ -632,11 +686,15 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	csvToStdout := opts.format == "csv" && opts.output == ""
 	reportPath := ""
 	if opts.output != "" {
-		reportPath = filepath.Join(opts.output, analyseReportName)
+		reportPath = filepath.Join(opts.output, analyseReportNameFor(filter))
 	}
 	if !opts.quiet && showConsole {
-		fmt.Printf("\nProcessing %d FITS file(s) in %q (%d workers, conv=%d, max-fwhm-sigma=%s, max-halo=%s, max-structure=%s)...\n\n",
-			len(fitsFiles), dir, outerWorkers, convWorkers,
+		scope := ""
+		if filter != "" {
+			scope = " for filter " + filter
+		}
+		fmt.Printf("\nProcessing %d FITS file(s)%s in %q (%d workers, conv=%d, max-fwhm-sigma=%s, max-halo=%s, max-structure=%s)...\n\n",
+			len(fitsFiles), scope, dir, outerWorkers, convWorkers,
 			formatThreshold(opts.maxFWHMSigma), formatThreshold(opts.maxHaloRatio),
 			formatThreshold(opts.maxStructure))
 	}
@@ -1072,10 +1130,21 @@ func percentileSorted(sorted []float64, p float64) float64 {
 	return sorted[lo] + (k-float64(lo))*(sorted[hi]-sorted[lo])
 }
 
-// analyseReportName is the fixed name of the CSV inside the output directory.
-// Fixed rather than taken from --output, which is now a directory: one run
-// writes one report, so the name carries no information the flag does not.
+// analyseReportName is the fixed name of the CSV inside the output directory
+// when no filter is selected. Fixed rather than taken from --output, which is
+// now a directory: one run writes one report, so the name carries no information
+// the flag does not.
 const analyseReportName = "analyse_report.csv"
+
+// analyseReportNameFor names the report for a run. A filtered run says so in the
+// filename, so reports for different filters can share one output directory
+// without overwriting each other.
+func analyseReportNameFor(filter string) string {
+	if filter == "" {
+		return analyseReportName
+	}
+	return "analyse_report_" + filter + ".csv"
+}
 
 // rejectedOutDir groups the copied rejected frames beneath the output
 // directory. Mirrors the name prepare uses for its quarantine tree.

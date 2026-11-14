@@ -167,6 +167,7 @@ func TestAnalyzeFlagDefaults(t *testing.T) {
 		"limit-computed-stars": "500",
 		"format":               "console",
 		"output":               "",
+		"filter":               "",
 		"quiet":                "false",
 	}
 	for name, def := range want {

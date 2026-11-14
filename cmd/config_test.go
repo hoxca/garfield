@@ -34,6 +34,7 @@ func configTestAnalyzeCmd() (*cobra.Command, *analyzeOptions) {
 	f.StringVarP(&opts.dir, "dir", "d", "images", "dossier contenant les FITS")
 	f.BoolVarP(&opts.recursive, "recursive", "r", false, "also walk the subdirectories of --dir")
 	f.StringVarP(&opts.output, "output", "o", "", "fichier CSV de sortie")
+	f.StringVar(&opts.filter, "filter", "", "only analyse frames of this filter")
 	setConfigSections(c, sectionThresholds, sectionConcurrency, sectionAnalyze)
 	return c, opts
 }
@@ -214,6 +215,9 @@ func TestSharedConfigKeysCoverBothCommands(t *testing.T) {
 	if keys[sectionAnalyze+".output"] {
 		t.Error("analyze.output is a known key, want analyze's --output excluded from the config")
 	}
+	if keys[sectionAnalyze+".filter"] {
+		t.Error("analyze.filter is a known key, want analyze's --filter excluded from the config")
+	}
 	if !keys[sectionPrepare+".output"] {
 		t.Error("prepare.output is not a known key, want prepare's destination directory configurable")
 	}
@@ -222,11 +226,11 @@ func TestSharedConfigKeysCoverBothCommands(t *testing.T) {
 	}
 }
 
-// TestExcludedFlagsAreIgnored checks analyze's --output keeps its compiled
-// default no matter what the config says, and that the exclusion is not reported
-// as an unknown key.
+// TestExcludedFlagsAreIgnored checks analyze's --output and --filter keep their
+// compiled defaults no matter what the config says, and that the exclusion is
+// not reported as an unknown key.
 func TestExcludedFlagsAreIgnored(t *testing.T) {
-	path := writeConfig(t, "analyze:\n  output: /data/work\n  dir: /data/frames\n")
+	path := writeConfig(t, "analyze:\n  output: /data/work\n  filter: H\n  dir: /data/frames\n")
 	v := mustReadConfig(t, path)
 
 	cmd, opts := configTestAnalyzeCmd()
@@ -236,6 +240,9 @@ func TestExcludedFlagsAreIgnored(t *testing.T) {
 	if opts.output != "" {
 		t.Errorf("analyze output = %q, want the flag untouched by the config", opts.output)
 	}
+	if opts.filter != "" {
+		t.Errorf("analyze filter = %q, want the flag untouched by the config", opts.filter)
+	}
 	if opts.dir != "/data/frames" {
 		t.Errorf("analyze dir = %q, want /data/frames from the same section", opts.dir)
 	}
@@ -244,6 +251,9 @@ func TestExcludedFlagsAreIgnored(t *testing.T) {
 	out := captureStderr(t, func() { warnUnknownKeys(v, path) })
 	if !strings.Contains(out, "deliberately non-configurable") || !strings.Contains(out, "analyze.output") {
 		t.Errorf("warning %q, want it to name analyze.output as deliberately refused", out)
+	}
+	if !strings.Contains(out, "analyze.filter") {
+		t.Errorf("warning %q, want it to name analyze.filter as deliberately refused", out)
 	}
 }
 

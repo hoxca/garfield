@@ -44,11 +44,13 @@ var configPath string
 
 // configExcluded lists flags a section must never drive. analyze's --output is
 // a CSV file for a single run, not a standing default; leaving it reachable
-// would let a value aimed at one command be written to a report path. prepare's
-// --output is excluded from analyze for the same reason, though that is already
-// prevented by the section split.
+// would let a value aimed at one command be written to a report path. analyze's
+// --filter is a per-run selection like --output: a forgotten default would
+// silently narrow every later analysis. prepare's --output is excluded from
+// analyze for the same reason, though that is already prevented by the section
+// split.
 var configExcluded = map[string]map[string]bool{
-	sectionAnalyze: {"output": true},
+	sectionAnalyze: {"output": true, "filter": true},
 }
 
 // excluded reports whether a section must leave a flag alone.
