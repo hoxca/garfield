@@ -703,7 +703,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 			// console "cloud=0.000" would then read as "perfectly clear"
 			// instead of "no baseline, not tested".
 			if r.FWHMRatio > 0 {
-				line += fmt.Sprintf(", fwhm=%.2f", r.FWHMRatio)
+				line += fmt.Sprintf(", fwhmRatio=%.2f", r.FWHMRatio)
 			}
 			if r.HaloRatio > 0 {
 				line += fmt.Sprintf(", halo=%.2f", r.HaloRatio)

@@ -221,7 +221,7 @@ When the session had at least four frames to establish a baseline, each frame
 line also carries the two ratios those thresholds are compared against:
 
 ```
-  [3/9] VDB149_..._035_....FIT ... OK (455/2710 stars, FWHM=1.69, Ecc=0.412, SNR=22.38, Score=5.1, fwhm=1.05, halo=3.33, struct=1.02, REJECTED CLOUDS)
+  [3/9] VDB149_..._035_....FIT ... OK (455/2710 stars, FWHM=1.69, Ecc=0.412, SNR=22.38, Score=5.1, fwhmRatio=1.05, halo=3.33, struct=1.02, REJECTED CLOUDS)
 ```
 
 A ratio above the threshold is why the frame was rejected. Both fields are
