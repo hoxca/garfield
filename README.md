@@ -163,6 +163,7 @@ Flags:
       --conv-workers int           inner convolution workers (0 = auto) [config: garfield.yaml]
       --copy-rejected              copy rejected frames into <output>/rejected/<category>/
   -d, --dir string                 directory containing the FITS files [config: garfield.yaml] (default "images")
+      --filter string              only analyse frames of this filter (one of LRGBSHO)
       --format string              output format: console, csv or both (default "console")
   -h, --help                       help for analyze
       --limit-computed-stars int   limit the number of bright stars measured (default 500)
@@ -193,8 +194,9 @@ Global Flags:
 |---|---|
 | `--limit-computed-stars` | how many of the brightest stars are *measured*. `detectedStars` counts everything found; the metrics come from the measured subset. Lower it for speed while tuning. |
 | `-r`, `--recursive` | **off by default.** Only files directly in `--dir`. With `-r` the walk stops at directory depth 2, sized for `Lights/<target>/<date>/<filter>/`. When the cap truncates the walk, `analyze` says so on stderr — a bounded search is not a complete one. |
+| `--filter` | one of `L R G B S H O`, case-insensitive. Only frames whose filename carries that filter are analysed. With `-o`, the report is named `analyse_report_<FILTER>.csv`. Not a config key. |
 | `--format` | `console`, `csv`, or `both`. `csv`/`both` need `-o`. |
-| `-o`, `--output` | **a directory**, not a file. The report is written inside it as `analyse_report.csv`. Without it, `--format csv` writes to stdout. |
+| `-o`, `--output` | **a directory**, not a file. The report is written inside it as `analyse_report.csv`, or `analyse_report_<FILTER>.csv` when `--filter` is set. Without it, `--format csv` writes to stdout. |
 | `--copy-rejected` | copy every rejected frame into `<output>/rejected/<category>/`, one folder per rejection reason. Requires `-o`. |
 | `--quiet` | suppress console output. |
 | `-w`, `--conv-workers` | both default to 0 = automatic. |
@@ -230,7 +232,9 @@ frame had too few measurable stars — rather than printed as `0.00`, which woul
 read as a clean frame.
 
 CSV, `;`-separated to match the reference PixInsight tool's export format, written
-to `<output>/analyse_report.csv` when `-o` is given and to stdout otherwise:
+to `<output>/analyse_report.csv` when `-o` is given and to stdout otherwise. A
+filtered run writes `<output>/analyse_report_<FILTER>.csv`, so reports for
+different filters can share one output directory:
 
 ```
 filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure
@@ -307,7 +311,7 @@ soft frame is reported as soft rather than clouded.
 
 ```
 <output>/
-├── analyse_report.csv
+├── analyse_report.csv          ← or analyse_report_<FILTER>.csv with --filter
 └── rejected/
     ├── bad-seeing/
     ├── clouds/
@@ -336,6 +340,8 @@ happen, so check the warnings before assuming every rejected frame was copied.
 pointed at `Flats/`, every flat reports its exposure as its filter. It does not
 affect `prepare`, which never calls that parser. See
 [§9.1](docs/filestructure.md#91-known-limitation-the-filter-and-date-columns).
+`--filter` matches on the same parsed field, so it inherits the limitation: it
+is correct for lights and wrong on a `Flats/` tree.
 
 ---
 

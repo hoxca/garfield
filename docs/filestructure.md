@@ -919,9 +919,18 @@ Much looser. Any directory of FITS frames works.
 |---|---|
 | `--dir`, `-d` | `images` |
 | `--recursive`, `-r` | `false` |
+| `--filter` | *(all filters)* |
 | `--limit-computed-stars` | 500 |
 | `--format` | `console` (or `csv`, `both`) |
 | `--output`, `-o` | *(directory; the report is `analyse_report.csv` inside it)* |
+
+**`--filter` narrows the run.** It accepts one of `L R G B S H O`,
+case-insensitively, and keeps only frames whose parsed filter matches. With
+`-o`, the report is named `analyse_report_<FILTER>.csv` (for example
+`analyse_report_H.csv`), so several filtered runs can share one output
+directory. The name is not configurable and neither is the flag: it is a
+per-run selection, like `--output`, and a forgotten config default would
+silently narrow later analyses.
 
 **Flat by default.** Only files directly in `--dir`. Descending is opt-in so a
 stray frame below the chosen directory cannot quietly join the report.
@@ -993,6 +1002,10 @@ A master dropped into an `analyze` directory reports its sensor dimensions as a
 filter. This is a known limitation, pinned by `TestParseFilenameMasterFlat`
 (`cmd/analyze_csv_test.go:128`), so that the current output stays visible and a
 future fix reads as a deliberate change rather than a surprise.
+
+`--filter` compares against the same parsed field, so it inherits this
+limitation: it is correct on a directory of lights and selects the wrong frames
+on a `Flats/` tree.
 
 ---
 
