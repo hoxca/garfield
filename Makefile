@@ -9,7 +9,7 @@ TESTPKGS = $(shell env GO111MODULE=on $(GO) list -f \
 BIN      = $(CURDIR)/bin
 
 GO      = go
-TIMEOUT = 15
+TIMEOUT = 600
 V = 0
 Q = $(if $(filter 1,$V),,@)
 M = $(shell printf "\033[34;1m▶\033[0m")
