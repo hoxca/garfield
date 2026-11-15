@@ -27,23 +27,19 @@ import (
 // keeps a single bad frame of a good night from being used either.
 
 const (
-	// defaultSuggestionBand is how many robust sigmas around the good stack's
-	// median a suggested gate sits. Three is what the FWHM outlier rule already
-	// uses, so a suggestion agrees with the rule it replaces instead of quietly
-	// moving the bar.
-	defaultSuggestionBand = 3.0
-
-	// defaultKeepBudget of 0 means "use the default band". A positive value asks
+	// defaultKeepBudget of 0 means "use the band the FWHM rule already applies". A
+	// positive value asks
 	// the band to be adjusted until that fraction of the good stack survives,
 	// within the bounds below: someone with one clear night should keep nearly
 	// everything, someone with twelve nights can afford to discard half.
 	defaultKeepBudget = 0.0
 
 	// The band a --keep search may move within, in robust sigmas. Below 1 the
-	// gates sit inside the normal scatter of a clean stack; above 4 they stop
-	// rejecting anything a person would call an outlier.
+	// gates sit inside the normal scatter of a clean stack; above 5 they stop
+	// rejecting anything a person would call an outlier. The ceiling has to sit
+	// above the default band, or --keep could only ever tighten.
 	keepBandMin  = 1.0
-	keepBandMax  = 4.0
+	keepBandMax  = 5.0
 	keepBandStep = 0.1
 
 	// Clamps. A quantile alone would happily certify a bad night, so every
@@ -143,10 +139,16 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 	// the budget would demand gates wide enough to re-admit them.
 	out.GoodCount = len(good)
 
-	// A larger band keeps more, so the tightest band that still meets the budget
-	// is the most useful one. Without a budget the default band is used, which is
-	// the value the FWHM rule already applies.
-	band := defaultSuggestionBand
+	// The band is the one the FWHM outlier rule already applies, so a suggestion
+	// never disagrees with the gate it replaces: tightening --max-fwhm-sigma
+	// tightens both. Zero means that rule is disabled, and the default applies.
+	//
+	// A larger band keeps more, so with a budget the tightest band that still
+	// meets it is the most useful one.
+	band := opts.maxFWHMSigma
+	if band <= 0 {
+		band = defaultThresholds.maxFWHMSigma
+	}
 	if opts.keep > 0 {
 		steps := int(math.Round((keepBandMax - keepBandMin) / keepBandStep))
 		band = keepBandMax
@@ -210,30 +212,51 @@ func measuredFrames(results []ImageResult, filter string) []int {
 	return out
 }
 
+// goodStackSigma is the band a frame of a condemned night must sit inside before
+// it may describe the reference. It is deliberately fixed and tighter than any
+// gate: the band being searched must not decide what may pull it wider, or a
+// wider band would admit more of a bad night, widen the reference, and justify
+// itself.
+const goodStackSigma = 3.0
+
 // goodStack returns the frames a suggestion may be derived from: the nights the
-// profile cleared outright, plus the frames of flagged nights that match the
-// stack on every metric.
+// profile cleared, plus the frames of condemned nights that match the stack.
+//
+// The second half matters on a small stack, where one bad night would otherwise
+// leave fewer frames than a robust band can be built from, and it is right in
+// principle: a frame of a bad night that matches the good nights is a good frame,
+// which is the same rule the stack gate applies when it decides what to reject.
 func goodStack(results []ImageResult, prof sessionProfiles, filter string) []int {
 	refs := prof.refs[filter]
 	var out []int
 	for _, i := range measuredFrames(results, filter) {
-		_, flagged := prof.flags[i]
-		if !flagged {
+		if _, flagged := prof.flags[i]; !flagged {
 			out = append(out, i)
 			continue
 		}
-		if insideEveryBand(results[i], refs) {
+		if insideStack(results[i], refs) {
 			out = append(out, i)
 		}
 	}
 	return out
 }
 
-// insideEveryBand reports whether a frame matches the stack on every metric, in
-// the direction that matters.
-func insideEveryBand(r ImageResult, refs map[string]stackRef) bool {
+// insideStack reports whether a frame matches the stack on every metric, in the
+// direction that matters, using the fixed goodStackSigma band.
+func insideStack(r ImageResult, refs map[string]stackRef) bool {
 	for _, spec := range sessionMetrics {
-		if outsideBand(spec.value(r), refs[spec.name], spec.high) {
+		ref := refs[spec.name]
+		if ref.Sigma <= 0 {
+			continue
+		}
+		v := spec.value(r)
+		if spec.high {
+			if v > ref.Median+goodStackSigma*ref.Sigma {
+				return false
+			}
+			continue
+		}
+		if v < ref.Median-goodStackSigma*ref.Sigma {
 			return false
 		}
 	}

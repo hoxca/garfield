@@ -63,8 +63,9 @@ const (
 	// so a bad night cannot move the reference it is judged against.
 	trimSigma = 3.5
 	// bandSigma is how far from the stack median a frame may sit before it is
-	// outside the band. It is the same 3 sigma the FWHM rule already uses.
-	bandSigma = 3.0
+	// outside the band. It mirrors the FWHM rule's default width, so the stack
+	// gate and the FWHM gate cannot disagree about what counts as an outlier.
+	bandSigma = 4.0
 	// outFracMin is the fraction of a session's frames that must fall outside the
 	// band before the session is called scattered -- a night where the median is
 	// fine but half the frames are not, which is what cloud rolling in and out

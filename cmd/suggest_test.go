@@ -43,14 +43,14 @@ func TestSuggestUsesTheDefaultBandWithoutABudget(t *testing.T) {
 	results := buildStack(t, "H", uniformNights(3, 8)...)
 	s := suggestionFor(t, results, "H", 0)
 
-	if s.Band != defaultSuggestionBand {
-		t.Errorf("band = %v, want the default %v", s.Band, defaultSuggestionBand)
+	if s.Band != defaultThresholds.maxFWHMSigma {
+		t.Errorf("band = %v, want the FWHM rule's default %v", s.Band, defaultThresholds.maxFWHMSigma)
 	}
 	ref := s.Reference["fwhm"]
-	want := ref.Median + defaultSuggestionBand*ref.Sigma
+	want := ref.Median + defaultThresholds.maxFWHMSigma*ref.Sigma
 	if math.Abs(s.Thresholds.MaxFWHM-want) > 0.01 {
 		t.Errorf("max-fwhm = %.3f, want median %v + %v sigma = %.3f",
-			s.Thresholds.MaxFWHM, ref.Median, defaultSuggestionBand, want)
+			s.Thresholds.MaxFWHM, ref.Median, defaultThresholds.maxFWHMSigma, want)
 	}
 	if s.GoodCount != len(results) {
 		t.Errorf("good stack = %d frames, want all %d on a clean stack", s.GoodCount, len(results))
@@ -554,5 +554,41 @@ func TestRunAnalyzeSuggestFillsTheCSVColumn(t *testing.T) {
 		if r[col] != "" {
 			t.Errorf("%s carries suggestedDecision %q without --suggest", r[0], r[col])
 		}
+	}
+}
+
+func TestSuggestBandFollowsTheFWHMRule(t *testing.T) {
+	results := buildStack(t, "H", uniformNights(3, 8)...)
+	prof := profileRun(results)
+
+	// Tightening --max-fwhm-sigma must tighten the suggestion with it: one number
+	// governs both the gate and the band the suggestion searches.
+	opts := defaultOpts()
+	opts.maxFWHMSigma = 3
+	s, err := suggestForFilter(results, prof, "H", opts)
+	if err != nil {
+		t.Fatalf("suggestForFilter: %v", err)
+	}
+	if s.Band != 3 {
+		t.Errorf("band = %v, want the flag's 3", s.Band)
+	}
+	if s.Thresholds.MaxFWHMSigma != 3 {
+		t.Errorf("suggested max-fwhm-sigma = %v, want 3", s.Thresholds.MaxFWHMSigma)
+	}
+	ref := s.Reference["fwhm"]
+	if want := ref.Median + 3*ref.Sigma; math.Abs(s.Thresholds.MaxFWHM-want) > 0.01 {
+		t.Errorf("max-fwhm = %.3f, want %.3f (median + 3 sigma)", s.Thresholds.MaxFWHM, want)
+	}
+
+	// 0 disables the rule, so the band falls back to the default rather than
+	// collapsing every gate onto the median.
+	opts.maxFWHMSigma = 0
+	s, err = suggestForFilter(results, prof, "H", opts)
+	if err != nil {
+		t.Fatalf("suggestForFilter with the rule disabled: %v", err)
+	}
+	if s.Band != defaultThresholds.maxFWHMSigma {
+		t.Errorf("band = %v with the rule disabled, want the default %v",
+			s.Band, defaultThresholds.maxFWHMSigma)
 	}
 }

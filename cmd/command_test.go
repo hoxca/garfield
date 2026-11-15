@@ -163,6 +163,7 @@ func TestAnalyzeFlagDefaults(t *testing.T) {
 		"max-ecc":              "0.64",
 		"min-score":            "2",
 		"min-stars":            "380",
+		"max-fwhm-sigma":       "4",
 		"moffat":               "true",
 		"limit-computed-stars": "500",
 		"format":               "console",

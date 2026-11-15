@@ -55,7 +55,7 @@ var defaultThresholds = qualityThresholds{
 	maxEcc:       0.64,
 	minScore:     2.0,
 	minStars:     380,
-	maxFWHMSigma: 3.0,
+	maxFWHMSigma: 4.0,
 	maxHaloRatio: 2.0,
 	maxStructure: 1.12,
 	// moffat is true, matching conf/garfield.yaml: a Gaussian reads the width of

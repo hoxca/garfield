@@ -926,7 +926,7 @@ Much looser. Any directory of FITS frames works.
 | `--cache` | `false` (requires `-o`) |
 | `--stack-gate` | `false` |
 | `--suggest` | `false` (requires `--filter` and `-o`) |
-| `--keep` | `0` (the default 3-sigma band) |
+| `--keep` | `0` (the band `--max-fwhm-sigma` sets, 4 by default) |
 
 **`--filter` narrows the run.** It accepts one of `L R G B S H O`,
 case-insensitively, and keeps only frames whose parsed filter matches. With
@@ -1271,7 +1271,7 @@ stars bright enough for a halo gets no `haloRatio` and is not cloud-tested.
 Only `APPROVED` frames are changed. A frame already rejected for eccentricity or
 FWHM keeps that reason, so the report retains the more specific diagnosis.
 
-The defaults are `3.0`, `2.0` and `1.12`, configurable under
+The defaults are `4.0`, `2.0` and `1.12`, configurable under
 `thresholds.max-fwhm-sigma`, `thresholds.max-halo-ratio` and
 `thresholds.max-structure`; setting any to `0` disables that rule. The halo
 threshold was calibrated on one target's frames: 2.0 rejected the three obvious

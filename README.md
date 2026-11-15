@@ -71,7 +71,7 @@ thresholds:
   max-ecc: 0.64
   min-score: 2.0
   min-stars: 380
-  max-fwhm-sigma: 3.0  # FWHM outliers above the filter's median; 0 disables
+  max-fwhm-sigma: 4.0  # FWHM outliers above the filter's median; 0 disables
   max-halo-ratio: 2.0  # session-relative bright-star halo; 0 disables
   max-structure: 1.12  # session-relative sky structure (bad seeing); 0 disables
   moffat: true         # Moffat PSF fit (slower, FWHM matches PixInsight); false = Gaussian
@@ -171,7 +171,7 @@ Flags:
       --limit-computed-stars int   limit the number of bright stars measured (default 500)
       --max-ecc float              maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
       --max-fwhm float             maximum FWHM for APPROVED [config: garfield.yaml] (default 3.2)
-      --max-fwhm-sigma float       reject a frame whose FWHM is more than this many robust sigmas above its filter's median; 0 disables [config: garfield.yaml] (default 3)
+      --max-fwhm-sigma float       reject a frame whose FWHM is more than this many robust sigmas above its filter's median; 0 disables [config: garfield.yaml] (default 4)
       --max-halo-ratio float       reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 2)
       --max-structure float        reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables [config: garfield.yaml] (default 1.12)
       --min-score float            minimum score for APPROVED [config: garfield.yaml] (default 2)
@@ -205,7 +205,7 @@ Global Flags:
 | `--cache` | reuse the measurements stored in `<output>/cache/measurements.jsonl`, and record this run's. Requires `-o`: the store lives in the output directory, never in the acquisition tree. See [Reusing measurements](#reusing-measurements-between-runs). |
 | `--stack-gate` | reject a frame from a night the stack condemns **when the frame itself sits outside the stack band**. Off by default. See [Session quality](#session-quality-and-suggested-thresholds). |
 | `--suggest` | derive thresholds for `--filter` from the measured stack and write them to `<output>/suggested_<FILTER>.yaml` plus the store `prepare --suggested` reads. Requires `--filter` and `-o`. Advisory: it never changes this run's verdicts. |
-| `--keep` | the fraction of the good stack a `--suggest` run aims to keep; `0` uses the default band (3 robust sigmas). |
+| `--keep` | the fraction of the good stack a `--suggest` run aims to keep; `0` uses the band the FWHM rule applies (4 robust sigmas by default). |
 | `--quiet` | suppress console output. |
 | `-w`, `--conv-workers` | both default to 0 = automatic. |
 
@@ -214,7 +214,7 @@ Global Flags:
 Console, one line per frame:
 
 ```
-Processing 2 FITS file(s) in "images" (8 workers, conv=10, max-fwhm-sigma=3, max-halo=2, max-structure=1.12)...
+Processing 2 FITS file(s) in "images" (8 workers, conv=10, max-fwhm-sigma=4, max-halo=2, max-structure=1.12)...
 
   [001/002] LBN527_B_20260910_025946_489 ... OK (478/2594 stars, FWHM=3.62, Ecc=0.303, SNR=32.27, Score=6.224, APPROVED)
   [002/002] LBN527_B_20260910_035155_591 ... OK (477/2920 stars, FWHM=3.31, Ecc=0.329, SNR=32.67, Score=6.619, APPROVED)
@@ -407,18 +407,18 @@ garfield analyze -d Lights -r --filter H -o out --suggest
 ```
 suggested thresholds for filter H (20 frame(s), 4 night(s), 2026-09-04..2026-09-16)
   reference excludes 2 night(s): 2026-09-02 (cloudy); 2026-09-03 (thin)
-  band 3.0 sigma around the good stack: keeps 11/13 good frames; 12/20 of the filter overall (60%)
+  band 4.0 sigma around the good stack: keeps 11/13 good frames; 12/20 of the filter overall (60%)
 
   gate              current  suggested  rejects now → then
   min-stars             380        100            0 → 0
-  max-ecc              0.64       0.53            0 → 0
-  max-fwhm              3.2       4.48           11 → 0
-  min-snr                11      11.99            0 → 8
+  max-ecc              0.64       0.59            0 → 0
+  max-fwhm              3.2       4.94           11 → 0
+  min-snr                11      11.73            0 → 8
   ...
   no metrics              -          -            0 → 0
-  total                   -          -           11 → 9     (9/20 approved now, 11/20 under the suggestion)
+  total                   -          -           11 → 8     (9/20 approved now, 12/20 under the suggestion)
 
-  the suggestion would change 12 frame(s): 9 newly rejected, 3 newly approved
+  the suggestion would change 11 frame(s): 8 newly rejected, 3 newly approved
 ```
 
 The counts are **attributed**: each rejected frame is counted once, under the
@@ -574,7 +574,7 @@ Flags:
   -i, --input string           root of the acquisition data [config: garfield.yaml] (default "/Volumes/Kosmodrom_2022/Kosmodrom")
       --max-ecc float          maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
       --max-fwhm float         maximum FWHM for APPROVED [config: garfield.yaml] (default 3.2)
-      --max-fwhm-sigma float   reject a frame whose FWHM is more than this many robust sigmas above its filter's median; 0 disables [config: garfield.yaml] (default 3)
+      --max-fwhm-sigma float   reject a frame whose FWHM is more than this many robust sigmas above its filter's median; 0 disables [config: garfield.yaml] (default 4)
       --max-halo-ratio float   reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 2)
       --max-structure float    reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables [config: garfield.yaml] (default 1.12)
       --min-score float        minimum score for APPROVED [config: garfield.yaml] (default 2)

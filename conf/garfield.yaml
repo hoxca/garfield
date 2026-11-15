@@ -55,7 +55,7 @@ thresholds:
   # 0 disables a rule. max-halo-ratio was calibrated on one target's clouded
   # frames: 2.0 rejected all three obvious clouds and nothing else in 71
   # frames. Expect to retune it on your own data.
-  max-fwhm-sigma: 3.0
+  max-fwhm-sigma: 4.0
   max-halo-ratio: 2.0
   max-structure: 1.12
 
