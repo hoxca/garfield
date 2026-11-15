@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"garfield/internal/measurecache"
 	"garfield/internal/mrs"
 	"garfield/internal/readfits"
 	"garfield/internal/starsmetrics"
@@ -42,7 +43,11 @@ type analyzeOptions struct {
 	// copyRejected is set. It is not a CSV path any more.
 	output       string
 	copyRejected bool
-	quiet        bool
+	// cache reuses measurements stored under output and stores the ones this run
+	// computes. Off by default: it writes to the output directory, and a run
+	// that only wants a report should not leave a store behind.
+	cache bool
+	quiet bool
 }
 
 var analyzeOpts = analyzeOptions{}
@@ -86,6 +91,8 @@ func init() {
 		"output directory for the report and copied rejected frames")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.copyRejected, "copy-rejected", false,
 		"copy rejected frames into <output>/rejected/<category>/")
+	analyzeCmd.Flags().BoolVar(&analyzeOpts.cache, "cache", false,
+		"reuse and record measurements in <output>/cache (requires --output)")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.quiet, "quiet", false, "suppress console output")
 }
 
@@ -130,6 +137,10 @@ type ImageResult struct {
 	StructRatio float64
 	Decision    string
 	Error       error
+	// Cached records that this result came from a stored measurement rather than
+	// from this run's analysis. It is reported so a mix of fresh and reused rows
+	// is visible in the report instead of being assumed.
+	Cached bool
 }
 
 const (
@@ -271,7 +282,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 		return ImageResult{
 			Filename: name, Filter: filter, Date: date,
 			Background: bgLevel, Noise: skyNoise, BgStructure: bgStructure,
-			Error: fmt.Errorf("no star found"),
+			Error: errNoStarFound,
 		}
 	}
 
@@ -453,7 +464,7 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // prepare's frames.csv.
 // background, noise and bgStructure are appended at the end so the position of
 // every pre-existing column is unchanged for anything already reading this file.
-var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio"}
+var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -483,6 +494,7 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.HaloRatio, 'f', 4, 64),
 		strconv.FormatFloat(r.StructRatio, 'f', 4, 64),
 		strconv.FormatFloat(r.FWHMRatio, 'f', 4, 64),
+		strconv.FormatBool(r.Cached),
 	}
 }
 
@@ -648,6 +660,20 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	if opts.copyRejected && opts.output == "" {
 		return fmt.Errorf("--copy-rejected requires --output")
 	}
+	if opts.cache && opts.output == "" {
+		return fmt.Errorf("--cache requires --output: measurements are stored under %s", cachePath("<output>"))
+	}
+
+	var measures *measurecache.Cache
+	if opts.cache {
+		c, err := openMeasureCache(opts.output)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+		} else {
+			measures = c
+			defer closeMeasureCache(c)
+		}
+	}
 
 	filter, err := normaliseFilter(opts.filter)
 	if err != nil {
@@ -749,7 +775,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				r := measureFrame(fitsFiles[idx], opts)
+				r := measureWithCache(fitsFiles[idx], opts, measures)
 				// Distinct indices: no lock needed for the write.
 				results[idx] = r
 				// Progress only. The verdict cannot be printed here: the cloud
@@ -775,6 +801,13 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 			fmt.Println()
 			fmt.Println()
 		}
+	}
+
+	// Said before the verdicts, because it explains the timings: a second run
+	// over the same tree spends its time in the outlier rules, not in pixels.
+	if measures != nil && !opts.quiet {
+		cached, measured := countCached(results)
+		fmt.Printf("  cache: %d measured, %d reused from %q\n", measured, cached, cachePath(opts.output))
 	}
 
 	// Cloud is a session-level decision: it compares a frame against its own
