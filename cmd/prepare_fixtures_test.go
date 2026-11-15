@@ -273,13 +273,19 @@ func simpleFixture(target string) prepareFixture {
 // prepareOptionsForTest returns options carrying the shared default
 // thresholds, so the synthetic frames in these fixtures are approved unless a
 // test deliberately moves them.
+//
+// Like defaultOpts, the PSF profile is the Gaussian fit rather than the shipped
+// Moffat one: prepare assesses many frames per test and the profile choice does
+// not change the verdicts these fixtures are built to produce.
 func prepareOptionsForTest(target, root, out string) prepareOptions {
+	th := defaultThresholds
+	th.moffat = false
 	return prepareOptions{
 		target: target, input: root, output: out, quiet: true,
 		// The flag defaults to c3, so a test that does not care about the
 		// camera behaves the way a plain `garfield prepare` does.
 		camera:            "c3",
-		qualityThresholds: defaultThresholds,
+		qualityThresholds: th,
 	}
 }
 

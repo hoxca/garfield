@@ -181,6 +181,37 @@ func TestAnalyzeFlagDefaults(t *testing.T) {
 	}
 }
 
+// TestMoffatFlagReachesTheOptions checks the PSF profile switch survives parsing
+// in both directions.
+//
+// The shared test helpers run the Gaussian fit whatever the default is, because
+// Moffat costs about eight times more per star and the fixtures only need stable
+// numbers. That shortcut would hide a switch that stopped reaching the
+// measurement options, so it is pinned here.
+func TestMoffatFlagReachesTheOptions(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{nil, defaultThresholds.moffat},
+		{[]string{"--moffat"}, true},
+		{[]string{"--moffat=false"}, false},
+	} {
+		var got analyzeOptions
+		c := newAnalyzeCmd(&got, func(string, analyzeOptions) error { return nil })
+		c.SetArgs(tc.args)
+		c.SetOut(io.Discard)
+		c.SetErr(io.Discard)
+
+		if err := c.Execute(); err != nil {
+			t.Fatalf("Execute(%v): %v", tc.args, err)
+		}
+		if got.moffat != tc.want {
+			t.Errorf("Execute(%v): moffat = %v, want %v", tc.args, got.moffat, tc.want)
+		}
+	}
+}
+
 func TestAnalyzeFlagParsing(t *testing.T) {
 	tests := []struct {
 		name string

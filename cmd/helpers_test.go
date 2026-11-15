@@ -144,9 +144,18 @@ func frameName(filter string, n int) string {
 
 // defaultOpts mirrors the flag defaults registered in analyze.go's init(),
 // sourcing the thresholds from the same place the commands do.
+//
+// The one deliberate difference is the PSF profile: the shipped default is the
+// Moffat fit, which costs about eight times more per star, and the tests here
+// assert on the cascade rather than on how the profile was fitted. The Moffat
+// path keeps its own coverage (TestMoffatIsAConfigKey, and the numeric fits in
+// internal/starsmetrics), and the shipped default is pinned by
+// TestCompiledDefaultsMatchShippedConfig.
 func defaultOpts() analyzeOptions {
+	th := defaultThresholds
+	th.moffat = false
 	return analyzeOptions{
-		qualityThresholds:  defaultThresholds,
+		qualityThresholds:  th,
 		limitComputedStars: 500,
 		format:             "console",
 	}
