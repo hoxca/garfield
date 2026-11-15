@@ -160,6 +160,7 @@ Aliases:
   analyze, analyse
 
 Flags:
+      --cache                      reuse and record measurements in <output>/cache (requires --output)
       --conv-workers int           inner convolution workers (0 = auto) [config: garfield.yaml]
       --copy-rejected              copy rejected frames into <output>/rejected/<category>/
   -d, --dir string                 directory containing the FITS files [config: garfield.yaml] (default "images")
@@ -198,6 +199,7 @@ Global Flags:
 | `--format` | `console`, `csv`, or `both`. `csv`/`both` need `-o`. |
 | `-o`, `--output` | **a directory**, not a file. The report is written inside it as `analyse_report.csv`, or `analyse_report_<FILTER>.csv` when `--filter` is set. Without it, `--format csv` writes to stdout. |
 | `--copy-rejected` | copy every rejected frame into `<output>/rejected/<category>/`, one folder per rejection reason. Requires `-o`. |
+| `--cache` | reuse the measurements stored in `<output>/cache/measurements.jsonl`, and record this run's. Requires `-o`: the store lives in the output directory, never in the acquisition tree. See [Reusing measurements](#reusing-measurements-between-runs). |
 | `--quiet` | suppress console output. |
 | `-w`, `--conv-workers` | both default to 0 = automatic. |
 
@@ -237,14 +239,17 @@ filtered run writes `<output>/analyse_report_<FILTER>.csv`, so reports for
 different filters can share one output directory:
 
 ```
-filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure
+filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached
 ```
+
+`cached` is `true` on a row whose numbers were read from the measurement cache
+instead of measured in this run. It is the only column a `--cache` run changes.
 
 `decision` holds one of **seven** values, which are **data, not messages** —
 `APPROVED`, `REJECTED NO STARS`, `REJECTED ECCENTRICITY`, `REJECTED FWHM`,
 `REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`. Match on them exactly.
 
-The last three columns are measurement, not decision:
+`background`, `noise` and `bgStructure` are measurements, not decisions:
 
 | Column | Meaning |
 |---|---|
@@ -252,7 +257,8 @@ The last three columns are measurement, not decision:
 | `noise` | per-pixel noise sigma from the background/noise estimator |
 | `bgStructure` | MAD of 64×64 block medians, in units of `noise`: how much the sky varies across the frame at scales far larger than a star |
 
-The last three columns are the session-relative decisions:
+`halo`, `haloRatio`, `structRatio` and `fwhmRatio` are the session-relative
+measurements:
 
 | Column | Meaning |
 |---|---|
@@ -312,6 +318,8 @@ soft frame is reported as soft rather than clouded.
 ```
 <output>/
 ├── analyse_report.csv          ← or analyse_report_<FILTER>.csv with --filter
+├── cache/
+│   └── measurements.jsonl      ← only with --cache
 └── rejected/
     ├── bad-seeing/
     ├── clouds/
@@ -331,6 +339,52 @@ The folders are **flat**. Since the scan can be recursive, two different frames
 can share a basename; the first is kept and the second reported on stderr rather
 than overwritten. On a tree that renumbers from `001` each session, that will
 happen, so check the warnings before assuming every rejected frame was copied.
+
+### Reusing measurements between runs
+
+Measuring a frame is the expensive part of a run: decoding the pixels, estimating
+the background, finding the stars and fitting a profile to hundreds of them. Only
+the judging is cheap. `--cache` separates the two across runs:
+
+```
+garfield analyze -d Lights/LBN527 -r -o out --cache --format both   # measures, stores
+garfield analyze -d Lights/LBN527 -r -o out --cache --format both   # reuses, re-judges
+garfield prepare -t LBN527 -o out --cache                           # reuses the same store
+```
+
+The store is `<output>/cache/measurements.jsonl`, one JSON object per frame,
+plain enough to read with `jq`. **Nothing is ever written to a frame**: the
+cache lives in the output directory, so an acquisition tree stays read-only.
+That is also why `--cache` requires `-o`.
+
+What is stored is the measurement only — star counts, FWHM, eccentricity, signal,
+SNR, sky, noise, structure, halo — never the verdict, the score or the session
+ratios. The verdict depends on thresholds, and the ratios on the population the
+frame belongs to, so both are derived again on every run:
+
+- **Tuning a threshold does not invalidate anything.** Re-run with a different
+  `--max-ecc` and every measurement is reused; only the judging changes.
+- **`--moffat` and `--limit-computed-stars` do invalidate.** They change how the
+  measurements are made, not how they are judged.
+
+An entry is keyed on the frame's absolute path, size and modification time, so a
+frame that was rewritten is measured again rather than trusted. The safe failure
+mode is the price: a tree copied without preserving timestamps is measured once
+more. The `cached` column says which rows came from the store, and the console
+reports the split:
+
+```
+  cache: 12 measured, 96 reused from "out/cache/measurements.jsonl"
+```
+
+Frames that could not be read are not stored — that is an environment problem,
+not a property of the pixels — but a frame with no usable star is, since
+discovering that is the expensive part. Bump the store's schema when the
+measurement code changes: a binary ignores entries it did not write, so the cost
+of a stale store is always time, never a wrong number.
+
+`--cache` is off by default: a run that only wants a report should not leave a
+store behind. It is not a config key, for the same reason `--output` is not.
 
 ### Known limitation
 
@@ -378,6 +432,7 @@ Usage:
   garfield prepare [flags]
 
 Flags:
+      --cache                  reuse and record measurements in <output>/cache
       --camera string          camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (rotator and gain) [config: garfield.yaml] (default "auto")
       --conv-workers int       inner convolution workers (0 = auto) [config: garfield.yaml]
       --dry-run                show the plan without copying
@@ -411,7 +466,9 @@ Global Flags:
    chronological order.
 3. **Check the angle.** One target must be acquired at one position angle; more
    than one is a fatal error, before anything is written.
-4. **Analyse** every light frame and record a verdict.
+4. **Analyse** every light frame and record a verdict. With `--cache` the
+   measurements come from `<output>/cache/measurements.jsonl` when they are
+   already there, which is what makes a second run over a prepared target fast.
 5. **Route** each frame: `APPROVED` to `lights/<filter>/`, everything else to
    the target-level `rejected/` tree.
 6. **Match flats** by filter *and* angle, on the session's date.

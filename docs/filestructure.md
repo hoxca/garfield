@@ -923,6 +923,7 @@ Much looser. Any directory of FITS frames works.
 | `--limit-computed-stars` | 500 |
 | `--format` | `console` (or `csv`, `both`) |
 | `--output`, `-o` | *(directory; the report is `analyse_report.csv` inside it)* |
+| `--cache` | `false` (requires `-o`) |
 
 **`--filter` narrows the run.** It accepts one of `L R G B S H O`,
 case-insensitively, and keeps only frames whose parsed filter matches. With
@@ -931,6 +932,15 @@ case-insensitively, and keeps only frames whose parsed filter matches. With
 directory. The name is not configurable and neither is the flag: it is a
 per-run selection, like `--output`, and a forgotten config default would
 silently narrow later analyses.
+
+**`--cache` trades disk for recomputation.** Measurement results are stored in
+`<output>/cache/measurements.jsonl` and reused on a later run over the same
+frames, keyed on absolute path, size and modification time. Only measurements
+are stored: the verdict and the session ratios are derived again every run, so
+changing a threshold costs nothing while changing `--moffat` or
+`--limit-computed-stars` costs a re-measurement. The frames themselves are never
+written — the store lives in the output directory, which is why the flag
+requires `-o`. `prepare` reads the same store (§10).
 
 **Flat by default.** Only files directly in `--dir`. Descending is opt-in so a
 stray frame below the chosen directory cannot quietly join the report.
@@ -1020,6 +1030,11 @@ root, and one of them is conditional:
 | `Sessions/` | always |
 | `rejected/` | **only if at least one frame was rejected** |
 
+`--cache` adds one directory *above* the target, at `<output>/cache/`, holding
+`measurements.jsonl`. It is shared by every target prepared into that output, on
+purpose: a frame is identified by its own path and timestamp, not by which
+target it happened to be prepared under.
+
 So a clean run leaves two, not three. `rejected/` is created lazily by the
 first quarantine copy — an empty `rejected/Session_01/` would imply a session
 failed when it did not. Pinned by `TestPrepareRealTreeShape`
@@ -1104,7 +1119,7 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached
 ```
 
 `decision` holds one of **eight** values, which are **data, not messages** —
@@ -1137,7 +1152,9 @@ every existing column is unchanged:
 
 `background`, `noise` and `bgStructure` are measurements. `halo`, `haloRatio`,
 `structRatio` and `fwhmRatio` are what the outlier rules act on, and are
-described in §10.1.1.
+described in §10.1.1. `cached` is `true` when the row's numbers came from the
+measurement store instead of this run's analysis; it is the only column
+`--cache` changes.
 
 ### 10.1.1 The FWHM, cloud and bad-seeing rules
 
