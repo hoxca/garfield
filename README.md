@@ -167,6 +167,7 @@ Flags:
       --filter string              only analyse frames of this filter (one of LRGBSHO)
       --format string              output format: console, csv or both (default "console")
   -h, --help                       help for analyze
+      --keep float                 fraction of the good stack a --suggest run aims to keep; 0 = the default band
       --limit-computed-stars int   limit the number of bright stars measured (default 500)
       --max-ecc float              maximum eccentricity for APPROVED [config: garfield.yaml] (default 0.64)
       --max-fwhm float             maximum FWHM for APPROVED [config: garfield.yaml] (default 3.2)
@@ -180,6 +181,8 @@ Flags:
   -o, --output string              output directory for the report and copied rejected frames
       --quiet                      suppress console output
   -r, --recursive                  also walk the subdirectories of --dir, 2 levels deep [config: garfield.yaml]
+      --stack-gate                 reject frames from a night that is systematically worse than its filter's stack
+      --suggest                    suggest thresholds for --filter from the measured stack (requires --filter and --output)
   -w, --workers int                processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
 
 Global Flags:
@@ -200,6 +203,9 @@ Global Flags:
 | `-o`, `--output` | **a directory**, not a file. The report is written inside it as `analyse_report.csv`, or `analyse_report_<FILTER>.csv` when `--filter` is set. Without it, `--format csv` writes to stdout. |
 | `--copy-rejected` | copy every rejected frame into `<output>/rejected/<category>/`, one folder per rejection reason. Requires `-o`. |
 | `--cache` | reuse the measurements stored in `<output>/cache/measurements.jsonl`, and record this run's. Requires `-o`: the store lives in the output directory, never in the acquisition tree. See [Reusing measurements](#reusing-measurements-between-runs). |
+| `--stack-gate` | reject a frame from a night the stack condemns **when the frame itself sits outside the stack band**. Off by default. See [Session quality](#session-quality-and-suggested-thresholds). |
+| `--suggest` | derive thresholds for `--filter` from the measured stack and write them to `<output>/suggested_<FILTER>.yaml` plus the store `prepare --suggested` reads. Requires `--filter` and `-o`. Advisory: it never changes this run's verdicts. |
+| `--keep` | the fraction of the good stack a `--suggest` run aims to keep; `0` uses the default band (3 robust sigmas). |
 | `--quiet` | suppress console output. |
 | `-w`, `--conv-workers` | both default to 0 = automatic. |
 
@@ -239,7 +245,7 @@ filtered run writes `<output>/analyse_report_<FILTER>.csv`, so reports for
 different filters can share one output directory:
 
 ```
-filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached
+filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack
 ```
 
 `cached` is `true` on a row whose numbers were read from the measurement cache
@@ -318,8 +324,11 @@ soft frame is reported as soft rather than clouded.
 ```
 <output>/
 ├── analyse_report.csv          ← or analyse_report_<FILTER>.csv with --filter
+├── sessions_<FILTER>.csv        ← per-night profile, one file per filter
+├── suggested_<FILTER>.yaml      ← only with --suggest
 ├── cache/
-│   └── measurements.jsonl      ← only with --cache
+│   ├── measurements.jsonl      ← only with --cache
+│   └── suggestions.jsonl       ← only with --suggest
 └── rejected/
     ├── bad-seeing/
     ├── clouds/
@@ -339,6 +348,98 @@ The folders are **flat**. Since the scan can be recursive, two different frames
 can share a basename; the first is kept and the second reported on stderr rather
 than overwritten. On a tree that renumbers from `001` each session, that will
 happen, so check the warnings before assuming every rejected frame was copied.
+
+### Session quality and suggested thresholds
+
+The gates are fixed values applied to every filter, which cannot be right for all
+of them: S and O are weaker than L, sparse fields detect fewer stars, and what
+counts as a soft frame depends on the sampling of the night. `analyze` already
+has the measurements to do better, in two steps.
+
+**Every run profiles the nights** (`sessions_<FILTER>.csv`, and the `sessionFlag`
+column). Each session is compared with the whole filter population rather than
+with itself, which is the one thing a session-relative rule cannot do:
+
+```
+stack reference   trimmed median and 1.4826*MAD over every measured frame
+within-night      the same statistic over residuals from each night's own median
+heterogeneity h   spread of the night medians / the within-night spread
+shift_s           median of night s - stack median, with a sampling error of
+                  1.2533*sigma/sqrt(n_s)
+flagged when      the shift in the direction that hurts is larger than BOTH
+                  3 sampling errors AND a tenth of the stack median
+                  (a fifth for the dimensionless halo and structure)
+scattered         more than half the night's frames outside the stack band,
+                  when no single median moved far
+```
+
+`h` is reported but is deliberately *not* what decides: a robust spread of the
+night medians cannot see one bad night among few, which is exactly the night
+worth catching, and with many nights it starts to see sampling noise. The floor
+of a tenth of the median and the three-sampling-error test bound both ends.
+
+Tokens: `soft` (FWHM high), `cloudy` (halo high), `hazy` (structure high),
+`thin` (SNR low), `trailed` (eccentricity high), `sparse` (few stars),
+`scattered` (fat tail, no median shift). Profiling changes no verdict on its own.
+
+**`--stack-gate` acts on it.** A frame from a flagged night is rejected *only if
+the frame itself is outside the stack band on the metric that flagged the night*,
+so the good frames of a bad night are kept and reported with the night's token.
+This is why a wholly hazy night is now visible at all: its frames are compared
+with the rest of the filter, not with their own haze.
+
+**`--suggest` derives the thresholds.** The reference is the *good stack* —
+frames from nights the profile cleared, plus the flagged nights' frames that
+match the stack — and each gate sits a band of robust sigmas around its median:
+
+```
+garfield analyze -d Lights -r --filter H -o out --suggest
+```
+
+```
+suggested thresholds for filter H (20 frame(s), 4 night(s), 2026-09-04..2026-09-16)
+  reference excludes 2 night(s): 2026-09-02 (cloudy); 2026-09-03 (thin)
+  band 3.0 sigma around the good stack: keeps 11/13 good frames; 12/20 of the filter overall (60%)
+
+  gate              current  suggested
+  min-snr                11      11.99
+  max-fwhm              3.2       4.48
+  ...
+```
+
+`--keep` moves the band: `--keep 0.95` loosens it until 95% of the good stack
+survives, `--keep 0.6` tightens it. The clamps are not negotiable — `min-snr`
+never below 3, `max-ecc` never above 0.8, `min-stars` never below 100 (the point
+below which no metric can be computed at all) and never above half the filter's
+median star count, `min-score` never negative. A gate that clamps to 0 is a gate
+the data says to disable, and the suggestion writes it as 0.
+
+Two artifacts come out of `--suggest`: `suggested_<FILTER>.yaml` for pasting into
+`conf/garfield.yaml`, and `cache/suggestions.jsonl` for `prepare --suggested`.
+
+### Applying a suggestion
+
+`prepare --suggested` judges frames with the stored thresholds **and the stored
+reference**:
+
+```
+garfield analyze -d Lights -r --filter H -o out --suggest --cache   # measures + suggests
+garfield prepare -t LBN527 -o out --suggested                       # judges with the suggestion
+```
+
+The reference travels with the thresholds because the relative rules compare a
+frame with a population. Recomputing that population from the target's own subset
+would move the bound, so the same frame would be judged differently depending on
+what else was in the run. With the reference pinned, a verdict depends on the
+frame, not on its neighbours — which also fixes the documented limitation that
+analyzing one night could disagree with analyzing the whole target.
+
+`--suggested` is explicit and off by default: the config still decides verdicts
+unless you ask otherwise. A filter with no stored suggestion falls back to the
+config with a warning naming it, and a store with nothing in it is an error
+rather than a silent fallback. Stale suggestions are applied with a warning:
+a differing schema, a differing measurement version, or a session date outside
+the population the suggestion was derived from.
 
 ### Reusing measurements between runs
 
@@ -451,6 +552,8 @@ Flags:
   -o, --output string          destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
       --quiet                  suppress console output
       --skip-existing          do not overwrite existing files
+      --stack-gate             reject frames from a night that is systematically worse than its filter's stack
+      --suggested              judge frames with the thresholds stored by analyze --suggest
   -t, --target string          astronomical target (directory under Lights/)
   -w, --workers int            processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
 
@@ -469,6 +572,8 @@ Global Flags:
 4. **Analyse** every light frame and record a verdict. With `--cache` the
    measurements come from `<output>/cache/measurements.jsonl` when they are
    already there, which is what makes a second run over a prepared target fast.
+   With `--suggested` the gates and their reference come from
+   `<output>/cache/suggestions.jsonl`, written by `analyze --suggest`.
 5. **Route** each frame: `APPROVED` to `lights/<filter>/`, everything else to
    the target-level `rejected/` tree.
 6. **Match flats** by filter *and* angle, on the session's date.

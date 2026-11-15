@@ -924,6 +924,9 @@ Much looser. Any directory of FITS frames works.
 | `--format` | `console` (or `csv`, `both`) |
 | `--output`, `-o` | *(directory; the report is `analyse_report.csv` inside it)* |
 | `--cache` | `false` (requires `-o`) |
+| `--stack-gate` | `false` |
+| `--suggest` | `false` (requires `--filter` and `-o`) |
+| `--keep` | `0` (the default 3-sigma band) |
 
 **`--filter` narrows the run.** It accepts one of `L R G B S H O`,
 case-insensitively, and keeps only frames whose parsed filter matches. With
@@ -1030,10 +1033,15 @@ root, and one of them is conditional:
 | `Sessions/` | always |
 | `rejected/` | **only if at least one frame was rejected** |
 
-`--cache` adds one directory *above* the target, at `<output>/cache/`, holding
-`measurements.jsonl`. It is shared by every target prepared into that output, on
-purpose: a frame is identified by its own path and timestamp, not by which
-target it happened to be prepared under.
+Two things live *above* the target, in the output root, because they describe the
+whole filter population rather than one target:
+
+- `<output>/cache/`, holding `measurements.jsonl` (`--cache`) and
+  `suggestions.jsonl` (`--suggest`). It is shared by every target prepared into
+  that output, on purpose: a frame is identified by its own path and timestamp,
+  not by which target it happened to be prepared under.
+- `suggested_<FILTER>.yaml`, the pasteable threshold block, and `analyze`'s own
+  `sessions_<FILTER>.csv` (§10.2) when it wrote its reports there.
 
 So a clean run leaves two, not three. `rejected/` is created lazily by the
 first quarantine copy — an empty `rejected/Session_01/` would imply a session
@@ -1119,7 +1127,7 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack
 ```
 
 `decision` holds one of **eight** values, which are **data, not messages** —
@@ -1155,6 +1163,12 @@ every existing column is unchanged:
 described in §10.1.1. `cached` is `true` when the row's numbers came from the
 measurement store instead of this run's analysis; it is the only column
 `--cache` changes.
+
+`sessionFlag` carries the tokens of the night the frame belongs to -- `soft`,
+`cloudy`, `hazy`, `thin`, `trailed`, `sparse`, `scattered` -- when that night is
+systematically worse than the filter's whole stack (§10.2). The `*RatioStack`
+columns put the frame's measurement next to the stack median, where above 1 means
+above the median: bad for width, shape, halo and structure, good for SNR.
 
 ### 10.1.1 The FWHM, cloud and bad-seeing rules
 
@@ -1255,6 +1269,40 @@ remains provisional — expect to retune after another cloudy target.
 `analyze` infers the session from acquisition time, which is exact except when a
 night contains a pause longer than two hours: that is treated as two sessions, so
 each half gets its own baseline. `prepare` uses the real session directory.
+
+### 10.2 The session profile and the suggestion
+
+Rule §10.1.1 compares a frame with its own night, which cannot see a night that is
+uniformly worse than the rest: a wholly hazy night's own p25 is hazy too, and its
+ratios come out at 1. Every run therefore also writes `sessions_<FILTER>.csv`, one
+row per night plus a trailing `stack` row carrying the reference the shifts are
+relative to:
+
+```
+session;sessionDate;filter;n;h;fwhm;fwhmShift;fwhmZ;... ;outFrac;flag
+```
+
+`h` is the heterogeneity index: the spread of the night medians over the pooled
+spread inside the nights. It is reported, not used to gate — a robust spread of
+the medians cannot see one bad night among few, and with many nights it begins to
+see sampling noise. A night is flagged when its median has moved, in the
+direction that hurts, by more than three sampling errors *and* more than a tenth
+of the stack median (a fifth for the dimensionless halo and structure), or when
+more than half its frames lie outside the stack band without the median moving
+(`scattered`).
+
+`--stack-gate` turns the profile into a decision: a frame of a flagged night is
+rejected only when the frame itself is outside the stack band on the metric that
+flagged the night. Flagging a night therefore never condemns it wholesale.
+
+`--suggest` writes `suggested_<FILTER>.yaml` and `cache/suggestions.jsonl`. The
+record carries the thresholds **and** the reference statistics they were derived
+from, plus the population (`n`, nights, date range) they describe. That is what
+`prepare --suggested` applies: judging with a recomputed reference would make a
+frame's verdict depend on which other frames happened to be in the run.
+
+`--suggest` needs at least `fwhmMinSample` frames outside the condemned nights,
+and refuses rather than deriving a band from a handful of frames.
 
 ---
 
