@@ -111,7 +111,12 @@ func TestRunAnalyzeFilterConsoleHeader(t *testing.T) {
 	if !strings.Contains(stdout, "for filter H") {
 		t.Errorf("console header does not name the filter:\n%s", stdout)
 	}
-	if strings.Contains(stdout, frameName("B", 1)) {
+	// The console prints the compact label rather than the filename, so the
+	// filter's own frames must appear and the other filter's must not.
+	if !strings.Contains(stdout, "LBN527_H_20260101_000000_000") {
+		t.Errorf("console does not report the H frame:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "LBN527_B_20260101_000000_000") {
 		t.Errorf("console reports the B frame despite --filter H:\n%s", stdout)
 	}
 }

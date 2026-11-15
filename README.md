@@ -216,11 +216,19 @@ Console, one line per frame:
 ```
 Processing 2 FITS file(s) in "images" (8 workers, conv=10, max-fwhm-sigma=3, max-halo=2, max-structure=1.12)...
 
-  [1/2] LBN527_LIGHT_B_..._PA310_E.FIT ... OK (478/2594 stars, FWHM=3.62, Ecc=0.303, SNR=32.27, Score=6.224, APPROVED)
-  [2/2] LBN527_LIGHT_B_..._PA310_E.FIT ... OK (477/2920 stars, FWHM=3.31, Ecc=0.329, SNR=32.67, Score=6.619, APPROVED)
+  [001/002] LBN527_B_20260910_025946_489 ... OK (478/2594 stars, FWHM=3.62, Ecc=0.303, SNR=32.27, Score=6.224, APPROVED)
+  [002/002] LBN527_B_20260910_035155_591 ... OK (477/2920 stars, FWHM=3.31, Ecc=0.329, SNR=32.67, Score=6.619, APPROVED)
 
 Done: 2 file(s) processed.
 ```
+
+Each line carries a shortened label -- `<target>_<filter>[_<index>]_<date>_<time>_<ms>` -- and
+a counter padded to the width of the run, so the columns do not shift as frames
+run past nine or ninety-nine. The index is per camera because the filenames are:
+the C3 writes its gain (`GA0`) where the G4 and the ASI2600 write a frame index
+(`001`), so the C3 label has no index field. A name that follows neither grammar
+(a flat, a hand-renamed file) prints in full. Only the console is shortened: the
+CSVs always carry the full filename.
 
 `478/2594` is `starCount/detectedStars`: measured over found.
 

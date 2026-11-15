@@ -248,6 +248,49 @@ func framesForFilter(paths []string, filter string) []string {
 	return kept
 }
 
+// The cameras' filename grammars, as the console reads them.
+//
+// Two shapes, and they are mutually exclusive: the G4 and the ASI2600 write a
+// frame index where the C3 writes its gain, so the token before the date is
+// either `001` or `GA0`. A name that matches neither keeps its full filename:
+// shortening a name that is not understood would invent fields.
+//
+// The date shown is the acquisition date from the name. That is not always the
+// session directory's date -- SH2-142's frames sit under 2026-08-11 and are
+// stamped 20260812 -- and the acquisition stamp is the truthful one.
+var (
+	// frameIDIndexed matches the grammars carrying a frame index: G4 and ASI2600.
+	frameIDIndexed = regexp.MustCompile(
+		`^([^_]+)_LIGHT_([A-Za-z])_\d+s_BIN\d_[-+]?\d+C_(\d+)_(\d{8})_(\d{6})_(\d{1,3})_`)
+	// frameIDGain matches the C3 grammar, which has no index to show.
+	frameIDGain = regexp.MustCompile(
+		`^([^_]+)_LIGHT_([A-Za-z])_\d+s_BIN\d_[-+]?\d+C_GA\d+_(\d{8})_(\d{6})_(\d{1,3})_`)
+)
+
+// frameLabel shortens a frame's filename to <target>_<filter>[_<index>]_<date>_<time>_<ms>,
+// so a console line keeps the same width from frame to frame.
+//
+// ok is false when the name follows no known grammar; the caller then prints the
+// filename untouched.
+func frameLabel(name string) (label string, ok bool) {
+	if m := frameIDIndexed.FindStringSubmatch(name); m != nil {
+		return fmt.Sprintf("%s_%s_%s_%s_%s_%s", m[1], m[2], m[3], m[4], m[5], padMillis(m[6])), true
+	}
+	if m := frameIDGain.FindStringSubmatch(name); m != nil {
+		return fmt.Sprintf("%s_%s_%s_%s_%s", m[1], m[2], m[3], m[4], padMillis(m[5])), true
+	}
+	return "", false
+}
+
+// padMillis zero-pads the millisecond field to three digits. The cameras write
+// three, but a shorter stamp would shift every column to its right.
+func padMillis(v string) string {
+	for len(v) < 3 {
+		v = "0" + v
+	}
+	return v
+}
+
 // fitBoxScale sets the half-width of the box the star profile is fitted in, as
 // a multiple of the detected width.
 //
@@ -912,16 +955,27 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	}
 
 	if !opts.quiet && showConsole {
+		// The counter is padded to the width the run needs, so a run past 99
+		// frames does not shift every line one column to the right.
+		counterWidth := len(strconv.Itoa(len(results)))
+		if counterWidth < 3 {
+			counterWidth = 3
+		}
 		for i, r := range results {
+			label, known := frameLabel(r.Filename)
+			if !known {
+				label = r.Filename
+			}
 			if r.Error != nil {
-				fmt.Printf("  [%d/%d] %s ... ERROR: %v\n", i+1, len(results), r.Filename, r.Error)
+				fmt.Printf("  [%0*d/%d] %s ... ERROR: %v\n",
+					counterWidth, i+1, len(results), label, r.Error)
 				continue
 			}
 			// Score is printed to three decimals, like Ecc, because the score
 			// gate is the finest of the seven: a frame sitting just above
 			// --min-score would render as exactly on it at two.
-			line := fmt.Sprintf("  [%d/%d] %s ... OK (%d/%d stars, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f",
-				i+1, len(results), r.Filename, r.StarCount, r.DetectedStars,
+			line := fmt.Sprintf("  [%0*d/%d] %s ... OK (%d/%d stars, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f",
+				counterWidth, i+1, len(results), label, r.StarCount, r.DetectedStars,
 				r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Score)
 			// The cloud numbers are printed only when they were measured. The
 			// session pass leaves both at zero when the rule is disabled or

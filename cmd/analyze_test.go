@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/astrogo/fitsio"
@@ -563,5 +564,99 @@ func TestMoffatIsAConfigKey(t *testing.T) {
 		if got := cmd.Flags().Lookup("moffat").Value.String(); got != "true" {
 			t.Errorf("%s: moffat from config = %q, want %q", tc.name, got, "true")
 		}
+	}
+}
+
+// TestFrameLabel pins the console's shortening of a frame name against the
+// grammars the cameras actually write. The three samples are real filenames from
+// the three instruments, because the layouts differ in exactly the field the
+// label has to decide about: the index.
+func TestFrameLabel(t *testing.T) {
+	tests := []struct {
+		name  string
+		want  string
+		known bool
+	}{
+		{
+			// C3: the token before the date is the gain, so there is no index.
+			name:  "LBN527_LIGHT_B_300s_BIN1_-10C_GA0_20260910_025946_489_PA310_E.FIT",
+			want:  "LBN527_B_20260910_025946_489",
+			known: true,
+		},
+		{
+			// G4: an index before the date.
+			name:  "NGC281_LIGHT_O_900s_BIN1_-10C_001_20220826_043855_169_W.FIT",
+			want:  "NGC281_O_001_20220826_043855_169",
+			known: true,
+		},
+		{
+			// ASI2600: also indexed, and a hyphenated target.
+			name:  "SH2-142_LIGHT_H_300s_BIN1_-10C_001_20260812_001427_410_GA_100_OF_50_PA97_W.FIT",
+			want:  "SH2-142_H_001_20260812_001427_410",
+			known: true,
+		},
+		{
+			// A two-digit millisecond field is padded rather than shifting the
+			// columns to its right.
+			name:  "SH2-142_LIGHT_H_300s_BIN1_-10C_001_20260812_001427_41_GA_100_OF_50_PA97_W.FIT",
+			want:  "SH2-142_H_001_20260812_001427_041",
+			known: true,
+		},
+		{
+			// Not a light frame: analyze is pointed at lights, but a flat must not
+			// be shortened into something that looks like a light.
+			name:  "LBN527_FLAT_H_1s_BIN1_-10C_GA0_20260910_070000_000_PA310_E.FIT",
+			known: false,
+		},
+		{
+			name:  "no-stamp.FIT",
+			known: false,
+		},
+		{
+			// No millisecond field at all: the name is not understood.
+			name:  "LBN527_LIGHT_H_300s_BIN1_-10C_GA0_20260910_025946_PA310_E.FIT",
+			known: false,
+		},
+	}
+
+	for _, tc := range tests {
+		got, ok := frameLabel(tc.name)
+		if ok != tc.known {
+			t.Errorf("frameLabel(%q) known = %v, want %v", tc.name, ok, tc.known)
+			continue
+		}
+		if ok && got != tc.want {
+			t.Errorf("frameLabel(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestRunAnalyzeConsolePadsTheCounter checks the frame counter keeps every line
+// the same width, and that the line carries the compact label rather than the
+// filename.
+func TestRunAnalyzeConsolePadsTheCounter(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 3; i++ {
+		writeFrame(t, dir, frameName("B", i), synthOpts{
+			width: 300, height: 300, level: 1000, noise: 5,
+			amp: 3000, sigma: 1.3, spacing: 25, seed: int64(i),
+		})
+	}
+	o := defaultOpts()
+	o.minStars, o.minSNR, o.minScore = 0, 0, 0
+
+	stdout := captureStdout(t, func() {
+		if err := runAnalyze(dir, o); err != nil {
+			t.Errorf("runAnalyze: %v", err)
+		}
+	})
+	if !strings.Contains(stdout, "[001/3]") {
+		t.Errorf("counter is not padded:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "LBN527_B_20260101_000000_000") {
+		t.Errorf("console line does not carry the compact label:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "_300s_BIN1_") {
+		t.Errorf("console line still carries the full filename:\n%s", stdout)
 	}
 }

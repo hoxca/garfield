@@ -936,6 +936,14 @@ directory. The name is not configurable and neither is the flag: it is a
 per-run selection, like `--output`, and a forgotten config default would
 silently narrow later analyses.
 
+**The console shortens frame names.** Each analysed line prints
+`<target>_<filter>[_<index>]_<date>_<time>_<ms>` instead of the filename, and a
+counter padded to the width of the run (`[001/180]`), so the lines stay aligned.
+The index appears only for the grammars that carry one: the C3 writes `GA0` in
+that position, the G4 and the ASI2600 an index. A name matching neither grammar
+prints in full. The reports keep the full filename; only the console is
+shortened.
+
 **`--cache` trades disk for recomputation.** Measurement results are stored in
 `<output>/cache/measurements.jsonl` and reused on a later run over the same
 frames, keyed on absolute path, size and modification time. Only measurements
