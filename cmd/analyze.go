@@ -141,6 +141,11 @@ type ImageResult struct {
 	// from this run's analysis. It is reported so a mix of fresh and reused rows
 	// is visible in the report instead of being assumed.
 	Cached bool
+	// SessionFlag carries the tokens of the session this frame belongs to, e.g.
+	// "soft,cloudy" when its night was systematically worse than the filter's
+	// stack. It is a diagnosis of the night, not a verdict on the frame: the
+	// verdict stays in Decision.
+	SessionFlag string
 }
 
 const (
@@ -464,7 +469,7 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // prepare's frames.csv.
 // background, noise and bgStructure are appended at the end so the position of
 // every pre-existing column is unchanged for anything already reading this file.
-var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached"}
+var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -495,6 +500,7 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.StructRatio, 'f', 4, 64),
 		strconv.FormatFloat(r.FWHMRatio, 'f', 4, 64),
 		strconv.FormatBool(r.Cached),
+		r.SessionFlag,
 	}
 }
 
@@ -815,6 +821,22 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	applyBaseDecision(results, opts.qualityThresholds)
 	applyFWHMRuleByFilter(results, opts.qualityThresholds)
 	applySessionRulesBySession(results, opts.qualityThresholds)
+
+	// Session-level pass. It changes no verdict: it says which nights are
+	// systematically worse than the filter's stack, and those tokens travel on
+	// the report so a rejected frame can be traced to its night.
+	prof := profileRun(results)
+	attachSessionFlags(results, prof)
+	if !opts.quiet && showConsole && !prof.empty() {
+		printSessionProfile(prof)
+	}
+	if opts.output != "" && !prof.empty() {
+		for _, filter := range prof.order {
+			if err := writeSessionsProfileCSV(opts.output, filter, prof.profiles(filter), prof.refs[filter]); err != nil {
+				return err
+			}
+		}
+	}
 
 	if !opts.quiet && showConsole {
 		for i, r := range results {

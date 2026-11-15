@@ -1014,6 +1014,14 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measu
 		}
 	}
 
+	// Which nights were systematically worse than the stack, carried onto the
+	// frames so frames.csv explains a session the way analyze's report does.
+	prof := profileRun(results)
+	attachSessionFlags(results, prof)
+	if !opts.quiet && !opts.dryRun && !prof.empty() {
+		printSessionProfile(prof)
+	}
+
 	for i, j := range jobs {
 		s := &sessions[j.session]
 		s.verdicts[j.name] = results[i]
@@ -2111,7 +2119,7 @@ var framesCSVHeader = []string{
 	"filename", "detectedStars", "starCount",
 	"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
 	"decision", "error", "background", "noise", "bgStructure",
-	"halo", "haloRatio", "structRatio", "fwhmRatio", "cached",
+	"halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 }
 
 // writeFramesCSV records the per-frame quality metrics that decided the split
