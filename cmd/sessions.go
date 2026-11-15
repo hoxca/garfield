@@ -578,3 +578,96 @@ func printSessionProfile(prof sessionProfiles) {
 			filter, len(profiles), h, len(flagged), strings.Join(parts, "; "))
 	}
 }
+
+// applyStackRatios puts every frame next to the median of its filter's stack.
+// The ratio is value/median for all metrics, so above 1 means above the median:
+// bad for the width, shape, halo and structure, good for the signal-to-noise.
+func applyStackRatios(results []ImageResult, prof sessionProfiles) {
+	for i := range results {
+		refs := prof.refs[results[i].Filter]
+		if refs == nil {
+			continue
+		}
+		r := &results[i]
+		if m := refs["fwhm"].Median; m > 0 {
+			r.FWHMRatioStack = r.AvgFWHM / m
+		}
+		if m := refs["ecc"].Median; m > 0 {
+			r.EccRatioStack = r.AvgEccentricity / m
+		}
+		if m := refs["snr"].Median; m > 0 {
+			r.SNRRatioStack = r.SNR / m
+		}
+		if m := refs["halo"].Median; m > 0 {
+			r.HaloRatioStack = r.Halo / m
+		}
+		if m := refs["struct"].Median; m > 0 {
+			r.StructRatioStack = r.BgStructure / m
+		}
+	}
+}
+
+// applyStackGate rejects a frame that belongs to a session the stack says is
+// systematically worse, when the frame itself sits outside the stack band on the
+// metric that flagged the night.
+//
+// Flagging a session does not condemn it: the frames of a bad night that match
+// the rest of the stack are exactly the ones worth keeping, and this is where
+// that decision is made. Like the session rules, it only downgrades APPROVED
+// frames, so a frame already rejected keeps the more specific reason.
+func applyStackGate(results []ImageResult, prof sessionProfiles) {
+	for i := range results {
+		r := &results[i]
+		if r.Decision != decisionApproved {
+			continue
+		}
+		flags, ok := prof.flags[i]
+		if !ok {
+			continue
+		}
+		refs := prof.refs[r.Filter]
+		if refs == nil {
+			continue
+		}
+		if decision, ok := stackGateDecision(*r, flags, refs); ok {
+			r.Decision = decision
+		}
+	}
+}
+
+// stackGateDecision maps the tokens of a flagged session onto the frame's own
+// position against the stack, in the same precedence the session rules use: the
+// width first, then the cloud, then the sky structure.
+func stackGateDecision(r ImageResult, flags []string, refs map[string]stackRef) (string, bool) {
+	has := func(token string) bool {
+		for _, f := range flags {
+			if f == token {
+				return true
+			}
+		}
+		return false
+	}
+	// A scattered night is flagged without a metric of its own: any band the
+	// frame breaks explains it.
+	scattered := has(sessionScattered)
+
+	if (has(sessionSoft) || scattered) && outsideBand(r.AvgFWHM, refs["fwhm"], true) {
+		return decisionFWHM, true
+	}
+	if (has(sessionCloudy) || scattered) && outsideBand(r.Halo, refs["halo"], true) {
+		return decisionClouds, true
+	}
+	if (has(sessionHazy) || scattered) && outsideBand(r.BgStructure, refs["struct"], true) {
+		return decisionBadSeeing, true
+	}
+	if (has(sessionThin) || scattered) && outsideBand(r.SNR, refs["snr"], false) {
+		return decisionSNR, true
+	}
+	if (has(sessionTrailed) || scattered) && outsideBand(r.AvgEccentricity, refs["ecc"], true) {
+		return decisionEcc, true
+	}
+	if (has(sessionSparse) || scattered) && outsideBand(float64(r.DetectedStars), refs["stars"], false) {
+		return decisionNoStars, true
+	}
+	return "", false
+}

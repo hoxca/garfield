@@ -50,7 +50,9 @@ var configPath string
 // analyze for the same reason, though that is already prevented by the section
 // split.
 var configExcluded = map[string]map[string]bool{
-	sectionAnalyze: {"output": true, "filter": true},
+	sectionAnalyze: {"output": true, "filter": true, "cache": true, "stack-gate": true,
+		"suggest": true, "keep": true, "suggested": true},
+	sectionPrepare: {"cache": true, "stack-gate": true, "suggested": true},
 }
 
 // excluded reports whether a section must leave a flag alone.

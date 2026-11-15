@@ -312,3 +312,76 @@ func TestStackRefTrimsABadNightOutOfTheReference(t *testing.T) {
 		t.Errorf("trimmed sigma = %.3f, want a tight scale from the good frames", ref.Sigma)
 	}
 }
+
+func TestStackGateKeepsTheFramesThatMatchTheStack(t *testing.T) {
+	// Six frames of the night are soft, two match the rest of the stack. The
+	// night is condemned; those two frames are not.
+	night := nightSpec{date: "20260913", n: 8, fwhm: 3.20, ecc: 0.310, snr: 31.0,
+		halo: 1.00, bgstr: 0.0100, stars: 900, spread: 0.02}.build(t, "H")
+	night[6].AvgFWHM = 2.40
+	night[7].AvgFWHM = 2.41
+
+	results := append(buildStack(t, "H", threeGoodNights()...), night...)
+	prof := profileRun(results)
+	applyStackGate(results, prof)
+
+	rejected, kept := 0, 0
+	for _, r := range results[len(results)-8:] {
+		switch r.Decision {
+		case decisionFWHM:
+			rejected++
+		case decisionApproved:
+			kept++
+		default:
+			t.Errorf("%s: decision = %q, want FWHM or APPROVED", r.Filename, r.Decision)
+		}
+	}
+	if rejected != 6 || kept != 2 {
+		t.Errorf("gate rejected %d and kept %d frames of the soft night, want 6 and 2", rejected, kept)
+	}
+}
+
+func TestStackGateLeavesACleanStackAlone(t *testing.T) {
+	results := buildStack(t, "H", threeGoodNights()...)
+	prof := profileRun(results)
+	applyStackGate(results, prof)
+
+	for _, r := range results {
+		if r.Decision != decisionApproved {
+			t.Errorf("%s: decision = %q, want APPROVED on a clean stack", r.Filename, r.Decision)
+		}
+	}
+}
+
+func TestStackGateKeepsTheMoreSpecificReason(t *testing.T) {
+	night := nightSpec{date: "20260913", n: 8, fwhm: 3.20, ecc: 0.310, snr: 31.0,
+		halo: 1.00, bgstr: 0.0100, stars: 900, spread: 0.02}.build(t, "H")
+	results := append(buildStack(t, "H", threeGoodNights()...), night...)
+
+	// A frame already rejected for eccentricity keeps that diagnosis; the gate
+	// only speaks about frames that were approved.
+	last := len(results) - 1
+	results[last].Decision = decisionEcc
+	prof := profileRun(results)
+	applyStackGate(results, prof)
+
+	if got := results[last].Decision; got != decisionEcc {
+		t.Errorf("decision = %q, want the existing %q", got, decisionEcc)
+	}
+}
+
+func TestStackRatiosAreRelativeToTheStackMedian(t *testing.T) {
+	results := buildStack(t, "H", threeGoodNights()...)
+	prof := profileRun(results)
+	applyStackRatios(results, prof)
+
+	median := prof.refs["H"]["fwhm"].Median
+	r := results[0]
+	want := r.AvgFWHM / median
+	if math.Abs(r.FWHMRatioStack-want) > 1e-9 {
+		t.Errorf("fwhmRatioStack = %v, want %v", r.FWHMRatioStack, want)
+	}
+	if r.SNRRatioStack <= 0 || r.HaloRatioStack <= 0 || r.EccRatioStack <= 0 || r.StructRatioStack <= 0 {
+		t.Errorf("ratio columns not populated: %+v", r)
+	}
+}

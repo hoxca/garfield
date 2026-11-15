@@ -450,7 +450,10 @@ type prepareOptions struct {
 	// run computes, so a later analyze or prepare over the same frames pays only
 	// for what it has not measured yet.
 	cache bool
-	quiet bool
+	// stackGate applies the stack-relative session rule, the same one analyze
+	// exposes, so prepare can act on a night the stack condemns.
+	stackGate bool
+	quiet     bool
 
 	// targetFlats is how many flats a session wants per filter and angle. Zero
 	// means no goal at all: the session keeps whatever its own date holds and
@@ -502,6 +505,8 @@ func init() {
 	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "do not overwrite existing files")
 	prepareCmd.Flags().BoolVar(&prepareOpts.cache, "cache", false,
 		"reuse and record measurements in <output>/cache")
+	prepareCmd.Flags().BoolVar(&prepareOpts.stackGate, "stack-gate", false,
+		"reject frames from a night that is systematically worse than its filter's stack")
 	prepareCmd.Flags().StringVar(&prepareOpts.camera, "camera", cameraAuto,
 		"camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (rotator and gain)")
 	prepareCmd.Flags().IntVar(&prepareOpts.targetFlats, "flat-count", 0,
@@ -1018,6 +1023,10 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measu
 	// frames so frames.csv explains a session the way analyze's report does.
 	prof := profileRun(results)
 	attachSessionFlags(results, prof)
+	applyStackRatios(results, prof)
+	if opts.stackGate {
+		applyStackGate(results, prof)
+	}
 	if !opts.quiet && !opts.dryRun && !prof.empty() {
 		printSessionProfile(prof)
 	}
@@ -2120,6 +2129,7 @@ var framesCSVHeader = []string{
 	"avgFWHM", "avgSignal", "avgEccentricity", "snr", "score",
 	"decision", "error", "background", "noise", "bgStructure",
 	"halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
+	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
 }
 
 // writeFramesCSV records the per-frame quality metrics that decided the split

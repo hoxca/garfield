@@ -47,7 +47,12 @@ type analyzeOptions struct {
 	// computes. Off by default: it writes to the output directory, and a run
 	// that only wants a report should not leave a store behind.
 	cache bool
-	quiet bool
+	// stackGate rejects a frame whose night the stack says is systematically
+	// worse, when the frame itself also sits outside the stack band. Off by
+	// default: it is a second opinion on the session rules, and turning it on
+	// discards frames.
+	stackGate bool
+	quiet     bool
 }
 
 var analyzeOpts = analyzeOptions{}
@@ -93,6 +98,8 @@ func init() {
 		"copy rejected frames into <output>/rejected/<category>/")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.cache, "cache", false,
 		"reuse and record measurements in <output>/cache (requires --output)")
+	analyzeCmd.Flags().BoolVar(&analyzeOpts.stackGate, "stack-gate", false,
+		"reject frames from a night that is systematically worse than its filter's stack")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.quiet, "quiet", false, "suppress console output")
 }
 
@@ -146,6 +153,14 @@ type ImageResult struct {
 	// stack. It is a diagnosis of the night, not a verdict on the frame: the
 	// verdict stays in Decision.
 	SessionFlag string
+	// The *RatioStack fields put a frame's measurement next to the median of its
+	// filter's whole population. Above 1 means above the median: bad for the
+	// width, shape, halo and structure, good for the signal-to-noise.
+	FWHMRatioStack   float64
+	EccRatioStack    float64
+	SNRRatioStack    float64
+	HaloRatioStack   float64
+	StructRatioStack float64
 }
 
 const (
@@ -469,7 +484,8 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // prepare's frames.csv.
 // background, noise and bgStructure are appended at the end so the position of
 // every pre-existing column is unchanged for anything already reading this file.
-var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag"}
+var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
+	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -501,6 +517,11 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.FWHMRatio, 'f', 4, 64),
 		strconv.FormatBool(r.Cached),
 		r.SessionFlag,
+		strconv.FormatFloat(r.FWHMRatioStack, 'f', 4, 64),
+		strconv.FormatFloat(r.EccRatioStack, 'f', 4, 64),
+		strconv.FormatFloat(r.SNRRatioStack, 'f', 4, 64),
+		strconv.FormatFloat(r.HaloRatioStack, 'f', 4, 64),
+		strconv.FormatFloat(r.StructRatioStack, 'f', 4, 64),
 	}
 }
 
@@ -827,6 +848,10 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	// the report so a rejected frame can be traced to its night.
 	prof := profileRun(results)
 	attachSessionFlags(results, prof)
+	applyStackRatios(results, prof)
+	if opts.stackGate {
+		applyStackGate(results, prof)
+	}
 	if !opts.quiet && showConsole && !prof.empty() {
 		printSessionProfile(prof)
 	}
