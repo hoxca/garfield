@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"garfield/internal/measurecache"
 	"garfield/internal/mrs"
 
 	"github.com/spf13/cobra"
@@ -445,7 +446,11 @@ type prepareOptions struct {
 	camera       string // "auto", "c3" or "g4"; see cameraProfile and resolveCamera
 	dryRun       bool
 	skipExisting bool
-	quiet        bool
+	// cache reuses measurements stored under output and records the ones this
+	// run computes, so a later analyze or prepare over the same frames pays only
+	// for what it has not measured yet.
+	cache bool
+	quiet bool
 
 	// targetFlats is how many flats a session wants per filter and angle. Zero
 	// means no goal at all: the session keeps whatever its own date holds and
@@ -495,6 +500,8 @@ func init() {
 	prepareCmd.Flags().StringVarP(&prepareOpts.output, "output", "o", defaultPrepareOutput, "destination root")
 	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "show the plan without copying")
 	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "do not overwrite existing files")
+	prepareCmd.Flags().BoolVar(&prepareOpts.cache, "cache", false,
+		"reuse and record measurements in <output>/cache")
 	prepareCmd.Flags().StringVar(&prepareOpts.camera, "camera", cameraAuto,
 		"camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (rotator and gain)")
 	prepareCmd.Flags().IntVar(&prepareOpts.targetFlats, "flat-count", 0,
@@ -700,8 +707,37 @@ func runPrepare(opts prepareOptions) error {
 
 	// Assess every light frame before copying anything, so the destination
 	// tree reflects the final decision for each frame.
-	if err := assessSessions(sessions, opts); err != nil {
+	//
+	// A dry run measures nothing into the cache: its contract is to show the
+	// plan without touching disk, and the store is a write.
+	var measures *measurecache.Cache
+	if opts.cache && !opts.dryRun {
+		c, err := openMeasureCache(opts.output)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+		} else {
+			measures = c
+			defer closeMeasureCache(c)
+		}
+	}
+	if err := assessSessions(sessions, opts, measures); err != nil {
 		return err
+	}
+
+	// Reported before the per-session verdicts, because it explains why a second
+	// run over the same target finishes quickly.
+	if measures != nil && !opts.quiet {
+		cached, measured := 0, 0
+		for _, s := range sessions {
+			for _, v := range s.verdicts {
+				if v.Cached {
+					cached++
+					continue
+				}
+				measured++
+			}
+		}
+		fmt.Printf("  cache: %d measured, %d reused from %q\n", measured, cached, cachePath(opts.output))
 	}
 
 	// After the assessment, because a master dark is only wanted for frames
@@ -874,7 +910,10 @@ func sortedReasons(m map[string]int) []string {
 // assessSessions runs the quality pipeline over every planned light frame,
 // recording the verdict on each session. Frames are assessed across all sessions
 // in one pass so the worker pool stays busy.
-func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
+//
+// measures may be nil, in which case every frame is measured and nothing is
+// recorded; that is what a dry run and a run without --cache do.
+func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measurecache.Cache) error {
 	type job struct {
 		session int
 		filter  string
@@ -930,7 +969,7 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 		go func() {
 			defer wg.Done()
 			for i := range index {
-				results[i] = measureFrame(jobs[i].path, aopts)
+				results[i] = measureWithCache(jobs[i].path, aopts, measures)
 
 				if !opts.quiet && !opts.dryRun {
 					progressMu.Lock()

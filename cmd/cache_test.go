@@ -201,3 +201,70 @@ func TestRunAnalyzeCacheDoesNotStoreUnreadableFrames(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareCacheReusesMeasurements(t *testing.T) {
+	const target = "LBN527"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.cache = true
+
+	if err := runPrepare(opts); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	first := readFramesCSV(t, filepath.Join(out, target))
+	if len(first) < 2 {
+		t.Fatalf("frames.csv has %d records, want header plus frames", len(first))
+	}
+	cachedCol := columnIndex(t, first[0], "cached")
+	for _, r := range first[1:] {
+		if r[cachedCol] != "false" {
+			t.Errorf("%s reports cached=%s on the first run, want false", r[4], r[cachedCol])
+		}
+	}
+
+	if err := runPrepare(opts); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	second := readFramesCSV(t, filepath.Join(out, target))
+	if len(second) != len(first) {
+		t.Fatalf("second run wrote %d records, want %d", len(second), len(first))
+	}
+	for i := 1; i < len(first); i++ {
+		if second[i][cachedCol] != "true" {
+			t.Errorf("%s reports cached=%s on the second run, want true", second[i][4], second[i][cachedCol])
+		}
+		// The verdict is rebuilt from the stored measurement, so every other
+		// column must come out the same.
+		for j := range first[i] {
+			if j == cachedCol {
+				continue
+			}
+			if second[i][j] != first[i][j] {
+				t.Errorf("%s column %q: %q then %q",
+					first[i][4], first[0][j], first[i][j], second[i][j])
+			}
+		}
+	}
+}
+
+func TestPrepareDryRunWritesNoCache(t *testing.T) {
+	const target = "LBN527"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.cache = true
+	opts.dryRun = true
+
+	if err := runPrepare(opts); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+	// A dry run shows the plan without writing; the store is a write.
+	if _, err := os.Stat(cachePath(out)); !os.IsNotExist(err) {
+		t.Errorf("dry run left a measurement cache behind: %v", err)
+	}
+}
