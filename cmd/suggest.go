@@ -367,6 +367,7 @@ func writeSuggestion(output string, s suggestedThresholds) error {
 		Filter:         s.Filter,
 		Population:     s.Population,
 		Heterogeneity:  s.Heterogeneity,
+		Band:           s.Band,
 		Kept:           s.Kept,
 		Reference:      s.Reference,
 		Thresholds:     s.Thresholds,

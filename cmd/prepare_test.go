@@ -401,7 +401,7 @@ func TestPrepareDryRunStillAssesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := assessSessions(sessions, opts, nil); err != nil {
+	if err := assessSessions(sessions, opts, nil, baseGates(opts.qualityThresholds)); err != nil {
 		t.Fatalf("assessSessions: %v", err)
 	}
 

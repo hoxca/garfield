@@ -64,13 +64,16 @@ type Suggestion struct {
 	MeasureVersion int    `json:"measureVersion"`
 	Filter         string `json:"filter"`
 
-	Population    Population           `json:"population"`
-	Heterogeneity float64              `json:"heterogeneity"`
-	Kept          float64              `json:"kept"`
-	Reference     map[string]Reference `json:"reference"`
-	Thresholds    Thresholds           `json:"thresholds"`
-	Sessions      []SessionNote        `json:"sessions,omitempty"`
-	Created       time.Time            `json:"created"`
+	Population    Population `json:"population"`
+	Heterogeneity float64    `json:"heterogeneity"`
+	// Band is how many robust sigmas around the good stack's median the gates
+	// sit, kept so a later run can describe the suggestion it is applying.
+	Band       float64              `json:"band"`
+	Kept       float64              `json:"kept"`
+	Reference  map[string]Reference `json:"reference"`
+	Thresholds Thresholds           `json:"thresholds"`
+	Sessions   []SessionNote        `json:"sessions,omitempty"`
+	Created    time.Time            `json:"created"`
 }
 
 // Store is the open file of suggestions.

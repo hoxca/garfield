@@ -13,6 +13,7 @@ import (
 
 	"garfield/internal/measurecache"
 	"garfield/internal/mrs"
+	"garfield/internal/suggeststore"
 
 	"github.com/spf13/cobra"
 )
@@ -453,6 +454,10 @@ type prepareOptions struct {
 	// stackGate applies the stack-relative session rule, the same one analyze
 	// exposes, so prepare can act on a night the stack condemns.
 	stackGate bool
+	// suggested judges frames with the thresholds and reference a previous
+	// `analyze --suggest` stored, instead of the config. Off by default: the
+	// config stays the thing that decides verdicts unless asked otherwise.
+	suggested bool
 	quiet     bool
 
 	// targetFlats is how many flats a session wants per filter and angle. Zero
@@ -507,6 +512,8 @@ func init() {
 		"reuse and record measurements in <output>/cache")
 	prepareCmd.Flags().BoolVar(&prepareOpts.stackGate, "stack-gate", false,
 		"reject frames from a night that is systematically worse than its filter's stack")
+	prepareCmd.Flags().BoolVar(&prepareOpts.suggested, "suggested", false,
+		"judge frames with the thresholds stored by analyze --suggest")
 	prepareCmd.Flags().StringVar(&prepareOpts.camera, "camera", cameraAuto,
 		"camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (rotator and gain)")
 	prepareCmd.Flags().IntVar(&prepareOpts.targetFlats, "flat-count", 0,
@@ -725,7 +732,30 @@ func runPrepare(opts prepareOptions) error {
 			defer closeMeasureCache(c)
 		}
 	}
-	if err := assessSessions(sessions, opts, measures); err != nil {
+	// The judging context: the config by default, or the thresholds and frozen
+	// reference a previous `analyze --suggest` left in the output directory.
+	gates := baseGates(opts.qualityThresholds)
+	if opts.suggested {
+		store, err := suggeststore.Open(suggestionPath(opts.output))
+		if err != nil {
+			return fmt.Errorf("--suggested: %w", err)
+		}
+		gates, warnings = gatesFromSuggestions(store, sortedFilters(sessions), sessions)
+		if len(gates.byFilter) == 0 {
+			store.Close()
+			return fmt.Errorf("--suggested: no suggested thresholds in %q; run `garfield analyze --suggest` first", suggestionPath(opts.output))
+		}
+		if !opts.quiet {
+			for _, filter := range sortedFilters(sessions) {
+				fmt.Printf("  gates %s: %s\n", filter, describeGates(store, filter))
+			}
+		}
+		if err := store.Close(); err != nil {
+			return fmt.Errorf("--suggested: %w", err)
+		}
+	}
+
+	if err := assessSessions(sessions, opts, measures, gates); err != nil {
 		return err
 	}
 
@@ -918,7 +948,7 @@ func sortedReasons(m map[string]int) []string {
 //
 // measures may be nil, in which case every frame is measured and nothing is
 // recorded; that is what a dry run and a run without --cache do.
-func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measurecache.Cache) error {
+func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measurecache.Cache, gates gateSet) error {
 	type job struct {
 		session int
 		filter  string
@@ -1000,8 +1030,8 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measu
 	// The FWHM gate is per filter over every assessed frame of the target, so
 	// it runs here, where the whole set is in hand. It comes first: a soft
 	// frame should be reported as soft rather than clouded.
-	applyBaseDecision(results, aopts.qualityThresholds)
-	applyFWHMRuleByFilter(results, aopts.qualityThresholds)
+	applyBaseDecisionGated(results, gates)
+	applyFWHMRuleGated(results, gates)
 
 	// Cloud is a per-session decision, and assessSessions is the one place that
 	// holds every session's measurements at once. Runs before verdicts are
@@ -1014,8 +1044,15 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measu
 			k := fmt.Sprintf("%d|%s", j.session, j.filter)
 			groups[k] = append(groups[k], &results[i])
 		}
-		for _, g := range groups {
-			applySessionRules(g, aopts.qualityThresholds)
+		for k, g := range groups {
+			filter := filterOfSessionKey(k)
+			q := gates.thresholds(filter)
+			var haloRef, structRef float64
+			if ref, ok := gates.frozen(filter); ok {
+				haloRef = ref.Refs["halo"].P25
+				structRef = ref.Refs["struct"].P25
+			}
+			applySessionRulesWith(g, q, haloRef, structRef)
 		}
 	}
 

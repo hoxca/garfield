@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -216,5 +217,158 @@ func TestRunAnalyzeSuggestRequiresFilterAndOutput(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: error = %v, want it to mention %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+// storeSuggestion writes one suggestion into an output directory's store.
+func storeSuggestion(t *testing.T, output string, rec suggeststore.Suggestion) {
+	t.Helper()
+	store, err := suggeststore.Open(suggestionPath(output))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := store.Put(rec); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// suggestionForFilter is a record with every gate disabled except the ones a
+// test sets, so a routing outcome can only come from the gate under test.
+func suggestionForFilter(filter string, th suggeststore.Thresholds) suggeststore.Suggestion {
+	return suggeststore.Suggestion{
+		SuggestVersion: suggeststore.SuggestVersion,
+		MeasureVersion: measureVersion,
+		Filter:         filter,
+		Population:     suggeststore.Population{N: 100, Sessions: 3, From: "2026-09-01", To: "2026-12-31"},
+		Thresholds:     th,
+		Reference: map[string]suggeststore.Reference{
+			"fwhm": {Median: 2.0, Sigma: 0.1},
+		},
+	}
+}
+
+func TestPrepareSuggestedAppliesTheStoredThresholds(t *testing.T) {
+	const target = "LBN527"
+
+	// A suggestion that rejects everything: the targets' frames have a FWHM
+	// well above 0.5 px, so this can only come from the store.
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	storeSuggestion(t, out, suggestionForFilter("H", suggeststore.Thresholds{
+		MaxFWHM: 0.5, MaxEcc: 0.9, MinSNR: 0, MinScore: 0, MinStars: 0,
+		MaxFWHMSigma: 0, MaxHaloRatio: 0, MaxStructure: 0,
+	}))
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.suggested = true
+	if err := runPrepare(opts); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+
+	recs := readFramesCSV(t, filepath.Join(out, target))
+	decision := columnIndex(t, recs[0], "decision")
+	for _, r := range recs[1:] {
+		if r[decision] == decisionApproved {
+			t.Errorf("%s was APPROVED under a max-fwhm of 0.5: the suggestion was not applied", r[4])
+		}
+	}
+}
+
+func TestPrepareSuggestedUsesTheFrozenReference(t *testing.T) {
+	const target = "LBN527"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	// The reference pins the FWHM median at 2.0 px. frames.csv records the ratio
+	// against that median, so the column says whether the stored reference was
+	// used or one was recomputed from the target's own frames.
+	storeSuggestion(t, out, suggestionForFilter("H", suggeststore.Thresholds{
+		MaxFWHM: 100, MaxEcc: 0.9, MinSNR: 0, MinScore: 0, MinStars: 0,
+		MaxFWHMSigma: 0, MaxHaloRatio: 0, MaxStructure: 0,
+	}))
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.suggested = true
+	if err := runPrepare(opts); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+
+	recs := readFramesCSV(t, filepath.Join(out, target))
+	fwhmCol := columnIndex(t, recs[0], "avgFWHM")
+	ratioCol := columnIndex(t, recs[0], "fwhmRatio")
+	for _, r := range recs[1:] {
+		fwhm, err := strconv.ParseFloat(r[fwhmCol], 64)
+		if err != nil {
+			t.Fatalf("parse avgFWHM %q: %v", r[fwhmCol], err)
+		}
+		ratio, err := strconv.ParseFloat(r[ratioCol], 64)
+		if err != nil {
+			t.Fatalf("parse fwhmRatio %q: %v", r[ratioCol], err)
+		}
+		if want := fwhm / 2.0; math.Abs(ratio-want) > 1e-3 {
+			t.Errorf("%s: fwhmRatio = %.4f, want %.4f (measured against the stored median of 2.0)",
+				r[4], ratio, want)
+		}
+	}
+}
+
+func TestGatesFromSuggestionsWarnsAndFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	store, err := suggeststore.Open(suggestionPath(dir))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := store.Put(suggestionForFilter("H", suggeststore.Thresholds{
+		MinSNR: 20, MaxFWHM: 2.5, MaxEcc: 0.5, MinScore: 1, MinStars: 200,
+		MaxFWHMSigma: 3, MaxHaloRatio: 2, MaxStructure: 1.1,
+	})); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	sessions := []sessionPlan{{
+		date:    "2026-09-10",
+		filters: map[string][]string{"H": {"a.FIT"}, "O": {"b.FIT"}},
+	}}
+
+	gates, warnings := gatesFromSuggestions(store, []string{"H", "O"}, sessions)
+	if got := gates.thresholds("H"); got.maxFWHM != 2.5 || got.minSNR != 20 {
+		t.Errorf("H thresholds = %+v, want the stored ones", got)
+	}
+	if got := gates.thresholds("H").maxFWHMSigma; got != 3 {
+		t.Errorf("H max-fwhm-sigma = %v, want 3", got)
+	}
+	if _, ok := gates.frozen("H"); !ok {
+		t.Error("H has no frozen reference, so the relative rules would recompute it")
+	}
+	// O has no suggestion: the config applies and the run says so.
+	if got := gates.thresholds("O"); got.maxFWHM != defaultThresholds.maxFWHM {
+		t.Errorf("O thresholds = %+v, want the config defaults", got)
+	}
+	if len(warnings) == 0 || !strings.Contains(strings.Join(warnings, " "), "filter O") {
+		t.Errorf("warnings = %v, want one naming filter O", warnings)
+	}
+}
+
+func TestPrepareSuggestedRefusesWhenNothingIsStored(t *testing.T) {
+	const target = "LBN527"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.suggested = true
+
+	err := runPrepare(opts)
+	if err == nil {
+		t.Fatal("runPrepare --suggested accepted an empty suggestion store")
+	}
+	if !strings.Contains(err.Error(), "no suggested thresholds") {
+		t.Errorf("error = %v, want it to name the missing suggestions", err)
 	}
 }

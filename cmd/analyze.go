@@ -433,16 +433,10 @@ func frameScore(snr, fwhm, ecc float64) float64 {
 }
 
 // applyBaseDecision sets each frame's verdict from its own measurements and the
-// configured thresholds. Frames that could not be measured keep an empty
-// decision, which the reports and the console render as an error rather than as
-// a verdict.
+// given thresholds. Frames that could not be measured keep an empty decision,
+// which the reports and the console render as an error rather than as a verdict.
 func applyBaseDecision(results []ImageResult, q qualityThresholds) {
-	for i := range results {
-		if results[i].Error != nil {
-			continue
-		}
-		results[i].Decision = baseDecision(results[i], q)
-	}
+	applyBaseDecisionGated(results, baseGates(q))
 }
 
 // baseDecision is the threshold cascade, in precedence order: star count first,
@@ -1072,53 +1066,11 @@ const fwhmMinSample = 8
 // FWHMRatio is set for every measured frame whenever the median is usable, but
 // the gate only runs when the filter has fwhmMinSample frames and a non-zero
 // scale. A degenerate MAD would put the bound exactly on the median and reject
-// half the filter, so that case is skipped too.
+// half the filter, so that case is skipped too. When a suggestion pinned the
+// reference, that reference is used instead and the sample-size guard does not
+// apply.
 func applyFWHMRuleByFilter(results []ImageResult, q qualityThresholds) {
-	byFilter := map[string][]*ImageResult{}
-	var order []string
-	for i := range results {
-		r := &results[i]
-		r.FWHMRatio = 0
-		if r.AvgFWHM <= 0 {
-			continue
-		}
-		if _, seen := byFilter[r.Filter]; !seen {
-			order = append(order, r.Filter)
-		}
-		byFilter[r.Filter] = append(byFilter[r.Filter], r)
-	}
-
-	for _, f := range order {
-		group := byFilter[f]
-		values := make([]float64, len(group))
-		for i, r := range group {
-			values[i] = r.AvgFWHM
-		}
-		median := medianOf(values)
-
-		if q.maxFWHMSigma > 0 && len(group) >= fwhmMinSample {
-			dev := make([]float64, len(values))
-			for i, v := range values {
-				dev[i] = math.Abs(v - median)
-			}
-			sigma := 1.4826 * medianOf(dev)
-			if sigma > 0 {
-				upper := median + q.maxFWHMSigma*sigma
-				for _, r := range group {
-					if r.Decision == decisionApproved && r.AvgFWHM > upper {
-						r.Decision = decisionFWHM
-					}
-				}
-			}
-		}
-
-		if median <= 0 {
-			continue
-		}
-		for _, r := range group {
-			r.FWHMRatio = r.AvgFWHM / median
-		}
-	}
+	applyFWHMRuleGated(results, baseGates(q))
 }
 
 // applySessionRulesBySession groups results by acquisition session and filter,
@@ -1133,22 +1085,7 @@ func applyFWHMRuleByFilter(results []ImageResult, q qualityThresholds) {
 // observed as a whole night of clean frames rejected when analyzing a target
 // directory rather than a single night.
 func applySessionRulesBySession(results []ImageResult, q qualityThresholds) {
-	if q.maxHaloRatio <= 0 && q.maxStructure <= 0 {
-		return
-	}
-	keys := sessionKeys(results)
-	groups := map[string][]*ImageResult{}
-	var order []string
-	for i := range results {
-		k := keys[i]
-		if _, seen := groups[k]; !seen {
-			order = append(order, k)
-		}
-		groups[k] = append(groups[k], &results[i])
-	}
-	for _, k := range order {
-		applySessionRules(groups[k], q)
-	}
+	applySessionRulesBySessionGated(results, baseGates(q))
 }
 
 // sessionGap is how long a pause between frames has to be before the run is
@@ -1228,6 +1165,14 @@ func sessionKeys(results []ImageResult) []string {
 // four measured frames neither percentile is meaningful, so neither test runs
 // and the session is left alone.
 func applySessionRules(results []*ImageResult, q qualityThresholds) {
+	applySessionRulesWith(results, q, 0, 0)
+}
+
+// applySessionRulesWith is the session rule with its two baselines supplied. A
+// zero baseline means "compute it from the session", which is what a run without
+// a suggestion does; a non-zero one is the value a suggestion pinned, so a night
+// is judged against the stack it was analysed with rather than against itself.
+func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBaseline, structBaseline float64) {
 	var halos, structures []float64
 	for _, r := range results {
 		r.HaloRatio = 0
@@ -1241,13 +1186,14 @@ func applySessionRules(results []*ImageResult, q qualityThresholds) {
 	}
 
 	// Both references are the 25th percentile of the session: the median would
-	// sit inside an event that affects several frames.
-	var haloRef, structRef float64
-	if len(halos) >= 4 {
+	// sit inside an event that affects several frames. A supplied baseline
+	// replaces the session's own.
+	haloRef, structRef := haloBaseline, structBaseline
+	if haloRef == 0 && len(halos) >= 4 {
 		sort.Float64s(halos)
 		haloRef = percentileSorted(halos, 0.25)
 	}
-	if len(structures) >= 4 {
+	if structRef == 0 && len(structures) >= 4 {
 		sort.Float64s(structures)
 		structRef = percentileSorted(structures, 0.25)
 	}
