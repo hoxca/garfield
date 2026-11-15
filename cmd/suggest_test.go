@@ -372,3 +372,187 @@ func TestPrepareSuggestedRefusesWhenNothingIsStored(t *testing.T) {
 		t.Errorf("error = %v, want it to name the missing suggestions", err)
 	}
 }
+
+// judgedStack returns a synthetic stack whose gates have already run, so the
+// simulation and the counts have verdicts to compare against.
+func judgedStack(t *testing.T) ([]ImageResult, sessionProfiles) {
+	t.Helper()
+	soft := nightSpec{date: "20260913", n: 8, fwhm: 3.30, ecc: 0.310, snr: 31.0,
+		halo: 1.00, bgstr: 0.0100, stars: 900, spread: 0.03}
+	results := buildStack(t, "H", append(uniformNights(3, 8), soft)...)
+
+	prof := profileRun(results)
+	applyBaseDecision(results, defaultThresholds)
+	applyFWHMRuleByFilter(results, defaultThresholds)
+	applySessionRulesBySession(results, defaultThresholds)
+	return results, prof
+}
+
+func TestCountRejectionsAttributesEveryRejection(t *testing.T) {
+	results, _ := judgedStack(t)
+
+	// Everything approved first, then one frame of each kind, so the attribution
+	// is checked by name and not by what the rest of the stack happened to be.
+	for i := range results {
+		results[i].Decision = decisionApproved
+	}
+	results[0].Decision = decisionApproved
+	results[1].Decision = decisionEcc
+	results[2].Decision = decisionFWHM
+	results[3].Decision = decisionSNR
+	results[4].Decision = decisionScoring
+	results[5].Decision = decisionClouds
+	results[6].Decision = decisionBadSeeing
+	results[7].Decision = decisionNoStars
+	results[8].Error = errNoStarFound
+
+	counts := countRejections(results, nil)
+	for gate, want := range map[string]int{
+		"min-ecc": 0, "max-ecc": 1, "max-fwhm": 1, "min-snr": 1,
+		"min-score": 1, "max-halo-ratio": 1, "max-structure": 1, "min-stars": 1,
+	} {
+		if gate == "min-ecc" {
+			continue // not a gate; guards against a typo in this table
+		}
+		if got := counts.byGate[gate]; got != want {
+			t.Errorf("%s counted %d rejections, want %d", gate, got, want)
+		}
+	}
+	if counts.noMetrics != 1 {
+		t.Errorf("no metrics = %d, want 1", counts.noMetrics)
+	}
+	sum := 0
+	for _, n := range counts.byGate {
+		sum += n
+	}
+	if got, want := sum+counts.noMetrics, counts.rejected(); got != want {
+		t.Errorf("attributed %d rejections, total says %d", got, want)
+	}
+}
+
+func TestSimulateReproducesTheVerdictsWhenTheGatesAgree(t *testing.T) {
+	results, prof := judgedStack(t)
+	opts := defaultOpts()
+
+	// A suggestion that is exactly the current thresholds with the run's own
+	// reference must reproduce the run's verdicts. If this drifts, the counts in
+	// the table are not describing the pipeline they claim to.
+	s := suggestedThresholds{
+		Filter: "H",
+		Thresholds: suggeststore.Thresholds{
+			MinSNR: opts.minSNR, MaxFWHM: opts.maxFWHM, MaxEcc: opts.maxEcc,
+			MinScore: opts.minScore, MinStars: opts.minStars,
+			MaxFWHMSigma: opts.maxFWHMSigma, MaxHaloRatio: opts.maxHaloRatio,
+			MaxStructure: opts.maxStructure,
+		},
+		Reference: referenceFromRefs(prof.refs["H"]),
+	}
+
+	simulated := simulateSuggestion(results, s, opts, prof)
+	for i, r := range results {
+		if r.Error != nil {
+			continue
+		}
+		if simulated[i] != r.Decision {
+			t.Errorf("%s: simulated %q, run says %q", r.Filename, simulated[i], r.Decision)
+		}
+	}
+}
+
+func TestSimulateFollowsATighterSuggestion(t *testing.T) {
+	results, prof := judgedStack(t)
+	opts := defaultOpts()
+
+	s := suggestedThresholds{
+		Filter:     "H",
+		Thresholds: suggeststore.Thresholds{MaxFWHM: 0.5, MaxEcc: 0.9, MinSNR: 0, MinScore: 0, MinStars: 0},
+		Reference:  referenceFromRefs(prof.refs["H"]),
+	}
+	simulated := simulateSuggestion(results, s, opts, prof)
+
+	rejected := 0
+	for i, r := range results {
+		if r.Error != nil {
+			continue
+		}
+		if simulated[i] != decisionFWHM {
+			t.Errorf("%s: simulated %q, want %q under a max-fwhm of 0.5", r.Filename, simulated[i], decisionFWHM)
+		}
+		rejected++
+	}
+	if rejected == 0 {
+		t.Fatal("no frame was judged")
+	}
+
+	counts := countRejections(results, simulated)
+	if counts.byGate["max-fwhm"] != rejected {
+		t.Errorf("max-fwhm attributed %d rejections, want %d", counts.byGate["max-fwhm"], rejected)
+	}
+	if counts.approved != 0 {
+		t.Errorf("approved = %d, want none under a max-fwhm of 0.5", counts.approved)
+	}
+}
+
+func TestSuggestionDeltaCountsTheChanges(t *testing.T) {
+	results, _ := judgedStack(t)
+	for i := range results {
+		results[i].Decision = decisionApproved
+	}
+	simulated := make([]string, len(results))
+	for i := range simulated {
+		simulated[i] = decisionApproved
+	}
+	simulated[0] = decisionFWHM
+	simulated[1] = decisionClouds
+	simulated[2] = decisionSNR
+
+	changed, rejected, approved := suggestionDelta(results, simulated)
+	if changed != 3 || rejected != 3 || approved != 0 {
+		t.Errorf("delta = %d changed, %d rejected, %d approved; want 3/3/0", changed, rejected, approved)
+	}
+
+	results[3].Error = errNoStarFound
+	if c, _, _ := suggestionDelta(results, simulated); c != 3 {
+		t.Errorf("an unreadable frame was counted as a change: %d", c)
+	}
+}
+
+func TestRunAnalyzeSuggestFillsTheCSVColumn(t *testing.T) {
+	// A suggestion needs a good stack of at least fwhmMinSample frames.
+	dir := synthFrames(t, fwhmMinSample+2)
+	out := t.TempDir()
+	o := cacheOpts(out)
+	o.filter = "B"
+	o.suggest = true
+
+	if err := runAnalyze(dir, o); err != nil {
+		t.Fatalf("runAnalyze: %v", err)
+	}
+
+	recs := readCSVFile(t, filepath.Join(out, "analyse_report_B.csv"))
+	col := columnIndex(t, recs[0], "suggestedDecision")
+	filled := 0
+	for _, r := range recs[1:] {
+		if r[col] != "" {
+			filled++
+		}
+	}
+	if filled == 0 {
+		t.Errorf("suggestedDecision is empty on every row under --suggest:\n%v", recs)
+	}
+
+	// Without the flag the column exists but says "not asked", rather than
+	// repeating the current verdict and implying the suggestion was applied.
+	plain := cacheOpts(t.TempDir())
+	plain.filter = "B"
+	if err := runAnalyze(dir, plain); err != nil {
+		t.Fatalf("runAnalyze without --suggest: %v", err)
+	}
+	recs = readCSVFile(t, filepath.Join(plain.output, "analyse_report_B.csv"))
+	col = columnIndex(t, recs[0], "suggestedDecision")
+	for _, r := range recs[1:] {
+		if r[col] != "" {
+			t.Errorf("%s carries suggestedDecision %q without --suggest", r[0], r[col])
+		}
+	}
+}

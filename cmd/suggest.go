@@ -276,9 +276,115 @@ func roundTo(v float64, decimals int) float64 {
 	return math.Round(v*scale) / scale
 }
 
-// printSuggestion reports the suggestion as a table, with the count each gate
-// would produce, because the numbers are the point.
-func printSuggestion(s suggestedThresholds, current qualityThresholds) {
+// gateRows is the order rejections are reported in: the base cascade first, then
+// the two session rules. Both FWHM rules share one row because the report gives
+// them one token, and attributing a rejection to the wrong one would be a guess.
+var gateRows = []struct{ key, decision string }{
+	{"min-stars", decisionNoStars},
+	{"max-ecc", decisionEcc},
+	{"max-fwhm", decisionFWHM},
+	{"min-snr", decisionSNR},
+	{"min-score", decisionScoring},
+	{"max-halo-ratio", decisionClouds},
+	{"max-structure", decisionBadSeeing},
+}
+
+// rejectionCounts is how many frames each gate rejected.
+//
+// Rejections are attributed by the verdict the pipeline produced, not by
+// re-testing the metrics, so the column sums to the rejected total exactly and
+// agrees with the decision column of the report.
+type rejectionCounts struct {
+	byGate    map[string]int
+	noMetrics int
+	approved  int
+	total     int
+}
+
+func (c rejectionCounts) rejected() int { return c.total - c.approved }
+
+// countRejections tallies the verdicts in results, or in a simulated set of them.
+func countRejections(results []ImageResult, decisions []string) rejectionCounts {
+	c := rejectionCounts{byGate: map[string]int{}, total: len(results)}
+	for i, r := range results {
+		decision := r.Decision
+		if decisions != nil {
+			decision = decisions[i]
+		}
+		switch {
+		case r.Error != nil:
+			c.noMetrics++
+		case decision == decisionApproved:
+			c.approved++
+		default:
+			for _, row := range gateRows {
+				if row.decision == decision {
+					c.byGate[row.key]++
+					break
+				}
+			}
+		}
+	}
+	return c
+}
+
+// simulateSuggestion judges a copy of the run with the suggested gates and
+// returns the verdict each frame would get.
+//
+// The copy is judged from scratch rather than by adjusting the existing verdicts,
+// because the relative rules would otherwise be applied twice: a frame the
+// current thresholds rejected is not APPROVED to the suggested ones.
+func simulateSuggestion(results []ImageResult, s suggestedThresholds, opts analyzeOptions, prof sessionProfiles) []string {
+	gates := gateSet{
+		base:     opts.qualityThresholds,
+		byFilter: map[string]qualityThresholds{},
+		refs:     map[string]frozenReference{},
+	}
+	gates.byFilter[s.Filter] = qualityThresholds{
+		minSNR:       s.Thresholds.MinSNR,
+		maxFWHM:      s.Thresholds.MaxFWHM,
+		maxEcc:       s.Thresholds.MaxEcc,
+		minScore:     s.Thresholds.MinScore,
+		minStars:     s.Thresholds.MinStars,
+		maxFWHMSigma: s.Thresholds.MaxFWHMSigma,
+		maxHaloRatio: s.Thresholds.MaxHaloRatio,
+		maxStructure: s.Thresholds.MaxStructure,
+		moffat:       opts.moffat,
+	}
+	refs := map[string]stackRef{}
+	for name, ref := range s.Reference {
+		refs[name] = stackRef{Median: ref.Median, Sigma: ref.Sigma, P25: ref.P25}
+	}
+	gates.refs[s.Filter] = frozenReference{Refs: refs}
+
+	sim := make([]ImageResult, len(results))
+	copy(sim, results)
+	for i := range sim {
+		sim[i].Decision = ""
+		sim[i].FWHMRatio = 0
+		sim[i].HaloRatio = 0
+		sim[i].StructRatio = 0
+	}
+	applyBaseDecisionGated(sim, gates)
+	applyFWHMRuleGated(sim, gates)
+	applySessionRulesBySessionGated(sim, gates)
+	if opts.stackGate {
+		applyStackGate(sim, prof)
+	}
+
+	decisions := make([]string, len(sim))
+	for i := range sim {
+		decisions[i] = sim[i].Decision
+	}
+	return decisions
+}
+
+// printSuggestion reports the suggestion as a table: the values, and what each
+// gate costs now and would cost under the suggestion.
+//
+// The count column is aligned on the arrow so the eye can run down the deltas,
+// and the header uses the same field widths as the rows.
+func printSuggestion(s suggestedThresholds, current qualityThresholds, now, then rejectionCounts) {
 	fmt.Printf("\nsuggested thresholds for filter %s (%d frame(s), %d night(s), %s..%s)\n",
 		s.Filter, s.Population.N, s.Population.Sessions, s.Population.From, s.Population.To)
 	if len(s.Excluded) > 0 {
@@ -291,24 +397,50 @@ func printSuggestion(s suggestedThresholds, current qualityThresholds) {
 	fmt.Printf("  band %.1f sigma around the good stack: keeps %d/%d good frames; %d/%d of the filter overall (%.0f%%)\n\n",
 		s.Band, s.KeptGood, s.GoodCount, s.KeptCount, s.Total, 100*s.Kept)
 
-	fmt.Printf("  %-14s %10s %10s\n", "gate", "current", "suggested")
+	const arrowWidth = 12
+	fmt.Printf("  %-14s %10s %10s %*s → %s\n", "gate", "current", "suggested", arrowWidth, "rejects now", "then")
 	rows := []struct {
 		key            string
 		cur, suggested float64
 	}{
-		{"min-snr", current.minSNR, s.Thresholds.MinSNR},
-		{"max-fwhm", current.maxFWHM, s.Thresholds.MaxFWHM},
-		{"max-ecc", current.maxEcc, s.Thresholds.MaxEcc},
-		{"min-score", current.minScore, s.Thresholds.MinScore},
 		{"min-stars", float64(current.minStars), float64(s.Thresholds.MinStars)},
-		{"max-fwhm-sigma", current.maxFWHMSigma, s.Thresholds.MaxFWHMSigma},
+		{"max-ecc", current.maxEcc, s.Thresholds.MaxEcc},
+		{"max-fwhm", current.maxFWHM, s.Thresholds.MaxFWHM},
+		{"min-snr", current.minSNR, s.Thresholds.MinSNR},
+		{"min-score", current.minScore, s.Thresholds.MinScore},
 		{"max-halo-ratio", current.maxHaloRatio, s.Thresholds.MaxHaloRatio},
 		{"max-structure", current.maxStructure, s.Thresholds.MaxStructure},
 	}
 	for _, row := range rows {
-		fmt.Printf("  %-14s %10s %10s\n", row.key, formatSuggestion(row.cur), formatSuggestion(row.suggested))
+		fmt.Printf("  %-14s %10s %10s %*d → %d\n", row.key,
+			formatSuggestion(row.cur), formatSuggestion(row.suggested),
+			arrowWidth, now.byGate[row.key], then.byGate[row.key])
 	}
+	fmt.Printf("  %-14s %10s %10s %*d → %d\n", "no metrics", "-", "-",
+		arrowWidth, now.noMetrics, then.noMetrics)
+	fmt.Printf("  %-14s %10s %10s %*d → %d     (%d/%d approved now, %d/%d under the suggestion)\n",
+		"total", "-", "-", arrowWidth, now.rejected(), then.rejected(),
+		now.approved, now.total, then.approved, then.total)
+
 	fmt.Println()
+}
+
+// suggestionDelta says how many frames the suggestion would judge differently,
+// and in which direction.
+func suggestionDelta(results []ImageResult, simulated []string) (changed, newlyRejected, newlyApproved int) {
+	for i := range results {
+		was, now := results[i].Decision, simulated[i]
+		if results[i].Error != nil || was == now {
+			continue
+		}
+		changed++
+		if now == decisionApproved {
+			newlyApproved++
+			continue
+		}
+		newlyRejected++
+	}
+	return changed, newlyRejected, newlyApproved
 }
 
 // formatSuggestion renders a threshold the way the report renders numbers: as

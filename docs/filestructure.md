@@ -1127,7 +1127,7 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision
 ```
 
 `decision` holds one of **eight** values, which are **data, not messages** —
@@ -1169,6 +1169,10 @@ measurement store instead of this run's analysis; it is the only column
 systematically worse than the filter's whole stack (§10.2). The `*RatioStack`
 columns put the frame's measurement next to the stack median, where above 1 means
 above the median: bad for width, shape, halo and structure, good for SNR.
+
+`suggestedDecision` is the verdict `analyze --suggest` says the frame would get
+under the suggested gates. It is empty on every other run, including `prepare`,
+so an empty column means "not asked" rather than "same as now".
 
 ### 10.1.1 The FWHM, cloud and bad-seeing rules
 
@@ -1300,6 +1304,10 @@ record carries the thresholds **and** the reference statistics they were derived
 from, plus the population (`n`, nights, date range) they describe. That is what
 `prepare --suggested` applies: judging with a recomputed reference would make a
 frame's verdict depend on which other frames happened to be in the run.
+
+The suggestion table counts the rejections each gate accounts for, attributed by
+the first gate that rejected the frame in pipeline order, so the rows sum to the
+total. Both FWHM rules share one row because the report gives them one token.
 
 `--suggest` needs at least `fwhmMinSample` frames outside the condemned nights,
 and refuses rather than deriving a band from a handful of frames.

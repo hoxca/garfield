@@ -171,6 +171,10 @@ type ImageResult struct {
 	SNRRatioStack    float64
 	HaloRatioStack   float64
 	StructRatioStack float64
+	// SuggestedDecision is the verdict the gate suggestion would give this frame,
+	// set only by `analyze --suggest`. Empty on every other run, so the column
+	// says "not asked" rather than implying the current verdict.
+	SuggestedDecision string
 }
 
 const (
@@ -489,7 +493,8 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // background, noise and bgStructure are appended at the end so the position of
 // every pre-existing column is unchanged for anything already reading this file.
 var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
-	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack"}
+	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
+	"suggestedDecision"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -526,6 +531,7 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.SNRRatioStack, 'f', 4, 64),
 		strconv.FormatFloat(r.HaloRatioStack, 'f', 4, 64),
 		strconv.FormatFloat(r.StructRatioStack, 'f', 4, 64),
+		r.SuggestedDecision,
 	}
 }
 
@@ -868,9 +874,6 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	if opts.stackGate {
 		applyStackGate(results, prof)
 	}
-	if !opts.quiet && showConsole && !prof.empty() {
-		printSessionProfile(prof)
-	}
 	if opts.output != "" && !prof.empty() {
 		for _, f := range prof.order {
 			if err := writeSessionsProfileCSV(opts.output, f, prof.profiles(f), prof.refs[f]); err != nil {
@@ -879,16 +882,30 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		}
 	}
 
+	// The suggestion is derived before the verdicts are printed, so each frame can
+	// say what the suggestion would do with it. It never changes the run's own
+	// decisions: those come from the thresholds the run was given.
+	var (
+		suggestion *suggestedThresholds
+		simulated  []string
+		nowCounts  rejectionCounts
+		thenCounts rejectionCounts
+	)
 	if opts.suggest {
-		// Suggested after the verdicts, and never folded into them: the run you
-		// are reading is judged by the thresholds you gave it.
 		s, err := suggestForFilter(results, prof, filter, opts)
 		if err != nil {
 			return err
 		}
-		if !opts.quiet {
-			printSuggestion(s, opts.qualityThresholds)
+		suggestion = &s
+		simulated = simulateSuggestion(results, s, opts, prof)
+		for i := range results {
+			if results[i].Error != nil {
+				continue
+			}
+			results[i].SuggestedDecision = simulated[i]
 		}
+		nowCounts = countRejections(results, nil)
+		thenCounts = countRejections(results, simulated)
 		if err := writeSuggestion(opts.output, s); err != nil {
 			return err
 		}
@@ -921,7 +938,28 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 				line += fmt.Sprintf(", struct=%.3f", r.StructRatio)
 			}
 			line += fmt.Sprintf(", %s)", r.Decision)
+			// Inline rather than a second list: the question is always about this
+			// frame, and a marker on it cannot drift out of step with the line.
+			if r.SuggestedDecision != "" && r.SuggestedDecision != r.Decision {
+				line += fmt.Sprintf(" [sugg: %s]", r.SuggestedDecision)
+			}
 			fmt.Println(line)
+		}
+	}
+
+	// The nights, then the what-if: the verdicts above are the facts, and these
+	// two blocks explain them in that order.
+	if !opts.quiet && showConsole && !prof.empty() {
+		printSessionProfile(prof)
+	}
+	if suggestion != nil && !opts.quiet {
+		printSuggestion(*suggestion, opts.qualityThresholds, nowCounts, thenCounts)
+		changed, rejected, approved := suggestionDelta(results, simulated)
+		if changed == 0 {
+			fmt.Printf("  the suggestion would judge every frame the same way\n\n")
+		} else {
+			fmt.Printf("  the suggestion would change %d frame(s): %d newly rejected, %d newly approved\n\n",
+				changed, rejected, approved)
 		}
 	}
 

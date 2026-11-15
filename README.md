@@ -245,7 +245,7 @@ filtered run writes `<output>/analyse_report_<FILTER>.csv`, so reports for
 different filters can share one output directory:
 
 ```
-filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack
+filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision
 ```
 
 `cached` is `true` on a row whose numbers were read from the measurement cache
@@ -401,11 +401,35 @@ suggested thresholds for filter H (20 frame(s), 4 night(s), 2026-09-04..2026-09-
   reference excludes 2 night(s): 2026-09-02 (cloudy); 2026-09-03 (thin)
   band 3.0 sigma around the good stack: keeps 11/13 good frames; 12/20 of the filter overall (60%)
 
-  gate              current  suggested
-  min-snr                11      11.99
-  max-fwhm              3.2       4.48
+  gate              current  suggested  rejects now → then
+  min-stars             380        100            0 → 0
+  max-ecc              0.64       0.53            0 → 0
+  max-fwhm              3.2       4.48           11 → 0
+  min-snr                11      11.99            0 → 8
   ...
+  no metrics              -          -            0 → 0
+  total                   -          -           11 → 9     (9/20 approved now, 11/20 under the suggestion)
+
+  the suggestion would change 12 frame(s): 9 newly rejected, 3 newly approved
 ```
+
+The counts are **attributed**: each rejected frame is counted once, under the
+first gate that rejected it in pipeline order, so the column sums to the total and
+matches the `decision` column. A frame failing FWHM and score together is counted
+under `max-fwhm`, which is also what the report says. Both FWHM rules share that
+row because the report gives them one token.
+
+The run's own verdicts are still the configured ones. Frames the suggestion would
+judge differently carry a marker, so the what-if is per frame and not only a
+total:
+
+```
+  [7/20] ..._02933_668.FIT ... OK (477/2920 stars, ..., REJECTED CLOUDS) [sugg: REJECTED FWHM]
+```
+
+and `suggestedDecision` in the CSV carries the same thing for a whole report
+(empty when `--suggest` was not used, so the column never implies the suggestion
+was applied).
 
 `--keep` moves the band: `--keep 0.95` loosens it until 95% of the good stack
 survives, `--keep 0.6` tightens it. The clamps are not negotiable — `min-snr`
