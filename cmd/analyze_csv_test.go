@@ -156,14 +156,14 @@ func TestParseFilenameExtensionIndependence(t *testing.T) {
 }
 
 // TestParseFilenameRoundTripThroughProcessImage checks the parser and the
-// result struct agree, since processImage populates both from one call.
+// result struct agree, since measureAndDecide populates both from one call.
 func TestParseFilenameRoundTripThroughProcessImage(t *testing.T) {
 	dir := t.TempDir()
 	const filter = "V"
 	name := "LBN527_LIGHT_" + filter + "_300s_BIN1_-10C_GA0_20260101_000000_000_PA310_E0.FIT"
 	path := writeFrame(t, dir, name, goodFrameOpts())
 
-	r := processImage(path, defaultOpts())
+	r := measureAndDecide(path, defaultOpts())
 	if r.Filename != name {
 		t.Errorf("filename = %q, want %q", r.Filename, name)
 	}
@@ -1056,7 +1056,7 @@ func TestRunAnalyzeRowOrderIsSorted(t *testing.T) {
 }
 
 // TestSaturatedStarsAreSkippedNotAveraged confirms the brightSkip actually
-// removes the brightest sources from the metrics. processImage always skips the
+// removes the brightest sources from the metrics. measureAndDecide always skips the
 // top brightSkip stars after sorting by descending flux, so a field with a few
 // saturated stars must report an average close to the clean field rather than
 // one inflated by them.
@@ -1071,13 +1071,13 @@ func TestSaturatedStarsAreSkippedNotAveraged(t *testing.T) {
 	clean.width, clean.height = 300, 300
 	clean.spacing = 25
 	clean.amp = 3000
-	base := processImage(writeFrame(t, dir, frameName("B", 0), clean), defaultOpts())
+	base := measureAndDecide(writeFrame(t, dir, frameName("B", 0), clean), defaultOpts())
 
 	withSat := goodFrameOpts()
 	withSat.width, withSat.height = 300, 300
 	withSat.spacing = 25
 	withSat.amp = 3000
-	got := processImage(writeFrameWithSaturation(t, dir, frameName("B", 1), withSat, 3), defaultOpts())
+	got := measureAndDecide(writeFrameWithSaturation(t, dir, frameName("B", 1), withSat, 3), defaultOpts())
 
 	if got.Error != nil {
 		t.Fatalf("unexpected error: %v", got.Error)
@@ -1439,7 +1439,7 @@ func TestRunAnalyzeRecordsPerFileError(t *testing.T) {
 }
 
 // TestRunAnalyzeErrorLineCarriesNoMetrics checks the console keeps metrics off
-// the failure line. processImage returns Score 0 for a file it could not read, so
+// the failure line. measureAndDecide returns Score 0 for a file it could not read, so
 // printing any metric beside the error would present a placeholder as though it
 // were a measurement -- and the reader has no way to tell it apart from a real
 // zero.

@@ -102,12 +102,12 @@ func registerWorkerFlags(fs *pflag.FlagSet, workers, convWorkers *int) {
 }
 
 // analyze builds the analyzeOptions carrying these thresholds, for prepare to
-// reuse processImage with the same criteria analyze uses.
+// reuse measureFrame with the same criteria analyze uses.
 func (q qualityThresholds) analyze() analyzeOptions {
 	return analyzeOptions{
 		qualityThresholds: q,
 		// limitComputedStars caps how many of the brightest stars are measured,
-		// and processImage needs it set; prepare exposes no flag for it.
+		// and measureFrame needs it set; prepare exposes no flag for it.
 		limitComputedStars: analyzeDefaultLimitComputedStars,
 	}
 }

@@ -92,7 +92,7 @@ func sessionOutDir(targetOut, sessionDir string) string {
 }
 
 // analyzeDefaultLimitComputedStars mirrors the analyze --limit-computed-stars
-// default. prepare reuses processImage, which requires this to be set, but does
+// default. prepare reuses measureFrame, which requires this to be set, but does
 // not expose the flag itself.
 const analyzeDefaultLimitComputedStars = 500
 
@@ -930,7 +930,7 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 		go func() {
 			defer wg.Done()
 			for i := range index {
-				results[i] = processImage(jobs[i].path, aopts)
+				results[i] = measureFrame(jobs[i].path, aopts)
 
 				if !opts.quiet && !opts.dryRun {
 					progressMu.Lock()
@@ -956,6 +956,7 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions) error {
 	// The FWHM gate is per filter over every assessed frame of the target, so
 	// it runs here, where the whole set is in hand. It comes first: a soft
 	// frame should be reported as soft rather than clouded.
+	applyBaseDecision(results, aopts.qualityThresholds)
 	applyFWHMRuleByFilter(results, aopts.qualityThresholds)
 
 	// Cloud is a per-session decision, and assessSessions is the one place that

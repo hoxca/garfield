@@ -38,7 +38,7 @@ type synthOpts struct {
 }
 
 // writeFrame builds a FITS frame containing a regular grid of Gaussian stars
-// on a noisy sky and returns its path. Used to drive processImage with inputs
+// on a noisy sky and returns its path. Used to drive measureAndDecide with inputs
 // whose true metrics are known by construction.
 func writeFrame(t *testing.T, dir, name string, o synthOpts) string {
 	t.Helper()
@@ -152,6 +152,16 @@ func defaultOpts() analyzeOptions {
 	}
 }
 
+// measureAndDecide measures one frame and applies the base cascade, the pair
+// runAnalyze and prepare run over a batch. Tests assert on the verdict, so they
+// go through this rather than the bare measurement, which leaves Decision empty
+// by design.
+func measureAndDecide(path string, opts analyzeOptions) ImageResult {
+	results := []ImageResult{measureFrame(path, opts)}
+	applyBaseDecision(results, opts.qualityThresholds)
+	return results[0]
+}
+
 // captureStdout redirects os.Stdout for the duration of fn and returns
 // everything written. runAnalyze prints with bare fmt.Printf, so there is no
 // writer to inject.
@@ -210,6 +220,6 @@ func captureStderr(t *testing.T, fn func()) string {
 	return out
 }
 
-// Tests in this file must not call t.Parallel: processImage and runAnalyze read
+// Tests in this file must not call t.Parallel: measureAndDecide and runAnalyze read
 // and write the package-level mrs.ConvWorkers global, so parallel execution
 // would be a genuine data race under -race.

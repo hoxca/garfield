@@ -233,7 +233,14 @@ func fitBoxRadius(fwhm float64) int {
 	return r
 }
 
-func processImage(path string, opts analyzeOptions) ImageResult {
+// measureFrame reads one frame and computes its quality measurements.
+//
+// It deliberately stops at the measurements: Decision is left empty. The verdict
+// depends on the thresholds, and two of the rules compare a frame against the
+// population it belongs to, so judging belongs to the batch passes
+// (applyBaseDecision and the two outlier rules). Keeping the two apart is also
+// what lets a measurement be reused under different thresholds.
+func measureFrame(path string, opts analyzeOptions) ImageResult {
 	name := filepath.Base(path)
 	filter, date := parseFilename(name)
 
@@ -295,7 +302,6 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 			Noise:           skyNoise,
 			BgStructure:     bgStructure,
 			Halo:            halo,
-			Decision:        decisionNoStars,
 		}
 	}
 
@@ -346,7 +352,6 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 			Noise:         skyNoise,
 			BgStructure:   bgStructure,
 			Halo:          halo,
-			Decision:      decisionNoStars,
 		}
 	}
 
@@ -355,20 +360,7 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 	avgPeakSignal := totalPeakSignal / float64(filteredCount)
 
 	snrLinear := mrsResult.ImageSNR
-	finalScore := (snrLinear / avgFWHM) * (1.0 - avgEcc)
-
-	decision := decisionApproved
-	if len(fieldStars) < opts.minStars {
-		decision = decisionNoStars
-	} else if avgEcc > opts.maxEcc {
-		decision = decisionEcc
-	} else if avgFWHM > opts.maxFWHM {
-		decision = decisionFWHM
-	} else if snrLinear < opts.minSNR {
-		decision = decisionSNR
-	} else if finalScore < opts.minScore {
-		decision = decisionScoring
-	}
+	finalScore := frameScore(snrLinear, avgFWHM, avgEcc)
 
 	return ImageResult{
 		Filename:        name,
@@ -385,8 +377,55 @@ func processImage(path string, opts analyzeOptions) ImageResult {
 		Noise:           skyNoise,
 		BgStructure:     bgStructure,
 		Halo:            halo,
-		Decision:        decision,
 	}
+}
+
+// frameScore is the combined figure of merit: signal-to-noise against width,
+// penalised by elongation. It is a pure function of three other measurements, so
+// the cache stores those and this recomputes the score on the way out rather
+// than duplicating a derived value.
+func frameScore(snr, fwhm, ecc float64) float64 {
+	if fwhm == 0 {
+		return 0
+	}
+	return (snr / fwhm) * (1.0 - ecc)
+}
+
+// applyBaseDecision sets each frame's verdict from its own measurements and the
+// configured thresholds. Frames that could not be measured keep an empty
+// decision, which the reports and the console render as an error rather than as
+// a verdict.
+func applyBaseDecision(results []ImageResult, q qualityThresholds) {
+	for i := range results {
+		if results[i].Error != nil {
+			continue
+		}
+		results[i].Decision = baseDecision(results[i], q)
+	}
+}
+
+// baseDecision is the threshold cascade, in precedence order: star count first,
+// then shape, width, signal and finally the combined score.
+//
+// StarCount == 0 is tested first because a frame whose stars all failed the
+// per-star filters has no metrics to judge. Its FWHM is zero, so the score would
+// divide by zero and yield +Inf, which passes every gate below.
+func baseDecision(r ImageResult, q qualityThresholds) string {
+	switch {
+	case r.StarCount == 0:
+		return decisionNoStars
+	case r.DetectedStars < q.minStars:
+		return decisionNoStars
+	case r.AvgEccentricity > q.maxEcc:
+		return decisionEcc
+	case r.AvgFWHM > q.maxFWHM:
+		return decisionFWHM
+	case r.SNR < q.minSNR:
+		return decisionSNR
+	case r.Score < q.minScore:
+		return decisionScoring
+	}
+	return decisionApproved
 }
 
 // csvSeparator matches the convention used by the reference tool's report
@@ -710,7 +749,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		go func() {
 			defer wg.Done()
 			for idx := range jobs {
-				r := processImage(fitsFiles[idx], opts)
+				r := measureFrame(fitsFiles[idx], opts)
 				// Distinct indices: no lock needed for the write.
 				results[idx] = r
 				// Progress only. The verdict cannot be printed here: the cloud
@@ -740,6 +779,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 
 	// Cloud is a session-level decision: it compares a frame against its own
 	// night, so it can only run once every frame has been measured.
+	applyBaseDecision(results, opts.qualityThresholds)
 	applyFWHMRuleByFilter(results, opts.qualityThresholds)
 	applySessionRulesBySession(results, opts.qualityThresholds)
 

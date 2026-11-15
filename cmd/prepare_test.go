@@ -987,7 +987,7 @@ func TestPrepareUnreadableFrameIsRejected(t *testing.T) {
 		flats: map[string][]string{},
 	}.build(t, root)
 
-	// Corrupt the frame after building so processImage cannot read it.
+	// Corrupt the frame after building so measureAndDecide cannot read it.
 	bad := filepath.Join(root, lightsDir, target, "2026-09-10", "H",
 		lightName(target, "H", "20260910", "220000", "000", "292"))
 	if err := os.WriteFile(bad, []byte("not a FITS file"), 0o644); err != nil {
@@ -1610,8 +1610,8 @@ func TestDefaultThresholdsAreRegistered(t *testing.T) {
 }
 
 // TestQualityThresholdsAnalyzeConversion checks the conversion prepare hands to
-// processImage carries the thresholds through unchanged, and sets the star limit
-// processImage requires.
+// measureAndDecide carries the thresholds through unchanged, and sets the star limit
+// measureAndDecide requires.
 func TestQualityThresholdsAnalyzeConversion(t *testing.T) {
 	q := qualityThresholds{
 		minSNR:   1.5,
@@ -1627,7 +1627,7 @@ func TestQualityThresholdsAnalyzeConversion(t *testing.T) {
 		t.Errorf("thresholds lost in conversion: got %+v, want %+v", got.qualityThresholds, q)
 	}
 	if got.limitComputedStars != analyzeDefaultLimitComputedStars {
-		t.Errorf("limitComputedStars = %d, want %d; processImage rejects every frame without it",
+		t.Errorf("limitComputedStars = %d, want %d; measureAndDecide rejects every frame without it",
 			got.limitComputedStars, analyzeDefaultLimitComputedStars)
 	}
 }

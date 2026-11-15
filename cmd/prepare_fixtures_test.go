@@ -133,7 +133,7 @@ func writeStub(t *testing.T, path string) {
 // writeFixtureFrame writes a real FITS frame when the name looks like a science
 // light, so the quality pass can actually read it, and a stub otherwise.
 //
-// Light frames carry a dense grid of Gaussian stars so processImage approves
+// Light frames carry a dense grid of Gaussian stars so measureAndDecide approves
 // them under the default thresholds. Flat frames are never analysed, so they
 // stay cheap stubs.
 func writeFixtureFrame(t *testing.T, dir, name, instrume string) string {

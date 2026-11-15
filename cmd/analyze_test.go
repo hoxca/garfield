@@ -30,7 +30,7 @@ func TestDecisionCascadeIsApprovedOnAGoodFrame(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFrame(t, dir, frameName("B", 0), goodFrameOpts())
 
-	r := processImage(path, defaultOpts())
+	r := measureAndDecide(path, defaultOpts())
 	if r.Error != nil {
 		t.Fatalf("unexpected error: %v", r.Error)
 	}
@@ -94,7 +94,7 @@ func TestDecisionCascadeGates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			o := defaultOpts()
 			tc.mut(&o)
-			r := processImage(path, o)
+			r := measureAndDecide(path, o)
 			if r.Error != nil {
 				t.Fatalf("unexpected error: %v", r.Error)
 			}
@@ -161,7 +161,7 @@ func TestDecisionCascadePrecedence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			o := defaultOpts()
 			tc.mut(&o)
-			r := processImage(path, o)
+			r := measureAndDecide(path, o)
 			if r.Error != nil {
 				t.Fatalf("unexpected error: %v", r.Error)
 			}
@@ -173,7 +173,7 @@ func TestDecisionCascadePrecedence(t *testing.T) {
 }
 
 // TestEccentricityGateOnEllipticalField drives the eccentricity gate through
-// processImage with physically elongated PSFs, rather than by moving the
+// measureAndDecide with physically elongated PSFs, rather than by moving the
 // threshold. An elliptical field is what the gate exists to catch.
 func TestEccentricityGateOnEllipticalField(t *testing.T) {
 	dir := t.TempDir()
@@ -197,7 +197,7 @@ func TestEccentricityGateOnEllipticalField(t *testing.T) {
 		o.ratio = tc.ratio
 		path := writeFrame(t, dir, frameName("G", 0), o)
 
-		r := processImage(path, defaultOpts())
+		r := measureAndDecide(path, defaultOpts())
 		if r.Error != nil {
 			t.Fatalf("ratio %.1f: unexpected error: %v", tc.ratio, r.Error)
 		}
@@ -239,7 +239,7 @@ func TestFWHMGateOnDefocusedField(t *testing.T) {
 		o.sigma = tc.sigma
 		path := writeFrame(t, dir, frameName("B", int(tc.sigma*10)), o)
 
-		r := processImage(path, defaultOpts())
+		r := measureAndDecide(path, defaultOpts())
 		if r.Error != nil {
 			t.Fatalf("sigma %.1f: unexpected error: %v", tc.sigma, r.Error)
 		}
@@ -258,7 +258,7 @@ func TestFWHMGateOnDefocusedField(t *testing.T) {
 // FWHM, eccentricity and scoring gates and the frame was reported APPROVED.
 //
 // The fixture stars sit above the detector's 25*noise floor but below the 50*sky
-// noise floor processImage requires to measure a star, so filteredCount ends up
+// noise floor measureAndDecide requires to measure a star, so filteredCount ends up
 // zero. Under every SNR threshold the frame must be rejected with finite
 // metrics.
 func TestNoNaNWhenNoStarIsMeasurable(t *testing.T) {
@@ -277,7 +277,7 @@ func TestNoNaNWhenNoStarIsMeasurable(t *testing.T) {
 		opts.maxEcc = 1.0    // would pass any eccentricity, including NaN
 		opts.minStars = 1
 
-		r := processImage(path, opts)
+		r := measureAndDecide(path, opts)
 
 		if r.Decision == decisionApproved {
 			t.Errorf("minSNR=%.1f: frame with zero measurable stars was APPROVED "+
@@ -314,7 +314,7 @@ func TestNoNaNWhenNoStarIsMeasurable(t *testing.T) {
 }
 
 // TestLimitComputedStarsBoundary pins the interaction between the flag and the
-// brightSkip / minUsableStars constants. processImage skips the brightest 20
+// brightSkip / minUsableStars constants. measureAndDecide skips the brightest 20
 // stars and refuses to measure when fewer than 80 remain, so a limit of 99
 // yields nothing measurable while 100 yields exactly 80.
 func TestLimitComputedStarsBoundary(t *testing.T) {
@@ -332,12 +332,12 @@ func TestLimitComputedStarsBoundary(t *testing.T) {
 		{limit: 500, wantStars: 480},
 	}
 
-	detected := processImage(path, defaultOpts()).DetectedStars
+	detected := measureAndDecide(path, defaultOpts()).DetectedStars
 	for _, tc := range tests {
 		t.Run("", func(t *testing.T) {
 			o := defaultOpts()
 			o.limitComputedStars = tc.limit
-			r := processImage(path, o)
+			r := measureAndDecide(path, o)
 			if r.Error != nil {
 				t.Fatalf("unexpected error: %v", r.Error)
 			}
@@ -365,7 +365,7 @@ func TestProcessImageErrorResults(t *testing.T) {
 	}
 
 	t.Run("unreadable file", func(t *testing.T) {
-		r := processImage(garbage, defaultOpts())
+		r := measureAndDecide(garbage, defaultOpts())
 		if r.Error == nil {
 			t.Fatal("expected an error")
 		}
@@ -378,7 +378,7 @@ func TestProcessImageErrorResults(t *testing.T) {
 	})
 
 	t.Run("missing file", func(t *testing.T) {
-		r := processImage(filepath.Join(dir, "absent.FIT"), defaultOpts())
+		r := measureAndDecide(filepath.Join(dir, "absent.FIT"), defaultOpts())
 		if r.Error == nil {
 			t.Fatal("expected an error")
 		}
@@ -395,7 +395,7 @@ func TestProcessImageErrorResults(t *testing.T) {
 		if err := os.WriteFile(bad, []byte("junk"), 0o644); err != nil {
 			t.Fatalf("write: %v", err)
 		}
-		r := processImage(bad, defaultOpts())
+		r := measureAndDecide(bad, defaultOpts())
 		if r.Error == nil {
 			t.Fatal("expected an error")
 		}
@@ -413,7 +413,7 @@ func TestProcessImageErrorResults(t *testing.T) {
 		o.width, o.height = 200, 200
 		path := writeFrame(t, dir, frameName("V", 0), o)
 
-		r := processImage(path, defaultOpts())
+		r := measureAndDecide(path, defaultOpts())
 		if r.Error == nil {
 			t.Fatal("expected an error for a frame with no detectable stars")
 		}
@@ -436,7 +436,7 @@ func TestProcessImageConstantFrame(t *testing.T) {
 	o.width, o.height = 200, 200
 	path := writeFrame(t, dir, frameName("G", 0), o)
 
-	r := processImage(path, defaultOpts())
+	r := measureAndDecide(path, defaultOpts())
 	if r.Error == nil {
 		t.Fatal("expected an error for a constant frame")
 	}
