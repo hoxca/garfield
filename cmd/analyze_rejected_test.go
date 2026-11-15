@@ -18,7 +18,7 @@ func TestRejectCategory(t *testing.T) {
 		decisionSNR:       "snr",
 		decisionScoring:   "scoring",
 		decisionClouds:    "clouds",
-		decisionBadSeeing: "bad-seeing",
+		decisionStructure: "structure",
 	}
 	for decision, want := range tests {
 		if got := rejectCategory(decision); got != want {

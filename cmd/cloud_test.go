@@ -60,8 +60,8 @@ func TestApplyStructureRuleRejectsBadSeeing(t *testing.T) {
 
 	applySessionRules(group, q)
 
-	if group[2].Decision != decisionBadSeeing {
-		t.Errorf("structured frame decision = %q, want %q", group[2].Decision, decisionBadSeeing)
+	if group[2].Decision != decisionStructure {
+		t.Errorf("structured frame decision = %q, want %q", group[2].Decision, decisionStructure)
 	}
 	if group[2].HaloRatio < 0.99 || group[2].HaloRatio > 1.01 {
 		t.Errorf("haloRatio = %.4f, want ~1.0: structure, not halo, should have flagged it",
@@ -308,7 +308,7 @@ func TestBadSeeingStillRejectsASoftOutlier(t *testing.T) {
 
 	applySessionRules(group, q)
 
-	if outlier.Decision != decisionBadSeeing {
-		t.Errorf("decision = %q at structRatio %.3f, want %q", outlier.Decision, outlier.StructRatio, decisionBadSeeing)
+	if outlier.Decision != decisionStructure {
+		t.Errorf("decision = %q at structRatio %.3f, want %q", outlier.Decision, outlier.StructRatio, decisionStructure)
 	}
 }

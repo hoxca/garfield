@@ -668,7 +668,7 @@ func stackGateDecision(r ImageResult, flags []string, refs map[string]stackRef) 
 	// sharp as the night allows.
 	soft := refs["fwhm"].Median <= 0 || r.AvgFWHM > refs["fwhm"].Median
 	if (has(sessionHazy) || scattered) && soft && outsideBand(r.BgStructure, refs["struct"], true) {
-		return decisionBadSeeing, true
+		return decisionStructure, true
 	}
 	if (has(sessionThin) || scattered) && outsideBand(r.SNR, refs["snr"], false) {
 		return decisionSNR, true

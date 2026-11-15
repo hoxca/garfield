@@ -309,7 +309,7 @@ var gateRows = []struct{ key, decision string }{
 	{"min-snr", decisionSNR},
 	{"min-score", decisionScoring},
 	{"max-halo-ratio", decisionClouds},
-	{"max-structure", decisionBadSeeing},
+	{"max-structure", decisionStructure},
 }
 
 // rejectionCounts is how many frames each gate rejected.

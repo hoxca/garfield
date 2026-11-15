@@ -259,9 +259,9 @@ filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;s
 `cached` is `true` on a row whose numbers were read from the measurement cache
 instead of measured in this run. It is the only column a `--cache` run changes.
 
-`decision` holds one of **seven** values, which are **data, not messages** —
+`decision` holds one of **eight** values, which are **data, not messages** —
 `APPROVED`, `REJECTED NO STARS`, `REJECTED ECCENTRICITY`, `REJECTED FWHM`,
-`REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`, `REJECTED BAD SEEING`.
+`REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`, `REJECTED STRUCTURE`.
 Match on them exactly.
 
 `background`, `noise` and `bgStructure` are measurements, not decisions:
@@ -305,7 +305,7 @@ command, analyzing a single night and analyzing the whole target can produce
 different bounds.
 
 A frame is `REJECTED CLOUDS` when `haloRatio > --max-halo-ratio`. It is
-`REJECTED BAD SEEING` only when **three** things hold together: `structRatio`
+`REJECTED STRUCTURE` only when **three** things hold together: `structRatio`
 above `--max-structure`, above `median + 4·MAD` of the session's own
 `structRatio`, and the frame softer than its session's median FWHM. Set any
 threshold to `0` to disable that rule.
@@ -343,7 +343,7 @@ soft frame is reported as soft rather than clouded.
 │   ├── measurements.jsonl      ← only with --cache
 │   └── suggestions.jsonl       ← only with --suggest
 └── rejected/
-    ├── bad-seeing/
+    ├── structure/
     ├── clouds/
     ├── eccentricity/
     ├── fwhm/

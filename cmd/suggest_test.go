@@ -402,7 +402,7 @@ func TestCountRejectionsAttributesEveryRejection(t *testing.T) {
 	results[3].Decision = decisionSNR
 	results[4].Decision = decisionScoring
 	results[5].Decision = decisionClouds
-	results[6].Decision = decisionBadSeeing
+	results[6].Decision = decisionStructure
 	results[7].Decision = decisionNoStars
 	results[8].Error = errNoStarFound
 

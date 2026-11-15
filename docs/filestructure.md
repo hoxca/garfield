@@ -1138,7 +1138,7 @@ filename's date field, since it is never rewritten (§10).
 session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars
 ```
 
-`decision` holds one of **seven** values, which are **data, not messages** —
+`decision` holds one of **eight** values, which are **data, not messages** —
 anything parsing this file must match on them, and the strings are part of the
 contract:
 
@@ -1151,7 +1151,7 @@ contract:
 | `REJECTED SNR` | failed `--min-snr` |
 | `REJECTED SCORING` | failed `--min-score` |
 | `REJECTED CLOUDS` | bright-star aureole above the session's (§10.1.1) |
-| `REJECTED BAD SEEING` | structured sky, and a frame soft enough for it to be seeing (§10.1.1) |
+| `REJECTED STRUCTURE` | structured sky, and a frame soft enough for it to be seeing (§10.1.1) |
 
 Both reports record the **bare** session name, never a path, so consumers join
 on the session column. Metric columns come from the same `imageResultRow` used
@@ -1182,7 +1182,7 @@ above the median: bad for width, shape, halo and structure, good for SNR.
 under the suggested gates. It is empty on every other run, including `prepare`,
 so an empty column means "not asked" rather than "same as now".
 
-### 10.1.1 The FWHM, cloud and bad-seeing rules
+### 10.1.1 The FWHM, cloud and structure rules
 
 Cloud is the one decision that cannot be made from a frame alone: the same sky
 brightness means different things on a moonlit night and a dark one. So a frame
@@ -1245,7 +1245,7 @@ pedestal ring is incomplete.
 **Why structure is still measured.** `bgStructure` — the MAD of 64×64 block
 medians in units of noise — is used as a bad-seeing signal. A sky that varies
 strongly across the field produces frames that no amount of stacking repairs.
-It is a separate decision (`REJECTED BAD SEEING`) so that a rejected frame says
+It is a separate decision (`REJECTED STRUCTURE`) so that a rejected frame says
 which problem it had. Cloud takes precedence when both fire.
 
 **Why three conditions and not one.** `bgStructure` measures the frame's total

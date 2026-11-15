@@ -189,7 +189,7 @@ const (
 	decisionSNR       = "REJECTED SNR"
 	decisionScoring   = "REJECTED SCORING"
 	decisionClouds    = "REJECTED CLOUDS"
-	decisionBadSeeing = "REJECTED BAD SEEING"
+	decisionStructure = "REJECTED STRUCTURE"
 )
 
 // Reasons recorded for frames that were rejected without a quality verdict.
@@ -1388,7 +1388,7 @@ func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBase
 		if fwhmRef > 0 && r.AvgFWHM <= fwhmRef {
 			continue
 		}
-		r.Decision = decisionBadSeeing
+		r.Decision = decisionStructure
 	}
 }
 
@@ -1440,7 +1440,7 @@ var rejectCategories = map[string]string{
 	decisionSNR:       "snr",
 	decisionScoring:   "scoring",
 	decisionClouds:    "clouds",
-	decisionBadSeeing: "bad-seeing",
+	decisionStructure: "structure",
 }
 
 // rejectCategory returns the folder a rejected frame belongs in.
