@@ -78,7 +78,7 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 	fs.Float64Var(&dst.maxHaloRatio, "max-halo-ratio", defaultThresholds.maxHaloRatio,
 		"reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables")
 	fs.Float64Var(&dst.maxStructure, "max-structure", defaultThresholds.maxStructure,
-		"reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables")
+		"reject a frame that is both softer than its session and unusually structured above this multiple; 0 disables")
 	fs.BoolVar(&dst.moffat, "moffat", defaultThresholds.moffat,
 		"fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight)")
 }

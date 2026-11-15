@@ -269,12 +269,13 @@ func applySessionRulesBySessionGated(results []ImageResult, gates gateSet) {
 	for _, k := range order {
 		filter := filterOfSessionKey(k)
 		q := gates.thresholds(filter)
-		var haloRef, structRef float64
+		var haloRef, structRef, fwhmRef float64
 		if ref, ok := gates.frozen(filter); ok {
 			haloRef = ref.Refs["halo"].P25
 			structRef = ref.Refs["struct"].P25
+			fwhmRef = ref.Refs["fwhm"].Median
 		}
-		applySessionRulesWith(groups[k], q, haloRef, structRef)
+		applySessionRulesWith(groups[k], q, haloRef, structRef, fwhmRef)
 	}
 }
 

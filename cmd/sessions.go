@@ -663,7 +663,11 @@ func stackGateDecision(r ImageResult, flags []string, refs map[string]stackRef) 
 	if (has(sessionCloudy) || scattered) && outsideBand(r.Halo, refs["halo"], true) {
 		return decisionClouds, true
 	}
-	if (has(sessionHazy) || scattered) && outsideBand(r.BgStructure, refs["struct"], true) {
+	// Bad seeing means soft stars, here as in the session rule: structure alone is
+	// the field's own signal, and an extended object raises it with the PSF as
+	// sharp as the night allows.
+	soft := refs["fwhm"].Median <= 0 || r.AvgFWHM > refs["fwhm"].Median
+	if (has(sessionHazy) || scattered) && soft && outsideBand(r.BgStructure, refs["struct"], true) {
 		return decisionBadSeeing, true
 	}
 	if (has(sessionThin) || scattered) && outsideBand(r.SNR, refs["snr"], false) {

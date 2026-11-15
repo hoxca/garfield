@@ -1257,14 +1257,32 @@ func sessionKeys(results []ImageResult) []string {
 // four measured frames neither percentile is meaningful, so neither test runs
 // and the session is left alone.
 func applySessionRules(results []*ImageResult, q qualityThresholds) {
-	applySessionRulesWith(results, q, 0, 0)
+	applySessionRulesWith(results, q, 0, 0, 0)
 }
 
-// applySessionRulesWith is the session rule with its two baselines supplied. A
-// zero baseline means "compute it from the session", which is what a run without
-// a suggestion does; a non-zero one is the value a suggestion pinned, so a night
-// is judged against the stack it was analysed with rather than against itself.
-func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBaseline, structBaseline float64) {
+// structureSigma is how many robust sigmas above the session's median structure a
+// frame must lie before its sky counts as anomalous, and structureMinSample is
+// the smallest session that bound can be computed from.
+//
+// A fixed multiplier of the 25th percentile is not enough on its own: on a night
+// whose structure is tightly distributed -- which is what a good night looks like
+// -- the multiplier cuts the top few percent whatever those frames are. The
+// default 1.12 sat on the 95th percentile of one target's G frames, so it
+// rejected eleven frames whose PSFs were the sharpest of the night. Requiring the
+// frame to be an outlier by the session's own robust scale, and to be soft as
+// well, is what separates a defect from the field's own nebulosity.
+const (
+	structureSigma     = 4.0
+	structureMinSample = 4
+)
+
+// applySessionRulesWith is the session rule with its baselines supplied.
+//
+// A zero baseline means "compute it from the session", which is what a run
+// without a suggestion does; a non-zero one is the value a suggestion pinned, so
+// a night is judged against the stack it was analysed with rather than against
+// itself.
+func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBaseline, structBaseline, fwhmBaseline float64) {
 	var halos, structures []float64
 	for _, r := range results {
 		r.HaloRatio = 0
@@ -1297,6 +1315,45 @@ func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBase
 		if structRef > 0 {
 			r.StructRatio = r.BgStructure / structRef
 		}
+	}
+
+	// How unusual a frame's sky has to be, by the session's own robust scale. A
+	// degenerate scale means every frame looks alike, so there is nothing for a
+	// sigma bound to say and the absolute multiplier decides alone.
+	structBound := 0.0
+	ratios := make([]float64, 0, len(results))
+	for _, r := range results {
+		if r.StructRatio > 0 {
+			ratios = append(ratios, r.StructRatio)
+		}
+	}
+	if len(ratios) >= structureMinSample {
+		median := medianOf(ratios)
+		dev := make([]float64, len(ratios))
+		for i, v := range ratios {
+			dev[i] = math.Abs(v - median)
+		}
+		if sigma := 1.4826 * medianOf(dev); sigma > 0 {
+			structBound = median + structureSigma*sigma
+		}
+	}
+
+	// Bad seeing means soft stars. Structure on its own is not evidence: an
+	// extended object, or the scattered light around bright stars, raises it
+	// while the PSF stays as sharp as the night allows. Without this test the
+	// rule rejects the most transparent frames of a nebula field.
+	fwhmRef := fwhmBaseline
+	if fwhmRef <= 0 {
+		fwhms := make([]float64, 0, len(results))
+		for _, r := range results {
+			if r.AvgFWHM > 0 {
+				fwhms = append(fwhms, r.AvgFWHM)
+			}
+		}
+		fwhmRef = medianOf(fwhms)
+	}
+
+	for _, r := range results {
 		if r.Decision != decisionApproved {
 			continue
 		}
@@ -1304,9 +1361,16 @@ func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBase
 			r.Decision = decisionClouds
 			continue
 		}
-		if q.maxStructure > 0 && r.StructRatio > q.maxStructure {
-			r.Decision = decisionBadSeeing
+		if q.maxStructure <= 0 || r.StructRatio <= q.maxStructure {
+			continue
 		}
+		if structBound > 0 && r.StructRatio <= structBound {
+			continue
+		}
+		if fwhmRef > 0 && r.AvgFWHM <= fwhmRef {
+			continue
+		}
+		r.Decision = decisionBadSeeing
 	}
 }
 

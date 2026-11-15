@@ -1198,7 +1198,9 @@ halo         = median over the 10 brightest stars of
 haloRatio    = halo        / p25(session halo)
 structRatio  = bgStructure / p25(session bgStructure)
 clouded      = haloRatio   > --max-halo-ratio
-badSeeing    = structRatio > --max-structure
+badSeeing    = structRatio > --max-structure                     (absolute floor)
+               AND structRatio > median + 4*1.4826*MAD           (outlier of its night)
+               AND avgFWHM     > median(avgFWHM of the session)  (the stars are soft)
 ```
 
 **Why FWHM is compared by filter across the run.** Seeing varies from night to
@@ -1236,6 +1238,18 @@ medians in units of noise — is used as a bad-seeing signal. A sky that varies
 strongly across the field produces frames that no amount of stacking repairs.
 It is a separate decision (`REJECTED BAD SEEING`) so that a rejected frame says
 which problem it had. Cloud takes precedence when both fire.
+
+**Why three conditions and not one.** `bgStructure` measures the frame's total
+large-scale variation, and on an extended object that is mostly the object: the
+nebula, and the flat aureole around the brightest stars. Dividing by the
+per-pixel noise makes it scale with signal, so on one target's G frames it
+correlated +0.85 with image SNR, and the fixed `1.12` multiplier — which sat on
+the 95th percentile of that night — rejected eleven frames whose PSFs were the
+sharpest of the night. The absolute multiplier is therefore only a floor: the
+frame must also be an outlier by the session's own robust structure scale, and it
+must be softer than the session's median FWHM, because bad seeing means soft
+stars and nothing else does. A sharp frame can never be rejected for bad seeing.
+The session reference is frozen when a suggestion is applied (§10.2).
 
 **Sessions are found by clustering on acquisition time**, not by directory or by
 the date in the filename. Frames are sorted by the `_YYYYMMDD_HHMMSS_` stamp and a

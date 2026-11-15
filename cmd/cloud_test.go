@@ -14,6 +14,7 @@ func quietGroup(n int) []*ImageResult {
 			Filename:    "f",
 			Halo:        50,
 			BgStructure: 0.50,
+			AvgFWHM:     2.0,
 			Decision:    decisionApproved,
 		}
 	}
@@ -53,6 +54,9 @@ func TestApplyStructureRuleRejectsBadSeeing(t *testing.T) {
 	// sky's transparency.
 	group := quietGroup(5)
 	group[2].BgStructure = 0.65
+	// Bad seeing implies a frame that is softer than its night, so the fixture
+	// has to be soft as well as structured.
+	group[2].AvgFWHM = 2.4
 
 	applySessionRules(group, q)
 
@@ -236,5 +240,75 @@ func TestSessionKeysOvernightGap(t *testing.T) {
 	}
 	if keys[1] == keys[2] {
 		t.Errorf("a 20-hour gap did not start a new session: %q", keys[1])
+	}
+}
+
+func TestBadSeeingNeedsASoftFrame(t *testing.T) {
+	q := qualityThresholds{maxHaloRatio: 2.0, maxStructure: 1.12}
+
+	// The sharpest frame of the night, and the most structured: that is the field
+	// -- an extended object or the aureole of the bright stars -- not the seeing.
+	group := quietGroup(5)
+	group[2].BgStructure = 1.60
+	group[2].AvgFWHM = 1.20
+
+	applySessionRules(group, q)
+
+	if group[2].Decision != decisionApproved {
+		t.Errorf("decision = %q for a sharp frame (FWHM %.2f against the session's %.2f); "+
+			"structure alone is not bad seeing", group[2].Decision, group[2].AvgFWHM, 2.0)
+	}
+}
+
+func TestBadSeeingNeedsAnAnomalousStructure(t *testing.T) {
+	q := qualityThresholds{maxHaloRatio: 2.0, maxStructure: 1.12}
+
+	// A night whose structure naturally varies. The last frame is soft and sits
+	// above the absolute multiplier, but well inside the spread of its own night,
+	// so the multiplier alone would have cut it.
+	group := quietGroup(5)
+	group[0].BgStructure = 0.50
+	group[1].BgStructure = 0.55
+	group[2].BgStructure = 0.60
+	group[3].BgStructure = 0.65
+	group[4].BgStructure = 0.56
+	soft := &ImageResult{
+		Filename: "soft.FIT", Halo: 50, BgStructure: 0.62, AvgFWHM: 2.5,
+		Decision: decisionApproved,
+	}
+	group = append(group, soft)
+
+	applySessionRules(group, q)
+
+	if soft.StructRatio <= q.maxStructure {
+		t.Fatalf("fixture does not exercise the multiplier: structRatio = %.3f", soft.StructRatio)
+	}
+	if soft.Decision != decisionApproved {
+		t.Errorf("decision = %q at structRatio %.3f, want APPROVED: that is the night's normal spread",
+			soft.Decision, soft.StructRatio)
+	}
+}
+
+func TestBadSeeingStillRejectsASoftOutlier(t *testing.T) {
+	q := qualityThresholds{maxHaloRatio: 2.0, maxStructure: 1.12}
+
+	// Structure spread as above, plus a frame far outside it and soft: both
+	// conditions hold, so the rule must still fire.
+	group := quietGroup(5)
+	group[0].BgStructure = 0.50
+	group[1].BgStructure = 0.55
+	group[2].BgStructure = 0.60
+	group[3].BgStructure = 0.65
+	group[4].BgStructure = 0.56
+	outlier := &ImageResult{
+		Filename: "bad.FIT", Halo: 50, BgStructure: 2.00, AvgFWHM: 2.6,
+		Decision: decisionApproved,
+	}
+	group = append(group, outlier)
+
+	applySessionRules(group, q)
+
+	if outlier.Decision != decisionBadSeeing {
+		t.Errorf("decision = %q at structRatio %.3f, want %q", outlier.Decision, outlier.StructRatio, decisionBadSeeing)
 	}
 }

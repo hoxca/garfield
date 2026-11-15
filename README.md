@@ -173,7 +173,7 @@ Flags:
       --max-fwhm float             maximum FWHM for APPROVED [config: garfield.yaml] (default 3.2)
       --max-fwhm-sigma float       reject a frame whose FWHM is more than this many robust sigmas above its filter's median; 0 disables [config: garfield.yaml] (default 4)
       --max-halo-ratio float       reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 2)
-      --max-structure float        reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables [config: garfield.yaml] (default 1.12)
+      --max-structure float        reject a frame that is both softer than its session and unusually structured above this multiple; 0 disables [config: garfield.yaml] (default 1.12)
       --min-score float            minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float              minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int              minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
@@ -301,9 +301,11 @@ exactly on the median. Because the population is every frame passed to the
 command, analyzing a single night and analyzing the whole target can produce
 different bounds.
 
-A frame is `REJECTED CLOUDS` when `haloRatio > --max-halo-ratio`; it is
-`REJECTED BAD SEEING` when `structRatio > --max-structure`. Set any threshold to
-`0` to disable that rule.
+A frame is `REJECTED CLOUDS` when `haloRatio > --max-halo-ratio`. It is
+`REJECTED BAD SEEING` only when **three** things hold together: `structRatio`
+above `--max-structure`, above `median + 4·MAD` of the session's own
+`structRatio`, and the frame softer than its session's median FWHM. Set any
+threshold to `0` to disable that rule.
 
 The halo is the cloud signal because it is a **shape** measurement, not a sky
 level: thin cloud scatters starlight into a wide aureole around the brightest
@@ -576,7 +578,7 @@ Flags:
       --max-fwhm float         maximum FWHM for APPROVED [config: garfield.yaml] (default 3.2)
       --max-fwhm-sigma float   reject a frame whose FWHM is more than this many robust sigmas above its filter's median; 0 disables [config: garfield.yaml] (default 4)
       --max-halo-ratio float   reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables [config: garfield.yaml] (default 2)
-      --max-structure float    reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables [config: garfield.yaml] (default 1.12)
+      --max-structure float    reject a frame that is both softer than its session and unusually structured above this multiple; 0 disables [config: garfield.yaml] (default 1.12)
       --min-score float        minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float          minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int          minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
