@@ -52,7 +52,13 @@ type analyzeOptions struct {
 	// default: it is a second opinion on the session rules, and turning it on
 	// discards frames.
 	stackGate bool
-	quiet     bool
+	// suggest derives a threshold set for the selected filter from the run's own
+	// measurements and writes it beside the report. It is advisory: the verdicts
+	// of this run are not changed by it.
+	suggest bool
+	// keep is the fraction of the filter's frames a suggestion aims to keep.
+	keep  float64
+	quiet bool
 }
 
 var analyzeOpts = analyzeOptions{}
@@ -100,6 +106,10 @@ func init() {
 		"reuse and record measurements in <output>/cache (requires --output)")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.stackGate, "stack-gate", false,
 		"reject frames from a night that is systematically worse than its filter's stack")
+	analyzeCmd.Flags().BoolVar(&analyzeOpts.suggest, "suggest", false,
+		"suggest thresholds for --filter from the measured stack (requires --filter and --output)")
+	analyzeCmd.Flags().Float64Var(&analyzeOpts.keep, "keep", defaultKeepBudget,
+		"fraction of the good stack a --suggest run aims to keep; 0 = the default band")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.quiet, "quiet", false, "suppress console output")
 }
 
@@ -708,6 +718,18 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	}
 	opts.filter = filter
 
+	if opts.suggest {
+		if filter == "" {
+			return fmt.Errorf("--suggest requires --filter: a suggestion is derived from, and belongs to, one filter's population")
+		}
+		if opts.output == "" {
+			return fmt.Errorf("--suggest requires --output: the suggestion is written under %s", suggestionPath("<output>"))
+		}
+		if opts.keep < 0 || opts.keep >= 1 {
+			return fmt.Errorf("invalid --keep %v: expected 0 (the default band) or a fraction below 1", opts.keep)
+		}
+	}
+
 	fitsFiles, truncated, err := discoverFITSFiles(dir, opts.recursive)
 	if err != nil {
 		return err
@@ -856,10 +878,25 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		printSessionProfile(prof)
 	}
 	if opts.output != "" && !prof.empty() {
-		for _, filter := range prof.order {
-			if err := writeSessionsProfileCSV(opts.output, filter, prof.profiles(filter), prof.refs[filter]); err != nil {
+		for _, f := range prof.order {
+			if err := writeSessionsProfileCSV(opts.output, f, prof.profiles(f), prof.refs[f]); err != nil {
 				return err
 			}
+		}
+	}
+
+	if opts.suggest {
+		// Suggested after the verdicts, and never folded into them: the run you
+		// are reading is judged by the thresholds you gave it.
+		s, err := suggestForFilter(results, prof, filter, opts)
+		if err != nil {
+			return err
+		}
+		if !opts.quiet {
+			printSuggestion(s, opts.qualityThresholds)
+		}
+		if err := writeSuggestion(opts.output, s); err != nil {
+			return err
 		}
 	}
 

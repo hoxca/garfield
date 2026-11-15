@@ -98,10 +98,12 @@ var sessionMetrics = []metricSpec{
 	{"stars", func(r ImageResult) float64 { return float64(r.DetectedStars) }, false, sessionSparse, sessionShiftFrac},
 }
 
-// stackRef is the robust centre and scale of one metric over a filter's frames.
+// stackRef is the robust centre and scale of one metric over a filter's frames,
+// with the 25th percentile the session-relative rules use as their baseline.
 type stackRef struct {
 	Median float64
 	Sigma  float64
+	P25    float64
 	N      int
 }
 
@@ -137,6 +139,9 @@ func newStackRef(values []float64) stackRef {
 		}
 		kept = next
 	}
+	sorted := append([]float64(nil), kept...)
+	sort.Float64s(sorted)
+	ref.P25 = percentileSorted(sorted, 0.25)
 	return ref
 }
 
