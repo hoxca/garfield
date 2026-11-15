@@ -148,6 +148,10 @@ type ImageResult struct {
 	// wings grow while the core and the PSF width barely move.
 	Halo      float64
 	HaloRatio float64
+	// HaloStars is how many stars the halo measurement used. Zero means it could
+	// not be made -- too few stars with a measurable aureole -- and the report
+	// says so rather than writing 0 ADU, which would read as a measured calm sky.
+	HaloStars int
 	// StructRatio is the frame's bgStructure relative to its session. It is
 	// reported and gated separately as bad seeing: a strongly structured sky
 	// produces frames that no amount of stacking repairs.
@@ -353,7 +357,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 	// the PSF metrics skip: the aureole cloud produces lives around exactly
 	// those stars, and a frame with too few ordinary stars to score may still
 	// carry a usable cloud signature.
-	halo, _ := starsmetrics.MeasureHalo(pixels, fieldStars, skyNoise, bgLevel)
+	halo, haloStars := starsmetrics.MeasureHalo(pixels, fieldStars, skyNoise, bgLevel)
 
 	if len(fieldStars) == 0 {
 		return ImageResult{
@@ -390,6 +394,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 			Noise:           skyNoise,
 			BgStructure:     bgStructure,
 			Halo:            halo,
+			HaloStars:       haloStars,
 		}
 	}
 
@@ -440,6 +445,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 			Noise:         skyNoise,
 			BgStructure:   bgStructure,
 			Halo:          halo,
+			HaloStars:     haloStars,
 		}
 	}
 
@@ -465,6 +471,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 		Noise:           skyNoise,
 		BgStructure:     bgStructure,
 		Halo:            halo,
+		HaloStars:       haloStars,
 	}
 }
 
@@ -537,7 +544,7 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // every pre-existing column is unchanged for anything already reading this file.
 var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
-	"suggestedDecision"}
+	"suggestedDecision", "haloStars"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -563,7 +570,7 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.Background, 'f', 4, 64),
 		strconv.FormatFloat(r.Noise, 'f', 6, 64),
 		strconv.FormatFloat(r.BgStructure, 'f', 6, 64),
-		strconv.FormatFloat(r.Halo, 'f', 2, 64),
+		formatHalo(r),
 		strconv.FormatFloat(r.HaloRatio, 'f', 4, 64),
 		strconv.FormatFloat(r.StructRatio, 'f', 4, 64),
 		strconv.FormatFloat(r.FWHMRatio, 'f', 4, 64),
@@ -575,7 +582,18 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.HaloRatioStack, 'f', 4, 64),
 		strconv.FormatFloat(r.StructRatioStack, 'f', 4, 64),
 		r.SuggestedDecision,
+		strconv.Itoa(r.HaloStars),
 	}
+}
+
+// formatHalo renders the halo, or an empty field when it could not be measured.
+// "0.00 ADU" and "not measured" are different statements and the report must not
+// conflate them: a reader who sees zero would conclude the sky was calm.
+func formatHalo(r ImageResult) string {
+	if r.HaloStars == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(r.Halo, 'f', 2, 64)
 }
 
 func writeResultsCSV(results []ImageResult, w *csv.Writer) error {
@@ -1167,7 +1185,7 @@ func applyFWHMRuleByFilter(results []ImageResult, q qualityThresholds) {
 
 // applySessionRulesBySession groups results by acquisition session and filter,
 // and applies the session-relative rules within each group: the star-halo cloud
-// rule and the sky-structure bad-seeing rule.
+// rule and the sky-structure rule.
 //
 // Session, not date. A night's frames routinely cross midnight, so the date
 // token in the filename changes part-way through one session; and a date can

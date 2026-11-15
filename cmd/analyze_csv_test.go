@@ -185,7 +185,7 @@ func TestWriteResultsCSVHeader(t *testing.T) {
 		"decision", "error", "background", "noise", "bgStructure",
 		"halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 		"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
-		"suggestedDecision",
+		"suggestedDecision", "haloStars",
 	}
 
 	var sb strings.Builder
@@ -1508,4 +1508,28 @@ func readCSVFile(t *testing.T, path string) [][]string {
 		t.Fatalf("parse %s: %v\n%s", path, err, b)
 	}
 	return recs
+}
+
+// TestImageResultRowReportsAnUnmeasuredHalo checks the two statements are kept
+// apart: an unmeasured halo must not be written as 0.00 ADU, which reads as a
+// calm sky, and the star count says why the column is empty.
+func TestImageResultRowReportsAnUnmeasuredHalo(t *testing.T) {
+	unmeasured := imageResultRow(ImageResult{Filename: "a.FIT"})
+	haloCol := columnIndex(t, imageResultHeader, "halo")
+	starsCol := columnIndex(t, imageResultHeader, "haloStars")
+
+	if unmeasured[haloCol] != "" {
+		t.Errorf("unmeasured halo = %q, want an empty field", unmeasured[haloCol])
+	}
+	if unmeasured[starsCol] != "0" {
+		t.Errorf("haloStars = %q, want 0", unmeasured[starsCol])
+	}
+
+	measured := imageResultRow(ImageResult{Filename: "a.FIT", Halo: 3.5, HaloStars: 7})
+	if measured[haloCol] != "3.50" {
+		t.Errorf("measured halo = %q, want 3.50", measured[haloCol])
+	}
+	if measured[starsCol] != "7" {
+		t.Errorf("haloStars = %q, want 7", measured[starsCol])
+	}
 }

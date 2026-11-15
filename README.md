@@ -253,7 +253,7 @@ filtered run writes `<output>/analyse_report_<FILTER>.csv`, so reports for
 different filters can share one output directory:
 
 ```
-filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision
+filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars
 ```
 
 `cached` is `true` on a row whose numbers were read from the measurement cache
@@ -261,7 +261,8 @@ instead of measured in this run. It is the only column a `--cache` run changes.
 
 `decision` holds one of **seven** values, which are **data, not messages** —
 `APPROVED`, `REJECTED NO STARS`, `REJECTED ECCENTRICITY`, `REJECTED FWHM`,
-`REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`. Match on them exactly.
+`REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`, `REJECTED BAD SEEING`.
+Match on them exactly.
 
 `background`, `noise` and `bgStructure` are measurements, not decisions:
 
@@ -276,13 +277,15 @@ measurements:
 
 | Column | Meaning |
 |---|---|
-| `halo` | median wing brightness of the brightest stars, in ADU above the local sky: the aureole thin cloud scatters around bright stars |
+| `halo` | median wing brightness of the brightest stars, in ADU above the local sky: the aureole thin cloud scatters around bright stars. **Empty when it could not be measured**, with `haloStars = 0` saying so: zero ADU is a measurement, a missing one is not |
 | `haloRatio` | `halo` relative to the 25th percentile of its session |
 | `structRatio` | `bgStructure` relative to the 25th percentile of its session |
 | `fwhmRatio` | `avgFWHM` relative to the median of every frame of that filter in the run |
 
 Both ratios are 0 when the session has fewer than four measured frames, or when
-too few stars were bright enough to measure a halo.
+too few stars were bright enough to measure a halo. The halo itself is left
+**empty** in that case, with `haloStars` recording how many stars contributed, so
+a frame whose aureole could not be measured is not mistaken for a calm one.
 
 A frame is `REJECTED FWHM` when its `avgFWHM` lies more than
 `--max-fwhm-sigma` robust sigmas above the median of its filter's whole

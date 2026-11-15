@@ -1135,10 +1135,10 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars
 ```
 
-`decision` holds one of **eight** values, which are **data, not messages** —
+`decision` holds one of **seven** values, which are **data, not messages** —
 anything parsing this file must match on them, and the strings are part of the
 contract:
 
@@ -1151,7 +1151,7 @@ contract:
 | `REJECTED SNR` | failed `--min-snr` |
 | `REJECTED SCORING` | failed `--min-score` |
 | `REJECTED CLOUDS` | bright-star aureole above the session's (§10.1.1) |
-| `REJECTED BAD SEEING` | sky structure above the session's (§10.1.1) |
+| `REJECTED BAD SEEING` | structured sky, and a frame soft enough for it to be seeing (§10.1.1) |
 
 Both reports record the **bare** session name, never a path, so consumers join
 on the session column. Metric columns come from the same `imageResultRow` used
@@ -1214,10 +1214,19 @@ the median. FWHM is tested before the session rules, so a soft frame is reported
 as FWHM rather than clouds.
 
 `halo` is the wing brightness of the brightest stars in ADU above the sky. The
-250–350 px ring is a local pedestal, so nebulosity and a brighter sky are
-subtracted rather than read as a halo. The absolute value is compared with its
-session; normalising by the star's core compresses the signal, because the core
-ring sits inside the same growing aureole.
+250–350 px ring is a local pedestal, so a brighter sky and a smooth nebulosity
+gradient are subtracted rather than read as a halo. The absolute value is compared
+with its session; normalising by the star's core compresses the signal, because
+the core ring sits inside the same growing aureole.
+
+**The measurement can fail, and the report says so.** A frame where fewer than
+three stars have a measurable aureole has no halo: `halo` is written empty and
+`haloStars` is `0`, because "0.00 ADU" would read as a calm sky. That is measured,
+not assumed -- on a target whose frames are 30 s narrowband at 1.2 px FWHM, the
+radial profile around the brightest stars falls to sky within 15 px and there is no
+aureole at 40-120 px to measure, in clear and cloudy frames alike; the cloud rule
+then cannot run for those filters, which the empty column makes visible instead of
+hiding behind a zero.
 
 **Why a halo.** Thin cloud scatters starlight into a wide aureole around bright
 stars. On the reference frames the wings of the brightest star grew 2.7×, 5.4×
