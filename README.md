@@ -74,7 +74,7 @@ thresholds:
   max-fwhm-sigma: 3.0  # FWHM outliers above the filter's median; 0 disables
   max-halo-ratio: 2.0  # session-relative bright-star halo; 0 disables
   max-structure: 1.12  # session-relative sky structure (bad seeing); 0 disables
-  moffat: false        # true = Moffat PSF fit (slower, FWHM matches PixInsight)
+  moffat: true         # Moffat PSF fit (slower, FWHM matches PixInsight); false = Gaussian
 
 concurrency:
   workers: 0        # 0 = NumCPU/2
@@ -115,12 +115,12 @@ fitted with an elliptical profile whose background is a free parameter; FWHM is
 the width of the fitted half-maximum contour and eccentricity is
 `sqrt(1 − (b/a)²)` of its axes.
 
-Two profiles are available, selected by `--moffat`:
+Two profiles are available, selected by `--moffat`, which is **on by default**:
 
 | mode | profile | cost | FWHM on `data/6_files.csv` |
 |---|---|---|---|
-| default | Gaussian | ~0.05 ms/star | 1.52–1.64 (PixInsight 1.18–1.31) |
-| `--moffat` | Moffat, exponent fitted | ~0.42 ms/star | **1.21–1.45** |
+| `--moffat` (default) | Moffat, exponent fitted | ~0.42 ms/star | **1.21–1.45** (PixInsight 1.18–1.31) |
+| `--moffat=false` | Gaussian | ~0.05 ms/star | 1.52–1.64 |
 
 A real PSF has broader wings than a Gaussian can express, so a Gaussian fit
 returns a width larger than the half-maximum contour actually has — about
@@ -176,7 +176,7 @@ Flags:
       --min-score float            minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float              minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int              minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
-      --moffat                     fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
+      --moffat                     fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml] (default true)
   -o, --output string              output directory for the report and copied rejected frames
       --quiet                      suppress console output
   -r, --recursive                  also walk the subdirectories of --dir, 2 levels deep [config: garfield.yaml]
@@ -447,7 +447,7 @@ Flags:
       --min-score float        minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float          minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int          minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
-      --moffat                 fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml]
+      --moffat                 fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml] (default true)
   -o, --output string          destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
       --quiet                  suppress console output
       --skip-existing          do not overwrite existing files

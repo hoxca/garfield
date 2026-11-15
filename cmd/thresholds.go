@@ -58,6 +58,10 @@ var defaultThresholds = qualityThresholds{
 	maxFWHMSigma: 3.0,
 	maxHaloRatio: 2.0,
 	maxStructure: 1.12,
+	// moffat is true, matching conf/garfield.yaml: a Gaussian reads the width of
+	// a real PSF about 0.3 px wide on undersampled frames, which makes the FWHM
+	// gate compare numbers that are not the half-maximum contour.
+	moffat: true,
 }
 
 // registerQualityFlags binds the shared thresholds to dst. Keeping the flag
@@ -75,7 +79,7 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 		"reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables")
 	fs.Float64Var(&dst.maxStructure, "max-structure", defaultThresholds.maxStructure,
 		"reject a frame whose sky structure exceeds this multiple of its session's, as bad seeing; 0 disables")
-	fs.BoolVar(&dst.moffat, "moffat", false,
+	fs.BoolVar(&dst.moffat, "moffat", defaultThresholds.moffat,
 		"fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight)")
 }
 

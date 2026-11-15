@@ -17,10 +17,12 @@ thresholds:
 
   # PSF profile used to measure width and shape.
   #
-  # false = Gaussian. Cheapest, and the default.
   # true  = Moffat. Slower (~5x the per-star fit cost) but the FWHM of a real
-  #         PSF agrees with PixInsight, where a Gaussian reads ~0.3 px wide on
-  #         undersampled data.
+  #         PSF agrees with PixInsight, where a Gaussian reads ~0.3 px wider on
+  #         undersampled data. This is the default, compiled in as well, so a
+  #         run without this file measures the same numbers.
+  # false = Gaussian. Cheapest; use it when speed matters more than the width
+  #         agreeing with PixInsight.
   #
   # Applies to analyze AND prepare. Metrics from the two modes are not
   # comparable: scores rise when FWHM reads smaller.
