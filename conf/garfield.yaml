@@ -24,7 +24,7 @@ thresholds:
   #
   # Applies to analyze AND prepare. Metrics from the two modes are not
   # comparable: scores rise when FWHM reads smaller.
-  moffat: false
+  moffat: true
 
   # Outlier rejection: FWHM, cloud and bad seeing.
   #
