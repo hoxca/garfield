@@ -1,5 +1,6 @@
 #!/bin/sh
-# Run the command package's tests as parallel domain shards.
+# Run the command package's tests as parallel domain shards, and report them as one
+# gotestsum run.
 #
 # The suite in ./cmd is ~36s of which prepare alone is 21s, so one test binary is
 # slow no matter how many tests it holds. The domains below are disjoint name
@@ -8,9 +9,12 @@
 # it either matches a domain or lands in core.
 #
 # Patterns are RE2 (go test -run/-skip), so no lookahead. Keep them plain prefixes,
-# and keep them mutually exclusive -- a name matching two shards runs twice.
+# and keep them mutually exclusive -- a name matching two shards runs twice, which
+# the guard below refuses.
 #
 # Usage: scripts/test-cmd-domains.sh [go test flags, e.g. -short -race]
+#   GOTEST=gotestsum            formatter to report through (default gotestsum)
+#   GOTEST_FORMAT=testdox       its --format, e.g. testdox for make test-verbose
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -33,6 +37,9 @@ cloud|^TestCloud|^TestApplyRules|^TestApplyHalo|^TestApplyStructure|^TestPercent
 fwhm|^TestFWHM|^TestApplyFWHM
 config|^TestConfig|^TestApplyConfig|^TestKnownConfig|^TestUnknownKey|^TestCompiledDefaults|^TestExcluded|^TestSections
 workers|^TestWorker|^TestResolveWorkers|^TestPlan|^TestPhysical'
+
+runner=${GOTEST:-gotestsum}
+format=${GOTEST_FORMAT:-}
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -68,14 +75,39 @@ if ! awk '
 	exit 1
 fi
 
+# Expected top-level count per shard, from the list the guard already built. A
+# shard that runs fewer tests than it owns has silently skipped some -- or run
+# none at all, which a malformed `go test` invocation does while still exiting 0.
+printf '%s\n' $domains >"$tmp/rows"
+awk -v skip="$skip" '
+	NR == FNR { pattern[++n] = $0; next }
+	{
+		for (i = 1; i <= n; i++) {
+			if ($0 ~ pattern[i]) {
+				print "prepare-" i
+				next
+			}
+		}
+		print "core"
+	}
+' "$tmp/patterns" "$tmp/tests" >"$tmp/expected.raw"
+
+idx=0
+for row in $domains; do
+	idx=$((idx + 1))
+	name=${row%%|*}
+	printf '%s %s\n' "$name" "$(grep -c "^prepare-$idx$" "$tmp/expected.raw" || true)" >>"$tmp/expected"
+done
+printf 'core %s\n' "$(grep -c '^core$' "$tmp/expected.raw" || true)" >>"$tmp/expected"
+
 pids=""
 names=""
 
-# start shard NAME ARGS...
+# start NAME ARGS...
 start() {
 	name=$1
 	shift
-	go test "$@" "./cmd" >"$tmp/$name.log" 2>&1 &
+	go test -json "$@" ./cmd >"$tmp/$name.raw" 2>&1 &
 	pids="$pids $!"
 	names="$names $name"
 }
@@ -86,27 +118,87 @@ done
 start core -run '^Test' -skip "$skip" "$@"
 
 # The internal packages are microseconds each; one process is enough.
-go test "$@" ./internal/... >"$tmp/internal.log" 2>&1 &
+go test -json "$@" ./internal/... >"$tmp/internal.raw" 2>&1 &
 pids="$pids $!"
 names="$names internal"
 
 fail=0
 for pid in $pids; do
+	# The exit status of the test binary, which is the only reliable verdict: a
+	# formatter's status says nothing about the tests it was handed.
 	if ! wait "$pid" >/dev/null 2>&1; then
 		fail=1
 	fi
 done
 
-# Print in domain order, not completion order. A passing shard gets a line; a
-# failing one gets its whole transcript, which is the only part worth reading.
+# Did every shard run what it owns? Counts top-level tests only: subtests carry a
+# slash in their name and belong to the parent.
+short=""
 for name in $names; do
-	if grep -qE '^(FAIL|--- FAIL)' "$tmp/$name.log"; then
-		echo "--- $name"
-		cat "$tmp/$name.log"
-		continue
+	[ "$name" = internal ] && continue
+	want=$(awk -v n="$name" '$1 == n { print $2 }' "$tmp/expected")
+	got=$(awk '
+		/"Action":"(pass|skip|fail)"/ && /"Test":"/ {
+			if (match($0, /"Test":"[^"]*"/)) {
+				t = substr($0, RSTART + 8, RLENGTH - 9)
+				if (t !~ /\//) {
+					n++
+				}
+			}
+		}
+		END { print n + 0 }
+	' "$tmp/$name.raw")
+	if [ "$want" != "$got" ]; then
+		short="$short $name(want $want, saw $got)"
 	fi
-	line=$(grep -hE '^(ok|FAIL)' "$tmp/$name.log")
-	printf '  %-18s %s\n' "$name" "${line:-no result}"
 done
+if [ -n "$short" ]; then
+	echo "shards ran the wrong number of tests:$short" >&2
+	fail=1
+fi
+
+# Label each shard's events with the domain, so one merged report names the shard
+# instead of printing "garfield/cmd" nineteen times.
+files=""
+for name in $names; do
+	if [ "$name" = internal ]; then
+		cp "$tmp/$name.raw" "$tmp/$name.json"
+	else
+		sed "s#\"Package\":\"garfield/cmd\"#\"Package\":\"garfield/cmd ($name)\"#g" \
+			"$tmp/$name.raw" >"$tmp/$name.json"
+	fi
+	files="$files $tmp/$name.json"
+done
+
+if command -v "$runner" >/dev/null 2>&1; then
+	if [ -n "$format" ]; then
+		"$runner" -f "$format" --raw-command -- cat $files || true
+	else
+		"$runner" --raw-command -- cat $files || true
+	fi
+else
+	# No formatter: count the events ourselves. A passing shard gets a line; a
+	# failing one gets every failing test and its output.
+	for name in $names; do
+		passes=$(awk '
+			/"Action":"pass"/ && /"Test":"/ {
+				if (match($0, /"Test":"[^"]*"/)) {
+					t = substr($0, RSTART + 8, RLENGTH - 9)
+					if (t !~ /\//) n++
+				}
+			}
+			END { print n + 0 }
+		' "$tmp/$name.json")
+		fails=$(grep -c '"Action":"fail","Test"' "$tmp/$name.json" || true)
+		printf '  %-18s %s tests' "$name" "$passes"
+		if [ "$fails" -gt 0 ]; then
+			printf ', %s FAILED\n' "$fails"
+			grep '"Action":"output"' "$tmp/$name.json" |
+				sed 's/.*"Output":"//; s/\\n"}$//' | grep -v '^ok ' || true
+		else
+			printf ' ok\n'
+		fi
+	done
+fi
 
 exit "$fail"

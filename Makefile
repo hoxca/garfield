@@ -47,7 +47,7 @@ test-race:    ARGS=-race         ## Run tests with race detector
 $(TEST_TARGETS): NAME=$(MAKECMDGOALS:test-%=%)
 $(TEST_TARGETS): test
 check test tests: fmt lint ; $(info $(M) running $(NAME:%=% )tests…) @ ## Run tests
-	$Q ./scripts/test-cmd-domains.sh -timeout $(TIMEOUT)s $(ARGS)
+	$Q GOTEST="$(GOTEST)" ./scripts/test-cmd-domains.sh -timeout $(TIMEOUT)s $(ARGS)
 
 .PHONY: test-integration
 test-integration: fmt lint ; $(info $(M) running $(NAME:%=% )tests…) @ ## Run tests
@@ -59,7 +59,7 @@ test-slower: fmt lint ; $(info $(M) running $(NAME:%=% )tests…) @ ## Run tests
 
 .PHONY: test-verbose
 test-verbose: fmt lint ; $(info $(M) running $(NAME:%=% )tests…) @ ## Run tests
-	$Q $(GOTEST) -f testdox -- -timeout $(TIMEOUT)s $(ARGS) $(TESTPKGS)
+	$Q GOTEST="$(GOTEST)" GOTEST_FORMAT=testdox ./scripts/test-cmd-domains.sh -timeout $(TIMEOUT)s $(ARGS)
 
 # count, not atomic: atomic is only required under the race detector, and it puts a
 # synchronised increment on every instrumented block. The analysis fixtures execute

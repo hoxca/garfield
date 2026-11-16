@@ -60,9 +60,15 @@ otherwise.
 (`scripts/test-cmd-domains.sh`): prepare alone is two thirds of the suite, so one
 binary is slow however many tests it holds. The domains are the name prefixes in
 that script's table, and the last shard takes whatever they did not match, so a new
-test always runs exactly once. A test matching two prefixes would run twice, and
-the script fails rather than doing that. Wall time is ~14 s against ~36 s
-single-threaded, and `make test-race` drops from 6 minutes to 1.5.
+test always runs exactly once. Two guards make that safe: a test matching two
+prefixes is refused (it would run twice), and a shard that runs fewer tests than it
+owns fails the run (a malformed invocation otherwise reports success with zero
+tests). Wall time is ~14 s against ~36 s single-threaded, and `make test-race` drops
+from 6 minutes to 1.5.
+
+The report is one gotestsum run, with the domain in the package label —
+`✓ cmd (prepare-bias) (9.8s)` … `DONE 643 tests in 14s` — and `make test-verbose`
+switches it to `testdox`, grouping each domain's tests under its own header.
 
 ---
 
