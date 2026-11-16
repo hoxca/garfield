@@ -61,9 +61,16 @@ test-slower: fmt lint ; $(info $(M) running $(NAME:%=% )tests…) @ ## Run tests
 test-verbose: fmt lint ; $(info $(M) running $(NAME:%=% )tests…) @ ## Run tests
 	$Q $(GOTEST) -f testdox -- -timeout $(TIMEOUT)s $(ARGS) $(TESTPKGS)
 
-COVERAGE_MODE    = atomic
+# count, not atomic: atomic is only required under the race detector, and it puts a
+# synchronised increment on every instrumented block. The analysis fixtures execute
+# those blocks millions of times, so it cost 750s here against 47s for count, for
+# exactly the same 75% of statements.
+COVERAGE_MODE    = count
 COVERAGE_PROFILE = $(COVERAGE_DIR)/coverage.out
 COVERAGE_DIR := $(CURDIR)/test
+# Generous on purpose: without a -timeout the go default of ten minutes applies, and
+# a slow run then dies with a timeout panic and a goroutine dump instead of finishing.
+COVERAGE_TIMEOUT ?= 1800
 .PHONY: test-coverage
 test-coverage: fmt lint; $(info $(M) running coverage tests…) @ ## Run coverage tests
 	$Q mkdir -p $(COVERAGE_DIR)
@@ -72,6 +79,7 @@ test-coverage: fmt lint; $(info $(M) running coverage tests…) @ ## Run coverag
 					grep '^$(MODULE)/' | \
 					tr '\n' ',' | sed 's/,$$//') \
 		-covermode=$(COVERAGE_MODE) \
+		-timeout $(COVERAGE_TIMEOUT)s \
 		-coverprofile="$(COVERAGE_PROFILE)" $(TESTPKGS)
 
 .PHONY: lint
