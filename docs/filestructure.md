@@ -927,7 +927,7 @@ Much looser. Any directory of FITS frames works.
 | `--input`, `-i` | `$HOME` acquisition root, used with `--target` |
 | `--target`, `-t` | *(no target: `--dir` is scanned)* |
 | `--stack-gate` | `false` |
-| `--suggest` | `false` (requires `--filter` and `-o`) |
+| `--suggest` | `false` (requires `-o`; with `--target`, every filter) |
 | `--keep` | `0` (the band `--max-fwhm-sigma` sets, 4 by default) |
 
 **`--filter` narrows the run.** It accepts one of `L R G B S H O`,
@@ -936,7 +936,9 @@ case-insensitively, and keeps only frames whose parsed filter matches. With
 `analyse_report_H.csv`), so several filtered runs can share one output
 directory. The name is not configurable and neither is the flag: it is a
 per-run selection, like `--output`, and a forgotten config default would
-silently narrow later analyses.
+silently narrow later analyses. In a `--target` run, omitting it is not "all
+filters in one report": each filter the target holds is analysed on its own, one
+pass each, and the flag narrows that to one.
 
 **The console shortens frame names.** Each analysed line prints
 `<target>_<filter>[_<index>]_<date>_<time>_<ms>` instead of the filename, and a
@@ -946,9 +948,15 @@ that position, the G4 and the ASI2600 an index. A name matching neither grammar
 prints in full. The reports keep the full filename; only the console is
 shortened.
 
-**`--target` reads the tree prepare reads.** `-t X` resolves the frames to
-`<input>/Lights/X`, walks the two levels to `<date>/<filter>` that layout implies,
-and writes reports, the session profile and the suggested YAML into
+**`--target` reads the tree prepare reads, one filter at a time.** `-t X` resolves
+the frames to `<input>/Lights/X`, walks the two levels to `<date>/<filter>` that
+layout implies, discovers the filters from the file names (`--filter` narrows to
+one) and runs the analysis once per filter, so each writes its own
+`analyse_report_<F>`, `sessions_<F>.csv` and `suggested_<F>.yaml`. Discovery reads
+the filename token rather than the directory name, because that is what `--filter`
+matches and what every rule is keyed on. A filter whose stack is too thin to suggest
+from is a warning, not a failed run; frames carrying no known filter are skipped
+with one warning. The reports, the session profiles and the suggested YAML go into
 `<output>/X/metrics/`, with rejected frames under `<output>/X/rejected/<category>/`.
 The measurement and suggestion stores follow the reports, so a target owns
 `<output>/X/metrics/cache/` and `prepare` finds what `analyze` wrote without any
@@ -1052,23 +1060,26 @@ root, and one of them is conditional:
 | `Sessions/` | always |
 | `rejected/` | **only if at least one frame was rejected** |
 
-Two things live *above* the target, in the output root, because they describe the
-whole filter population rather than one target:
-
-- `<output>/<target>/metrics/cache/` for a prepared or target-scoped run — and
-`<output>/cache/` for an `analyze` without `--target` — holding
-`measurements.jsonl` (`--cache`) and
-  `suggestions.jsonl` (`--suggest`). It is shared by every target prepared into
-  that output, on purpose: a frame is identified by its own path and timestamp,
-  not by which target it happened to be prepared under.
-- `suggested_<FILTER>.yaml`, the pasteable threshold block, and `analyze`'s own
-  `sessions_<FILTER>.csv` (§10.2) when it wrote its reports there.
-
 So a clean run leaves two, not three. `rejected/` is created lazily by the
 first quarantine copy — an empty `rejected/Session_01/` would imply a session
 failed when it did not. Pinned by `TestPrepareSessionRealTreeShape`
 (`cmd/prepare_test.go:2603`) for the shape and by `TestPrepareSessionLayoutIsSymmetric`
 (`cmd/prepare_test.go:1082`) for the absence.
+
+Nothing is shared across targets any more. The stores, `suggested_<FILTER>.yaml` and
+`analyze`'s `sessions_<FILTER>.csv` live in the target's `metrics/` directory,
+beside `frames.csv`, so one target owns everything written for it:
+
+- `metrics/cache/` holds `measurements.jsonl` (`--cache`) and
+  `suggestions.jsonl` (`--suggest`). `prepare` and `analyze --target` read and write
+  the same store, so a frame measured by either is reused by both. A frame is
+  identified by its own path and timestamp, so moving a store to another target
+  would not lose measurements — but it is no longer looked for there.
+- `metrics/suggested_<FILTER>.yaml`, the pasteable threshold block, and `analyze`'s
+  own `metrics/sessions_<FILTER>.csv` (§10.2) land in the same directory.
+
+A run without `--target` keeps the older shape: reports in `<output>` itself and the
+stores in `<output>/cache/`.
 
 ```
 <output>/<target>/
@@ -1411,7 +1422,9 @@ flags. An explicit `--max-fwhm-sigma` also fixes the band, so `--keep` is ignore
 with a note rather than fighting it.
 
 `--suggest` needs at least `fwhmMinSample` frames outside the condemned nights,
-and refuses rather than deriving a band from a handful of frames.
+and refuses rather than deriving a band from a handful of frames. In a `--target`
+run that refusal costs only the thin filter's suggestion: it is reported as a
+warning and the other filters are still analysed and suggested.
 
 ---
 

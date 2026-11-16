@@ -37,7 +37,9 @@ func TestAnalyzeTargetWritesBesidePrepare(t *testing.T) {
 	// The reports land in the target's metrics directory, the one prepare writes
 	// frames.csv into, and the store sits beside them rather than at the root.
 	metrics := targetMetricsDir(out, target)
-	if _, err := os.Stat(filepath.Join(metrics, analyseReportName)); err != nil {
+	// A target run is per filter, so the report carries the filter in its name even
+	// though --filter was not given.
+	if _, err := os.Stat(filepath.Join(metrics, "analyse_report_H.csv")); err != nil {
 		t.Errorf("report not in the target's metrics directory: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(metrics, "sessions_H.csv")); err != nil {
@@ -133,7 +135,7 @@ func TestAnalyzeTargetImpliesRecursion(t *testing.T) {
 	if err := runAnalyze("", o); err != nil {
 		t.Fatalf("runAnalyze --target: %v", err)
 	}
-	recs := readCSVFile(t, filepath.Join(targetMetricsDir(out, target), analyseReportName))
+	recs := readCSVFile(t, filepath.Join(targetMetricsDir(out, target), "analyse_report_H.csv"))
 	if len(recs) != 4 { // header plus the fixture's three lights
 		t.Errorf("report has %d records, want header plus 3 frames", len(recs))
 	}
@@ -178,5 +180,167 @@ func TestAnalyzeInputIsAConfigKeyAndTargetIsNot(t *testing.T) {
 	}
 	if keys["analyze.target"] {
 		t.Error("analyze.target is a config key; it is a per-run selection")
+	}
+}
+
+// multiFilterTree builds <root>/Lights/<target>/<date>/<filter> with n analysable
+// frames per filter, which is what a target run has to discover.
+func multiFilterTree(t *testing.T, filters []string, n int) (root, target string) {
+	t.Helper()
+	target = "LBN527"
+	root = t.TempDir()
+	for _, filter := range filters {
+		dir := filepath.Join(root, lightsDir, target, "2026-09-10", filter)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		for i := 0; i < n; i++ {
+			writeFrame(t, dir, frameName(filter, i), synthOpts{
+				width: 300, height: 300, level: 1000, noise: 5,
+				amp: 3000, sigma: 1.3, spacing: 25, seed: int64(i),
+			})
+		}
+	}
+	return root, target
+}
+
+func TestAnalyzeTargetWithoutFilterRunsPerFilter(t *testing.T) {
+	root, target := multiFilterTree(t, []string{"H", "O"}, 8)
+	out := t.TempDir()
+
+	o := defaultOpts()
+	o.target = target
+	o.input = root
+	o.output = out
+	o.format = "csv"
+	o.suggest = true
+	o.quiet = true
+	o.minStars, o.minSNR, o.minScore = 0, 0, 0
+
+	if err := runAnalyze("", o); err != nil {
+		t.Fatalf("runAnalyze --target without --filter: %v", err)
+	}
+
+	metrics := targetMetricsDir(out, target)
+	for _, filter := range []string{"H", "O"} {
+		for _, name := range []string{
+			"analyse_report_" + filter + ".csv",
+			"sessions_" + filter + ".csv",
+			"suggested_" + filter + ".yaml",
+		} {
+			if _, err := os.Stat(filepath.Join(metrics, name)); err != nil {
+				t.Errorf("%s missing: %v", name, err)
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(metrics, analyseReportName)); !os.IsNotExist(err) {
+		t.Errorf("a mixed-filter report was written as well: %v", err)
+	}
+}
+
+func TestAnalyzeTargetDiscoversFiltersFromFilenames(t *testing.T) {
+	root, target := multiFilterTree(t, []string{"H"}, 8)
+	// A frame filed under H but named O belongs to O: the name is what --filter
+	// matches and what every rule is keyed on.
+	misfiled := filepath.Join(root, lightsDir, target, "2026-09-10", "H")
+	writeFrame(t, misfiled, frameName("O", 1), synthOpts{
+		width: 300, height: 300, level: 1000, noise: 5,
+		amp: 3000, sigma: 1.3, spacing: 25, seed: 99,
+	})
+
+	out := t.TempDir()
+	o := defaultOpts()
+	o.target = target
+	o.input = root
+	o.output = out
+	o.format = "csv"
+	o.quiet = true
+	o.minStars, o.minSNR, o.minScore = 0, 0, 0
+
+	if err := runAnalyze("", o); err != nil {
+		t.Fatalf("runAnalyze: %v", err)
+	}
+
+	metrics := targetMetricsDir(out, target)
+	oRows := readCSVFile(t, filepath.Join(metrics, "analyse_report_O.csv"))
+	if len(oRows) != 2 {
+		t.Errorf("O report has %d records, want header plus the misfiled frame", len(oRows))
+	}
+	for _, row := range oRows[1:] {
+		if row[1] != "O" {
+			t.Errorf("O report holds a %q frame", row[1])
+		}
+	}
+}
+
+func TestAnalyzeTargetWarnsAboutFramesWithNoFilter(t *testing.T) {
+	root, target := multiFilterTree(t, []string{"H"}, 8)
+	odd := filepath.Join(root, lightsDir, target, "2026-09-10", "H")
+	writeFrame(t, odd, "LBN527_LIGHT_X_300s_BIN1_-10C_GA0_20260910_230000_000_PA310_E.FIT", synthOpts{
+		width: 300, height: 300, level: 1000, noise: 5,
+		amp: 3000, sigma: 1.3, spacing: 25, seed: 7,
+	})
+
+	out := t.TempDir()
+	o := defaultOpts()
+	o.target = target
+	o.input = root
+	o.output = out
+	o.format = "csv"
+	o.quiet = true
+	o.minStars, o.minSNR, o.minScore = 0, 0, 0
+
+	stderr := captureStderr(t, func() {
+		if err := runAnalyze("", o); err != nil {
+			t.Errorf("runAnalyze: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "carry no known filter") {
+		t.Errorf("no warning about the unfiltered frame:\n%s", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(targetMetricsDir(out, target), "analyse_report_X.csv")); !os.IsNotExist(err) {
+		t.Errorf("a report was written for the unknown filter: %v", err)
+	}
+}
+
+func TestAnalyzeTargetSurvivesAThinFilter(t *testing.T) {
+	// H has a stack worth suggesting from; O has three frames, too thin for a
+	// population. The run must warn about O and still suggest for H.
+	root, target := multiFilterTree(t, []string{"H"}, 8)
+	thin := filepath.Join(root, lightsDir, target, "2026-09-10", "O")
+	if err := os.MkdirAll(thin, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		writeFrame(t, thin, frameName("O", i), synthOpts{
+			width: 300, height: 300, level: 1000, noise: 5,
+			amp: 3000, sigma: 1.3, spacing: 25, seed: int64(i),
+		})
+	}
+
+	out := t.TempDir()
+	o := defaultOpts()
+	o.target = target
+	o.input = root
+	o.output = out
+	o.format = "csv"
+	o.suggest = true
+	o.quiet = true
+	o.minStars, o.minSNR, o.minScore = 0, 0, 0
+
+	stderr := captureStderr(t, func() {
+		if err := runAnalyze("", o); err != nil {
+			t.Errorf("runAnalyze: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "no suggestion for O") {
+		t.Errorf("no warning about the thin filter:\n%s", stderr)
+	}
+	metrics := targetMetricsDir(out, target)
+	if _, err := os.Stat(filepath.Join(metrics, "suggested_H.yaml")); err != nil {
+		t.Errorf("H lost its suggestion because O was thin: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(metrics, "suggested_O.yaml")); !os.IsNotExist(err) {
+		t.Errorf("a suggestion was written for the thin filter: %v", err)
 	}
 }

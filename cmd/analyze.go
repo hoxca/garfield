@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -121,7 +122,7 @@ func init() {
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.stackGate, "stack-gate", false,
 		"reject frames from a night that is systematically worse than its filter's stack")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.suggest, "suggest", false,
-		"suggest thresholds for --filter from the measured stack (requires --filter and --output)")
+		"suggest thresholds from the measured stack: one filter with --filter, or every filter of a --target (requires --output)")
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.keep, "keep", defaultKeepBudget,
 		"fraction of the good stack a --suggest run aims to keep; 0 = the default band")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.quiet, "quiet", false, "suppress console output")
@@ -795,6 +796,11 @@ func warnDuplicateBasenames(fitsFiles []string) []string {
 	return warnings
 }
 
+// runAnalyze resolves what to scan and how many times. A target is analysed filter
+// by filter -- every filter it holds, unless --filter picks one -- because every
+// threshold, every population rule and every suggestion belongs to a single filter;
+// a report mixing them would judge O frames against L's noise. Anything else runs
+// once, over whatever directory it was given.
 func runAnalyze(dir string, opts analyzeOptions) error {
 	// A target names the tree prepare reads, so the reports land where prepare's do.
 	// --dir is the ad-hoc way to analyse a directory and cannot be combined with it.
@@ -814,6 +820,80 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		// what the flag means rather than something to ask for twice.
 		opts.recursive = true
 	}
+	filter, err := normaliseFilter(opts.filter)
+	if err != nil {
+		return err
+	}
+	opts.filter = filter
+
+	if opts.target != "" && filter == "" {
+		filters, skipped, err := targetFilters(dir)
+		if err != nil {
+			return err
+		}
+		if len(filters) == 0 {
+			return fmt.Errorf("no FITS file with a known filter under %q", dir)
+		}
+		if skipped > 0 {
+			fmt.Fprintf(os.Stderr,
+				"  warning: %d frame(s) under %q carry no known filter and were not analysed\n",
+				skipped, dir)
+		}
+		if !opts.quiet {
+			fmt.Printf("\ntarget %s: %d filter(s): %s\n", opts.target, len(filters), strings.Join(filters, " "))
+		}
+		for _, f := range filters {
+			pass := opts
+			pass.filter = f
+			if err := runAnalyzeOnce(dir, pass); err != nil {
+				// A filter too thin to suggest from is a fact about that filter, not
+				// a reason to abandon the other five.
+				if errors.Is(err, errNoSuggestionPopulation) {
+					fmt.Fprintf(os.Stderr, "  warning: no suggestion for %s: %v\n", f, err)
+					continue
+				}
+				return err
+			}
+		}
+		return nil
+	}
+
+	if opts.suggest && filter == "" {
+		return fmt.Errorf("--suggest requires --filter, or a --target to analyse every filter of")
+	}
+
+	return runAnalyzeOnce(dir, opts)
+}
+
+// targetFilters lists the known filters of a target's frames, sorted.
+//
+// Discovery reads the filename token, not the directory name, because that is what
+// --filter matches and what the report's filter column, the populations and the
+// suggestion are all keyed on. A frame filed under one filter but named another
+// therefore joins the filter it is named with, which is the one it will be judged
+// against.
+func targetFilters(dir string) (filters []string, skipped int, err error) {
+	paths, _, err := discoverFITSFiles(dir, true)
+	if err != nil {
+		return nil, 0, err
+	}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		filter, _ := parseFilename(filepath.Base(path))
+		switch {
+		case filter == "" || !isKnownFilter(filter):
+			skipped++
+		case !seen[filter]:
+			seen[filter] = true
+			filters = append(filters, filter)
+		}
+	}
+	sort.Strings(filters)
+	return filters, skipped, nil
+}
+
+// runAnalyzeOnce analyses one filter, or one explicit directory.
+func runAnalyzeOnce(dir string, opts analyzeOptions) error {
 	// reportDir is where this run's files belong: the output directory itself, or
 	// the target's metrics directory, which is the one prepare writes frames.csv
 	// into. The caches follow the reports.

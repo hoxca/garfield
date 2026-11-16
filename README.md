@@ -207,7 +207,7 @@ Flags:
       --quiet                      suppress console output
   -r, --recursive                  also walk the subdirectories of --dir, 2 levels deep [config: garfield.yaml]
       --stack-gate                 reject frames from a night that is systematically worse than its filter's stack
-      --suggest                    suggest thresholds for --filter from the measured stack (requires --filter and --output)
+      --suggest                    suggest thresholds from the measured stack: one filter with --filter, or every filter of a --target (requires --output)
   -t, --target string              analyse <input>/Lights/<target>, the same tree prepare reads; implies --recursive
   -w, --workers int                processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
 
@@ -224,15 +224,15 @@ Global Flags:
 |---|---|
 | `--limit-computed-stars` | how many of the brightest stars are *measured*. `detectedStars` counts everything found; the metrics come from the measured subset. Lower it for speed while tuning. |
 | `-r`, `--recursive` | **off by default.** Only files directly in `--dir`. With `-r` the walk stops at directory depth 2, sized for `Lights/<target>/<date>/<filter>/`. When the cap truncates the walk, `analyze` says so on stderr — a bounded search is not a complete one. |
-| `--filter` | one of `L R G B S H O`, case-insensitive. Only frames whose filename carries that filter are analysed. With `-o`, the report is named `analyse_report_<FILTER>.csv`. Not a config key. |
+| `--filter` | one of `L R G B S H O`, case-insensitive. Only frames whose filename carries that filter are analysed, and with `-o` the report is named `analyse_report_<FILTER>.csv`. A `--target` run without it analyses every filter the target holds, one run each. Not a config key. |
 | `--format` | `console`, `csv`, or `both`. `csv`/`both` need `-o`. |
-| `-o`, `--output` | **a directory**, not a file. The report is written inside it as `analyse_report.csv`, or `analyse_report_<FILTER>.csv` when `--filter` is set. Without it, `--format csv` writes to stdout. |
+| `-o`, `--output` | **a directory**, not a file. The report is written inside it as `analyse_report.csv`, or `analyse_report_<FILTER>.csv` when `--filter` is set or the run is scoped by `--target`. Without it, `--format csv` writes to stdout. |
 | `--copy-rejected` | copy every rejected frame into `<output>/rejected/<category>/`, one folder per rejection reason. Requires `-o`. |
 | `-t, --target` | analyse `<input>/Lights/<target>`, the same tree `prepare` reads, and write into `<output>/<target>/metrics/`. Implies `-r`. Cannot be combined with `--dir`. Not a config key. |
 | `-i, --input` | acquisition root used with `--target`. Config key `analyze.input`. |
-| `--cache` | reuse the measurements stored in `<output>/cache/measurements.jsonl`, and record this run's. Requires `-o`: the store lives in the output directory, never in the acquisition tree. See [Reusing measurements](#reusing-measurements-between-runs). |
+| `--cache` | reuse the measurements stored in `<output>/cache/measurements.jsonl` (`<output>/<target>/metrics/cache/` for a target run), and record this run's. Requires `-o`: the store lives in the output directory, never in the acquisition tree. See [Reusing measurements](#reusing-measurements-between-runs). |
 | `--stack-gate` | reject a frame from a night the stack condemns **when the frame itself sits outside the stack band**. Off by default. See [Session quality](#session-quality-and-suggested-thresholds). |
-| `--suggest` | derive thresholds for `--filter` from the measured stack and write them to `<output>/suggested_<FILTER>.yaml` plus the store `prepare --suggested` reads. Requires `--filter` and `-o`. Advisory: it never changes this run's verdicts. |
+| `--suggest` | derive thresholds from the measured stack and write them to `<output>/suggested_<FILTER>.yaml` plus the store `prepare --suggested` reads. Needs `-o`; with `--filter` it suggests that filter, with `--target` every filter the target holds. Advisory: it never changes this run's verdicts. |
 | `--keep` | the fraction of the good stack a `--suggest` run aims to keep; `0` uses the band the FWHM rule applies (4 robust sigmas by default). |
 | `--quiet` | suppress console output. |
 | `-w`, `--conv-workers` | both default to 0 = automatic. |
@@ -247,6 +247,14 @@ garfield analyze -t LBN527 -i /Volumes/Dyno/Kosmodrom -o /Volumes/T7/Workspace \
                  --filter H --cache --suggest
 garfield prepare -t LBN527 -o /Volumes/T7/Workspace --cache --suggested
 ```
+
+**A target run is per filter.** Without `--filter`, the filters are discovered from
+the frames' names and the whole analysis runs once per filter — its own report,
+session profile and suggestion each — because every threshold and every population
+rule belongs to one filter; a report mixing them would judge O against L's noise.
+`--filter` narrows the run to one of them. A filter whose stack is too thin to
+suggest from is a warning — the other filters are still analysed and suggested —
+and frames carrying no known filter are skipped with one warning.
 
 The scan walks `<input>/Lights/<target>/<date>/<filter>/`, which is the layout
 `prepare` reads, so `-r` is implied. Reports, the session profile and the suggested
@@ -295,8 +303,8 @@ read as a clean frame.
 
 CSV, `;`-separated to match the reference PixInsight tool's export format, written
 to `<output>/analyse_report.csv` when `-o` is given and to stdout otherwise. A
-filtered run writes `<output>/analyse_report_<FILTER>.csv`, so reports for
-different filters can share one output directory:
+filtered or target-scoped run writes `<output>/analyse_report_<FILTER>.csv`, so
+reports for different filters can share one output directory:
 
 ```
 filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass
@@ -399,7 +407,7 @@ soft frame is reported as soft rather than clouded.
 
 ```
 <output>/                          ← or <output>/<target>/metrics/ with --target
-├── analyse_report.csv          ← or analyse_report_<FILTER>.csv with --filter
+├── analyse_report.csv          ← or analyse_report_<FILTER>.csv with --filter or --target
 ├── sessions_<FILTER>.csv        ← per-night profile, one file per filter
 ├── suggested_<FILTER>.yaml      ← only with --suggest
 ├── cache/

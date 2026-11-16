@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -51,6 +52,11 @@ const (
 	minStarsShare = 0.5 // never suggest keeping a filter's star-poor half
 )
 
+// errNoSuggestionPopulation marks a filter whose stack is too thin to suggest
+// thresholds from. In a single-filter run it is fatal; across a target it is a
+// warning about one filter, which must not cost the others their suggestions.
+var errNoSuggestionPopulation = errors.New("not enough frames to suggest from")
+
 // suggestionPath is where the suggestions of a run are stored, beside the
 // measurement cache so `prepare` can find both.
 func suggestionPath(output string) string {
@@ -100,15 +106,15 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 
 	indices := measuredFrames(results, filter)
 	if len(indices) == 0 {
-		return out, fmt.Errorf("no measured frame for filter %s to suggest from", filter)
+		return out, fmt.Errorf("%w: no measured frame for filter %s", errNoSuggestionPopulation, filter)
 	}
 	out.Total = len(indices)
 
 	good := goodStack(results, prof, filter)
 	if len(good) < fwhmMinSample {
 		return out, fmt.Errorf(
-			"only %d frame(s) of filter %s belong to a night the stack does not condemn (need %d): analyse more nights before asking for a suggestion",
-			len(good), filter, fwhmMinSample)
+			"%w: only %d frame(s) of filter %s belong to a night the stack does not condemn (need %d)",
+			errNoSuggestionPopulation, len(good), filter, fwhmMinSample)
 	}
 
 	refs := stackRefs(results, good)
