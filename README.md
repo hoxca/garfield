@@ -67,8 +67,11 @@ tests). Wall time is ~14 s against ~36 s single-threaded, and `make test-race` d
 from 6 minutes to 1.5.
 
 The report is one gotestsum run, with the domain in the package label —
-`✓ cmd (prepare-bias) (9.8s)` … `DONE 643 tests in 14s` — and `make test-verbose`
-switches it to `testdox`, grouping each domain's tests under its own header.
+`✓ cmd (prepare-bias) (9.8s)` … `DONE 643 tests in 14s`. The internal packages are
+listed first, then the command domains in the order they finished, so the quick
+ones come before prepare and core the way a live report would have shown them.
+`make test-verbose` switches it to `testdox`, grouping each domain's tests under its
+own header.
 
 ---
 

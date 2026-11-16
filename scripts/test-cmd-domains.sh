@@ -159,16 +159,41 @@ fi
 
 # Label each shard's events with the domain, so one merged report names the shard
 # instead of printing "garfield/cmd" nineteen times.
-files=""
+cp "$tmp/internal.raw" "$tmp/internal.json"
 for name in $names; do
-	if [ "$name" = internal ]; then
-		cp "$tmp/$name.raw" "$tmp/$name.json"
-	else
-		sed "s#\"Package\":\"garfield/cmd\"#\"Package\":\"garfield/cmd ($name)\"#g" \
-			"$tmp/$name.raw" >"$tmp/$name.json"
-	fi
-	files="$files $tmp/$name.json"
+	[ "$name" = internal ] && continue
+	sed "s#\"Package\":\"garfield/cmd\"#\"Package\":\"garfield/cmd ($name)\"#g" \
+		"$tmp/$name.raw" >"$tmp/$name.json"
 done
+
+# Report order: the internal packages first, then the command domains in the order
+# they actually finished. Every shard starts within milliseconds of the others, so
+# its own elapsed time is its arrival time; sorting by it prints the quick domains
+# before prepare and core, which is what a live report would have shown.
+elapsed() {
+	awk '
+		/"Action":"(pass|fail|skip)"/ && /"Package":/ && !/"Test":/ {
+			if (match($0, /"Elapsed":[0-9.]+/)) {
+				last = substr($0, RSTART + 10, RLENGTH - 10)
+			}
+		}
+		END { printf "%.3f", last + 0 }
+	' "$1"
+}
+
+{
+	for name in $names; do
+		[ "$name" = internal ] && continue
+		printf '%s %s\n' "$(elapsed "$tmp/$name.json")" "$name"
+	done
+} | sort -n >"$tmp/order"
+
+files="$tmp/internal.json"
+ordered="internal"
+while read -r _ name; do
+	files="$files $tmp/$name.json"
+	ordered="$ordered $name"
+done <"$tmp/order"
 
 if command -v "$runner" >/dev/null 2>&1; then
 	if [ -n "$format" ]; then
@@ -179,7 +204,7 @@ if command -v "$runner" >/dev/null 2>&1; then
 else
 	# No formatter: count the events ourselves. A passing shard gets a line; a
 	# failing one gets every failing test and its output.
-	for name in $names; do
+	for name in $ordered; do
 		passes=$(awk '
 			/"Action":"pass"/ && /"Test":"/ {
 				if (match($0, /"Test":"[^"]*"/)) {
