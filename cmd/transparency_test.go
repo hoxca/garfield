@@ -70,19 +70,46 @@ func TestTransparencyIsRelativeToTheHour(t *testing.T) {
 	}
 }
 
-func TestTransparencyUsesAFrozenBaseline(t *testing.T) {
-	q := qualityThresholds{minTransparency: 0.90}
-	group := exhaust(3, 0, 10.0)
-
-	// A suggestion pins the reference, so three frames suffice and the ratio is
-	// against the stack the suggestion saw rather than against themselves.
-	applySessionRulesWith(group, q, 0, 0, 0, 20.0)
-
-	if got := group[0].Transparency; got < 0.49 || got > 0.51 {
-		t.Errorf("transparency = %.2f with a frozen baseline of 20, want 0.5", got)
+// TestSuggestionDoesNotFreezeTheTransparencyReference is the regression test for
+// the suggestion table that read "min-transparency 0.9 → 0.9, rejects 6 → 33": a
+// suggestion used to carry one denominator for the whole stack, which rejected
+// every night taken lower in the sky. The threshold travels; the neighbourhood
+// does not.
+func TestSuggestionDoesNotFreezeTheTransparencyReference(t *testing.T) {
+	high := exhaust(12, 0, 20.0)
+	for _, r := range high {
+		r.Airmass, r.StarCount, r.DetectedStars, r.Filter = 1.05, 400, 400, "G"
 	}
-	if group[0].Decision != decisionTransparency {
-		t.Errorf("decision = %q, want %q", group[0].Decision, decisionTransparency)
+	low := exhaust(12, 180, 15.0)
+	for _, r := range low {
+		r.Airmass, r.StarCount, r.DetectedStars, r.Filter = 1.40, 400, 400, "G"
+	}
+	results := make([]ImageResult, 0, 24)
+	for _, r := range append(high, low...) {
+		results = append(results, *r)
+	}
+
+	prof := profileRun(results)
+	opts := defaultOpts()
+	s, err := suggestForFilter(results, prof, "G", opts)
+	if err != nil {
+		t.Fatalf("suggestForFilter: %v", err)
+	}
+
+	decisions := simulateSuggestion(results, s, opts, prof)
+	approved := 0
+	for i, d := range decisions {
+		if d == decisionTransparency {
+			t.Errorf("frame %d (airmass %.2f) rejected as untransparent under the suggestion: "+
+				"the reference was frozen instead of local", i, results[i].Airmass)
+		}
+		if d == decisionApproved {
+			approved++
+		}
+	}
+	// The headline must describe the same rule set as the table.
+	if s.KeptCount != approved {
+		t.Errorf("headline says %d approved, simulating the suggestion says %d", s.KeptCount, approved)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -81,10 +80,6 @@ type suggestedThresholds struct {
 	// Band is the width of the gates in robust sigmas around the good stack's
 	// median.
 	Band float64
-	// TransparencyBase is the contrast-to-noise that counted as the good stack's
-	// best conditions: the denominator of the transparency ratio a later run
-	// applies.
-	TransparencyBase float64
 }
 
 // suggestForFilter derives a threshold set for one filter from the run's
@@ -154,6 +149,25 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 	if band <= 0 {
 		band = defaultThresholds.maxFWHMSigma
 	}
+	// Approved counts come from the same simulation the table uses, so the
+	// headline and the total row cannot describe different rule sets. The band
+	// search needs the same thing: a budget spent on the absolute gates alone
+	// would promise "keeps 99%" while the transparency rule rejected a third.
+	approved := func(t suggeststore.Thresholds) (goodApproved, allApproved int) {
+		decisions := simulateThresholds(results, filter, t, referenceCopy(refs), opts, prof)
+		for _, i := range good {
+			if decisions[i] == decisionApproved {
+				goodApproved++
+			}
+		}
+		for _, i := range indices {
+			if decisions[i] == decisionApproved {
+				allApproved++
+			}
+		}
+		return goodApproved, allApproved
+	}
+
 	if opts.keep > 0 {
 		steps := int(math.Round((keepBandMax - keepBandMin) / keepBandStep))
 		band = keepBandMax
@@ -161,7 +175,8 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 			k := roundTo(keepBandMin+float64(i)*keepBandStep, 2)
 			band = k
 			th := thresholdsFromRefs(refs, k)
-			if float64(countAccepted(results, good, th))/float64(out.GoodCount) >= opts.keep {
+			th.MinTransparency = opts.minTransparency
+			if goodApproved, _ := approved(th); float64(goodApproved)/float64(out.GoodCount) >= opts.keep {
 				break
 			}
 		}
@@ -172,12 +187,7 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 	// The transparency policy is not derived from the stack: the threshold is the
 	// operator's tolerance, and only its denominator comes from the data.
 	out.Thresholds.MinTransparency = opts.minTransparency
-	if snrs := sessionSNRs(results, good); len(snrs) >= transparencyMinSample {
-		sort.Float64s(snrs)
-		out.TransparencyBase = percentileSorted(snrs, transparencyP90)
-	}
-	out.KeptGood = countAccepted(results, good, out.Thresholds)
-	out.KeptCount = countAccepted(results, indices, out.Thresholds)
+	out.KeptGood, out.KeptCount = approved(out.Thresholds)
 	out.Kept = float64(out.KeptCount) / float64(out.Total)
 	return out, nil
 }
@@ -209,18 +219,6 @@ func thresholdsFromRefs(refs map[string]stackRef, band float64) suggeststore.Thr
 		t.MaxStructure = roundTo((structure.Median+band*structure.Sigma)/structure.P25, 2)
 	}
 	return t
-}
-
-// sessionSNRs collects the good stack's contrast-to-noise values, ready to be
-// quantiled: the denominator of the transparency ratio.
-func sessionSNRs(results []ImageResult, indices []int) []float64 {
-	out := make([]float64, 0, len(indices))
-	for _, i := range indices {
-		if results[i].SNR > 0 {
-			out = append(out, results[i].SNR)
-		}
-	}
-	return out
 }
 
 // measuredFrames returns the indices of a filter's frames that carry a
@@ -287,26 +285,14 @@ func insideStack(r ImageResult, refs map[string]stackRef) bool {
 	return true
 }
 
-// countAccepted counts how many frames the thresholds would approve.
-func countAccepted(results []ImageResult, indices []int, t suggeststore.Thresholds) int {
-	accepted := 0
-	for _, i := range indices {
-		r := results[i]
-		switch {
-		case t.MaxFWHM > 0 && r.AvgFWHM > t.MaxFWHM:
-			continue
-		case t.MaxEcc > 0 && r.AvgEccentricity > t.MaxEcc:
-			continue
-		case t.MinSNR > 0 && r.SNR < t.MinSNR:
-			continue
-		case t.MinScore > 0 && r.Score < t.MinScore:
-			continue
-		case t.MinStars > 0 && r.DetectedStars < t.MinStars:
-			continue
-		}
-		accepted++
+// referenceCopy converts the good stack's statistics into the store's shape, so a
+// candidate threshold set can be simulated against them.
+func referenceCopy(refs map[string]stackRef) map[string]suggeststore.Reference {
+	out := make(map[string]suggeststore.Reference, len(refs))
+	for name, ref := range refs {
+		out[name] = suggeststore.Reference{Median: ref.Median, Sigma: ref.Sigma, P25: ref.P25}
 	}
-	return accepted
+	return out
 }
 
 // referenceFromRefs renders the stack statistics for the store and the YAML.
@@ -376,35 +362,37 @@ func countRejections(results []ImageResult, decisions []string) rejectionCounts 
 	return c
 }
 
-// simulateSuggestion judges a copy of the run with the suggested gates and
+// simulateThresholds judges a copy of the run with a candidate threshold set and
 // returns the verdict each frame would get.
 //
 // The copy is judged from scratch rather than by adjusting the existing verdicts,
 // because the relative rules would otherwise be applied twice: a frame the
-// current thresholds rejected is not APPROVED to the suggested ones.
-func simulateSuggestion(results []ImageResult, s suggestedThresholds, opts analyzeOptions, prof sessionProfiles) []string {
+// current thresholds rejected is not APPROVED to the suggested ones. It is the
+// one definition of "under the suggestion", used both for the table and for the
+// headline count, so the two cannot describe different rule sets.
+func simulateThresholds(results []ImageResult, filter string, t suggeststore.Thresholds, reference map[string]suggeststore.Reference, opts analyzeOptions, prof sessionProfiles) []string {
 	gates := gateSet{
 		base:     opts.qualityThresholds,
 		byFilter: map[string]qualityThresholds{},
 		refs:     map[string]frozenReference{},
 	}
-	gates.byFilter[s.Filter] = qualityThresholds{
-		minTransparency: s.Thresholds.MinTransparency,
-		minSNR:          s.Thresholds.MinSNR,
-		maxFWHM:         s.Thresholds.MaxFWHM,
-		maxEcc:          s.Thresholds.MaxEcc,
-		minScore:        s.Thresholds.MinScore,
-		minStars:        s.Thresholds.MinStars,
-		maxFWHMSigma:    s.Thresholds.MaxFWHMSigma,
-		maxHaloRatio:    s.Thresholds.MaxHaloRatio,
-		maxStructure:    s.Thresholds.MaxStructure,
+	gates.byFilter[filter] = qualityThresholds{
+		minTransparency: t.MinTransparency,
+		minSNR:          t.MinSNR,
+		maxFWHM:         t.MaxFWHM,
+		maxEcc:          t.MaxEcc,
+		minScore:        t.MinScore,
+		minStars:        t.MinStars,
+		maxFWHMSigma:    t.MaxFWHMSigma,
+		maxHaloRatio:    t.MaxHaloRatio,
+		maxStructure:    t.MaxStructure,
 		moffat:          opts.moffat,
 	}
 	refs := map[string]stackRef{}
-	for name, ref := range s.Reference {
+	for name, ref := range reference {
 		refs[name] = stackRef{Median: ref.Median, Sigma: ref.Sigma, P25: ref.P25}
 	}
-	gates.refs[s.Filter] = frozenReference{Refs: refs, TransparencyBase: s.TransparencyBase}
+	gates.refs[filter] = frozenReference{Refs: refs}
 
 	sim := make([]ImageResult, len(results))
 	copy(sim, results)
@@ -426,6 +414,11 @@ func simulateSuggestion(results []ImageResult, s suggestedThresholds, opts analy
 		decisions[i] = sim[i].Decision
 	}
 	return decisions
+}
+
+// simulateSuggestion judges a copy of the run with a finished suggestion.
+func simulateSuggestion(results []ImageResult, s suggestedThresholds, opts analyzeOptions, prof sessionProfiles) []string {
+	return simulateThresholds(results, s.Filter, s.Thresholds, s.Reference, opts, prof)
 }
 
 // printSuggestion reports the suggestion as a table: the values, and what each
@@ -560,18 +553,17 @@ func suggestionFileName(filter string) string {
 // writeSuggestion stores the suggestion and writes the YAML artifact.
 func writeSuggestion(output string, s suggestedThresholds) error {
 	rec := suggeststore.Suggestion{
-		SuggestVersion:   suggeststore.SuggestVersion,
-		MeasureVersion:   measureVersion,
-		Filter:           s.Filter,
-		Population:       s.Population,
-		Heterogeneity:    s.Heterogeneity,
-		TransparencyBase: s.TransparencyBase,
-		Band:             s.Band,
-		Kept:             s.Kept,
-		Reference:        s.Reference,
-		Thresholds:       s.Thresholds,
-		Sessions:         s.Sessions,
-		Created:          time.Now().UTC(),
+		SuggestVersion: suggeststore.SuggestVersion,
+		MeasureVersion: measureVersion,
+		Filter:         s.Filter,
+		Population:     s.Population,
+		Heterogeneity:  s.Heterogeneity,
+		Band:           s.Band,
+		Kept:           s.Kept,
+		Reference:      s.Reference,
+		Thresholds:     s.Thresholds,
+		Sessions:       s.Sessions,
+		Created:        time.Now().UTC(),
 	}
 
 	store, err := suggeststore.Open(suggestionPath(output))

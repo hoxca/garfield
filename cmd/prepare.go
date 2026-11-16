@@ -1047,14 +1047,13 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measu
 		for k, g := range groups {
 			filter := filterOfSessionKey(k)
 			q := gates.thresholds(filter)
-			var haloRef, structRef, fwhmRef, transparencyRef float64
+			var haloRef, structRef, fwhmRef float64
 			if ref, ok := gates.frozen(filter); ok {
 				haloRef = ref.Refs["halo"].P25
 				structRef = ref.Refs["struct"].P25
 				fwhmRef = ref.Refs["fwhm"].Median
-				transparencyRef = ref.TransparencyBase
 			}
-			applySessionRulesWith(g, q, haloRef, structRef, fwhmRef, transparencyRef)
+			applySessionRulesWith(g, q, haloRef, structRef, fwhmRef)
 		}
 	}
 

@@ -1259,7 +1259,9 @@ sharpest of the night. The absolute multiplier is therefore only a floor: the
 frame must also be an outlier by the session's own robust structure scale, and it
 must be softer than the session's median FWHM, because bad seeing means soft
 stars and nothing else does. A sharp frame can never be rejected for bad seeing.
-The session reference is frozen when a suggestion is applied (§10.2).
+The session reference is frozen when a suggestion is applied (§10.2); the
+transparency reference (§10.1.2) is not, because its ratio is defined against a
+per-frame neighbourhood.
 
 **Sessions are found by clustering on acquisition time**, not by directory or by
 the date in the filename. Frames are sorted by the `_YYYYMMDD_HHMMSS_` stamp and a
@@ -1365,10 +1367,16 @@ rejected only when the frame itself is outside the stack band on the metric that
 flagged the night. Flagging a night therefore never condemns it wholesale.
 
 `--suggest` writes `suggested_<FILTER>.yaml` and `cache/suggestions.jsonl`. The
-record carries the thresholds **and** the reference statistics they were derived
-from, plus the population (`n`, nights, date range) they describe. That is what
-`prepare --suggested` applies: judging with a recomputed reference would make a
-frame's verdict depend on which other frames happened to be in the run.
+record carries the thresholds **and** the population reference statistics they
+were derived from, plus the population (`n`, nights, date range) they describe.
+That is what `prepare --suggested` applies: judging with a recomputed reference
+would make a frame's verdict depend on which other frames happened to be in the
+run. The transparency ratio is the one exception -- it is relative to the frames at
+a similar airmass, so its denominator is always taken from the frames in hand.
+
+The counts in the suggestion table and the "keeps N/M" headline are produced by
+the same simulation, so `--keep` spends its budget on the verdicts you actually
+get, not on the absolute gates alone.
 
 The suggestion table counts the rejections each gate accounts for, attributed by
 the first gate that rejected the frame in pipeline order, so the rows sum to the

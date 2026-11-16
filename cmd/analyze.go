@@ -1310,7 +1310,7 @@ func sessionKeys(results []ImageResult) []string {
 // four measured frames neither percentile is meaningful, so neither test runs
 // and the session is left alone.
 func applySessionRules(results []*ImageResult, q qualityThresholds) {
-	applySessionRulesWith(results, q, 0, 0, 0, 0)
+	applySessionRulesWith(results, q, 0, 0, 0)
 }
 
 // structureSigma is how many robust sigmas above the session's median structure a
@@ -1350,20 +1350,10 @@ const (
 )
 
 // applyTransparencyRatios fills each frame's Transparency: its contrast-to-noise
-// divided by the 90th percentile of the frames taken through a similar airmass,
-// or by the baseline a suggestion pinned.
-func applyTransparencyRatios(results []*ImageResult, frozenBaseline float64) {
+// divided by the 90th percentile of the frames taken through a similar airmass.
+func applyTransparencyRatios(results []*ImageResult) {
 	for _, r := range results {
 		r.Transparency = 0
-	}
-
-	if frozenBaseline > 0 {
-		for _, r := range results {
-			if r.SNR > 0 {
-				r.Transparency = r.SNR / frozenBaseline
-			}
-		}
-		return
 	}
 
 	// Airmass first, because it explains the drift that is not weather. Whatever it
@@ -1491,7 +1481,7 @@ func applyTimeWindowRatios(results []*ImageResult) {
 // without a suggestion does; a non-zero one is the value a suggestion pinned, so
 // a night is judged against the stack it was analysed with rather than against
 // itself.
-func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBaseline, structBaseline, fwhmBaseline, transparencyBaseline float64) {
+func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBaseline, structBaseline, fwhmBaseline float64) {
 	var halos, structures []float64
 	for _, r := range results {
 		r.HaloRatio = 0
@@ -1551,7 +1541,13 @@ func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBase
 	// around it. A night can be uniformly hazy, so the comparison is relative, and
 	// it is local because conditions drift: airmass and moonlight move the contrast
 	// over a night faster than cloud does.
-	applyTransparencyRatios(results, transparencyBaseline)
+	//
+	// Unlike the other references, this one is never frozen by a suggestion: the
+	// ratio only means "against the best of a similar airmass", so a single
+	// stored denominator would reject a whole night taken lower in the sky. The
+	// suggestion carries the threshold; the neighbourhood always comes from the
+	// frames being judged.
+	applyTransparencyRatios(results)
 
 	// Bad seeing means soft stars. Structure on its own is not evidence: an
 	// extended object, or the scattered light around bright stars, raises it

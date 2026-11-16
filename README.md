@@ -483,11 +483,19 @@ garfield prepare -t LBN527 -o out --suggested                       # judges wit
 ```
 
 The reference travels with the thresholds because the relative rules compare a
-frame with a population. Recomputing that population from the target's own subset
-would move the bound, so the same frame would be judged differently depending on
-what else was in the run. With the reference pinned, a verdict depends on the
-frame, not on its neighbours — which also fixes the documented limitation that
-analyzing one night could disagree with analyzing the whole target.
+frame with a population: the FWHM bound, the halo multiple and the structure
+multiple are all properties of the stack, and recomputing them from the target's
+own subset would move the bound, so the same frame would be judged differently
+depending on what else was in the run. With those pinned, a verdict depends on the
+frame rather than on its neighbours — which also fixes the documented limitation
+that analyzing one night could disagree with analyzing the whole target.
+
+Transparency is the exception, by construction: its ratio is "against the best of
+the frames at a similar airmass", so no single denominator can be pinned. The
+threshold travels; the neighbourhood is always taken from the frames being judged.
+Freezing it once made a suggestion derived over five nights reject three of them,
+because a night taken lower in the sky sits below a night-wide benchmark without
+any cloud in it.
 
 `--suggested` is explicit and off by default: the config still decides verdicts
 unless you ask otherwise. A filter with no stored suggestion falls back to the

@@ -29,9 +29,6 @@ type gateSet struct {
 // them.
 type frozenReference struct {
 	Refs map[string]stackRef
-	// TransparencyBase is the star flux the suggestion treated as the best
-	// conditions of the stack, so `prepare --suggested` can compute the same ratio.
-	TransparencyBase float64
 }
 
 // baseGates judges with one threshold set for every filter, computing the
@@ -130,7 +127,7 @@ func gatesFromSuggestions(store *suggeststore.Store, filters []string, sessions 
 		for name, ref := range rec.Reference {
 			refs[name] = stackRef{Median: ref.Median, Sigma: ref.Sigma, P25: ref.P25}
 		}
-		gates.refs[filter] = frozenReference{Refs: refs, TransparencyBase: rec.TransparencyBase}
+		gates.refs[filter] = frozenReference{Refs: refs}
 	}
 	return gates, warnings
 }
@@ -273,14 +270,13 @@ func applySessionRulesBySessionGated(results []ImageResult, gates gateSet) {
 	for _, k := range order {
 		filter := filterOfSessionKey(k)
 		q := gates.thresholds(filter)
-		var haloRef, structRef, fwhmRef, transparencyRef float64
+		var haloRef, structRef, fwhmRef float64
 		if ref, ok := gates.frozen(filter); ok {
 			haloRef = ref.Refs["halo"].P25
 			structRef = ref.Refs["struct"].P25
 			fwhmRef = ref.Refs["fwhm"].Median
-			transparencyRef = ref.TransparencyBase
 		}
-		applySessionRulesWith(groups[k], q, haloRef, structRef, fwhmRef, transparencyRef)
+		applySessionRulesWith(groups[k], q, haloRef, structRef, fwhmRef)
 	}
 }
 
