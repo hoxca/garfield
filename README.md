@@ -67,7 +67,8 @@ tests). Wall time is ~14 s against ~36 s single-threaded, and `make test-race` d
 from 6 minutes to 1.5.
 
 The report **streams**: each domain is formatted on its own and printed the moment
-it finishes, so a failure appears as it happens rather than at the end. The domain
+it finishes, so a failure appears as it happens rather than at the end. Shards are
+printed as contiguous lines, with the per-shard summary and its blank line stripped. The domain
 is in the package label — `✓ cmd (cloud) (1.2s)` first, `✓ cmd (core) (13.5s)` last
 — which is the order the shards actually completed in, and the internal packages
 usually lead because they are the quickest.

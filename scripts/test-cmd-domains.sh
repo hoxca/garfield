@@ -190,7 +190,20 @@ start() {
 			"$runner" "$@" --raw-command -- cat "$tmp/$name.json" >"$tmp/$name.full" 2>&1
 			grep -E '^DONE [0-9]+ tests' "$tmp/$name.full" |
 				sed 's/^DONE \([0-9]*\) tests.*/\1/' >"$tmp/$name.count" || true
-			grep -vE '^DONE [0-9]+ tests' "$tmp/$name.full" >"$tmp/$name.report"
+			# Drop the per-shard DONE line and the blank line that precedes it, so
+			# streamed shards read as one block rather than one block per gap.
+			awk '
+				/^DONE [0-9]+ tests/ { next }
+				{ line[++n] = $0 }
+				END {
+					while (n > 0 && line[n] ~ /^[[:space:]]*$/) {
+						n--
+					}
+					for (i = 1; i <= n; i++) {
+						print line[i]
+					}
+				}
+			' "$tmp/$name.full" | tr -d '\r' >"$tmp/$name.report"
 		else
 			count_tests "$name" >"$tmp/$name.count"
 		fi
