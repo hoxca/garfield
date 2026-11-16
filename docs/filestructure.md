@@ -1135,7 +1135,7 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass
 ```
 
 `decision` holds one of **eight** values, which are **data, not messages** —
@@ -1314,17 +1314,27 @@ which a ring difference cancels. What it does produce is a loss of contrast: the
 stars dim, the frame flattens, and the MRS image signal-to-noise falls with them.
 
 ```
-reference    = p90(SNR of the frames within an hour either side of this one)
+reference    = p90(SNR of the frames within a similar airmass)
+               tolerance 0.05, widened to 0.10 then 0.20 until 8 frames qualify
+               fallback: the frames within an hour either side, when AIRMASS is
+               not in the header
 transparency = SNR / reference
 untransparent = transparency < --min-transparency        (default 0.90)
 ```
 
-The hour-wide reference is what makes it usable: a night-wide percentile calls the
-second half of a clear night untransparent simply because the first half was
-better, and Airmass, moonlight and transparency drift over hours. Measured on one
-target, a +-60 minute window caught 13 of the 15 frames the observer identified as
-cloudy and flagged none of the 20 confirmed-clear ones; a whole-night window
-flagged a third of the night.
+Airmass is the grouping variable because it is the part of the drift that geometry
+predicts: a frame at 1.4 is dimmed by where the telescope pointed, not by the
+weather, so judging it against a frame at 1.05 blames the sky position. Grouping
+by airmass also lets the reference span the whole night, which is a larger sample
+and does not let a cloudy hour become its own benchmark. On one target it caught
+12 of the 15 frames the observer identified as cloudy, flagged none of the 20
+confirmed-clear ones, and rejected 19% of the night against 26% for the hourly
+window it replaced.
+
+The sky level is deliberately *not* part of the model: cloud raises the sky while
+it dims the stars, so predicting the contrast from the sky would absorb the very
+effect the rule is looking for. It is reported (`background`) and read alongside,
+not normalised against.
 
 The column is empty when the frame had no usable neighbourhood (fewer than eight
 frames within the hour, or no timestamps at all).

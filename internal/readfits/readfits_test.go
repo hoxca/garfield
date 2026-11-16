@@ -726,3 +726,31 @@ func TestReadHeaderString(t *testing.T) {
 		t.Errorf("absent card: found=%v err=%v, want found=false and no error", found, err)
 	}
 }
+
+func TestReadHeaderFloat(t *testing.T) {
+	dir := t.TempDir()
+	data := ramp16(4)
+	path := writeFITS(t, dir, "airmass.fits", 16, []int{2, 2}, &data,
+		fitsio.Card{Name: "AIRMASS", Value: 1.16},
+		fitsio.Card{Name: "OBJECT", Value: "LBN527"})
+
+	got, found, err := ReadHeaderFloat(path, "AIRMASS")
+	if err != nil {
+		t.Fatalf("ReadHeaderFloat: %v", err)
+	}
+	if !found {
+		t.Fatal("AIRMASS card was not found")
+	}
+	if got != 1.16 {
+		t.Errorf("AIRMASS = %v, want 1.16", got)
+	}
+
+	// A string card is "not recorded", not an error: the transparency rule treats
+	// it the same as a missing card.
+	if _, found, err := ReadHeaderFloat(path, "OBJECT"); err != nil || found {
+		t.Errorf("string card: found=%v err=%v, want found=false and no error", found, err)
+	}
+	if _, found, err := ReadHeaderFloat(path, "ABSENT"); err != nil || found {
+		t.Errorf("absent card: found=%v err=%v, want found=false and no error", found, err)
+	}
+}

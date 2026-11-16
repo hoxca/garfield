@@ -39,6 +39,37 @@ func ReadHeaderString(filename, keyword string) (value string, found bool, err e
 	return strings.TrimSpace(s), true, nil
 }
 
+// ReadHeaderFloat reads one numeric card from the primary image header. found is
+// false when the card is absent or holds a non-numeric value, which callers treat
+// as "not recorded" rather than as an error.
+func ReadHeaderFloat(filename, keyword string) (value float64, found bool, err error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return 0, false, fmt.Errorf("unable to open file: %w", err)
+	}
+	defer f.Close()
+
+	r, err := fitsio.Open(f)
+	if err != nil {
+		return 0, false, fmt.Errorf("unable to initialize FITS reader: %w", err)
+	}
+	defer r.Close()
+
+	hdu := r.HDU(0)
+	if _, ok := hdu.(fitsio.Image); !ok {
+		return 0, false, fmt.Errorf("primary HDU is not an image layer")
+	}
+	card := hdu.Header().Get(keyword)
+	if card == nil {
+		return 0, false, nil
+	}
+	v, ok := numericCard(card.Value)
+	if !ok {
+		return 0, false, nil
+	}
+	return v, true, nil
+}
+
 // ReadDimensions reports the width and height of the primary image HDU without
 // reading the pixel data. The worker planner uses it to size a frame's working
 // set before any full decode, so a run can decide how many frames to process

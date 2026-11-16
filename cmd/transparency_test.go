@@ -112,3 +112,71 @@ func TestTransparencyDisabled(t *testing.T) {
 		t.Errorf("decision = %q with the rule disabled, want APPROVED", group[3].Decision)
 	}
 }
+
+// TestTransparencyExplainsAirmassWithAirmass is the behaviour that motivated the
+// airmass grouping: two frames taken through different slices of atmosphere are
+// not comparable, however close together in time they were taken.
+func TestTransparencyExplainsAirmassWithAirmass(t *testing.T) {
+	q := qualityThresholds{minTransparency: 0.90}
+
+	// Interleaved in time, so the hour window would call the low-altitude frames
+	// untransparent, but separated by airmass, so the airmass grouping can see
+	// that the sky position explains the difference.
+	var group []*ImageResult
+	for i := 0; i < 12; i++ {
+		group = append(group, exhaust(1, i*10, 20.0)[0])
+		group[len(group)-1].Airmass = 1.05
+		low := exhaust(1, i*10+5, 15.0)[0]
+		low.Airmass = 1.40
+		group = append(group, low)
+	}
+
+	applySessionRules(group, q)
+
+	for i, r := range group {
+		if r.Decision != decisionApproved {
+			t.Errorf("frame %d (airmass %.2f, transparency %.2f) rejected: airmass is not cloud",
+				i, r.Airmass, r.Transparency)
+		}
+	}
+}
+
+// TestTransparencyStillFlagsADipAtOneAirmass keeps the rule honest: explaining
+// the drift must not explain away a cloud.
+func TestTransparencyStillFlagsADipAtOneAirmass(t *testing.T) {
+	q := qualityThresholds{minTransparency: 0.90}
+
+	group := exhaust(12, 0, 20.0)
+	for _, r := range group {
+		r.Airmass = 1.20
+	}
+	group[5].SNR = 13.0
+
+	applySessionRules(group, q)
+
+	if group[5].Decision != decisionTransparency {
+		t.Errorf("decision = %q at transparency %.2f, want %q",
+			group[5].Decision, group[5].Transparency, decisionTransparency)
+	}
+	if group[0].Decision != decisionApproved {
+		t.Errorf("frame 0 rejected at transparency %.2f", group[0].Transparency)
+	}
+}
+
+// TestTransparencyFallsBackToTheHourWithoutAirmass covers cameras that do not
+// write AIRMASS.
+func TestTransparencyFallsBackToTheHourWithoutAirmass(t *testing.T) {
+	q := qualityThresholds{minTransparency: 0.90}
+
+	group := exhaust(12, 0, 20.0)
+	group[7].SNR = 13.0
+
+	applySessionRules(group, q)
+
+	if group[7].Decision != decisionTransparency {
+		t.Errorf("decision = %q without AIRMASS, want the hourly fallback to reject it", group[7].Decision)
+	}
+	if got := group[0].Transparency; got < 0.95 || got > 1.05 {
+		t.Errorf("transparency = %.2f, want ~1 against the hour", got)
+	}
+}

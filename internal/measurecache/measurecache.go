@@ -86,6 +86,7 @@ type Entry struct {
 	BgStructure     float64 `json:"bgStructure"`
 	Halo            float64 `json:"halo"`
 	HaloStars       int     `json:"haloStars"`
+	Airmass         float64 `json:"airmass,omitempty"`
 }
 
 // Cache is an open measurement store. It is safe for concurrent use: the

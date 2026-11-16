@@ -17,7 +17,7 @@ import (
 // then ignored rather than read as if they were current, so a stale cache can
 // only cost time, never correctness. A threshold change is not a schema change:
 // verdicts are derived from measurements on every run.
-const measureVersion = 1
+const measureVersion = 2
 
 // measuresCacheName is the store's file name inside <output>/cache.
 const measuresCacheName = "measurements.jsonl"
@@ -131,6 +131,7 @@ func entryFromResult(key measurecache.Key, r ImageResult, opts analyzeOptions, e
 		BgStructure:     r.BgStructure,
 		Halo:            r.Halo,
 		HaloStars:       r.HaloStars,
+		Airmass:         r.Airmass,
 	}
 }
 
@@ -158,6 +159,7 @@ func resultFromEntry(path string, e measurecache.Entry) ImageResult {
 		BgStructure:     e.BgStructure,
 		Halo:            e.Halo,
 		HaloStars:       e.HaloStars,
+		Airmass:         e.Airmass,
 		Cached:          true,
 	}
 	if e.Status == measurecache.StatusNoStars {

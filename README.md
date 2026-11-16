@@ -255,7 +255,7 @@ filtered run writes `<output>/analyse_report_<FILTER>.csv`, so reports for
 different filters can share one output directory:
 
 ```
-filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency
+filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass
 ```
 
 `cached` is `true` on a row whose numbers were read from the measurement cache
@@ -307,13 +307,19 @@ command, analyzing a single night and analyzing the whole target can produce
 different bounds.
 
 A frame is `REJECTED TRANSPARENCY` when its image contrast-to-noise is below
-`--min-transparency` of the best of the hour around it. That is the thin-cloud
-signal: cloud dims the stars and flattens the contrast while the sky barely moves,
-and on one night it tracked the observer's own visual labels (13 of 15 cloudy
-frames caught, none of the confirmed-clear ones). The reference is local rather
-than nightly because airmass and moonlight drift over a night faster than cloud
-does; the 90th percentile of the surrounding frames is the benchmark, so a
-uniformly hazy hour is not rejected merely for being worse than a clear one.
+`--min-transparency` of the best frames taken through a similar airmass. That is
+the thin-cloud signal: cloud dims the stars and flattens the contrast while the
+sky barely moves, and on one night it tracked the observer's own visual labels
+(12 of 15 cloudy frames caught, none of the confirmed-clear ones, 19% of the
+night rejected).
+
+Airmass rather than clock time is the grouping variable because it is the part of
+the drift that is predictable from geometry: a frame at airmass 1.4 is dimmed by
+where it was pointed, not by the weather, so it must be compared with other
+frames at 1.4 rather than with a better hour. The reference is the 90th
+percentile of those frames, widening the airmass tolerance from 0.05 to 0.10 to
+0.20 until eight frames qualify, and falling back to the hour around the frame
+when the header carries no `AIRMASS`.
 
 A frame is `REJECTED CLOUDS` when `haloRatio > --max-halo-ratio`. It is
 `REJECTED STRUCTURE` only when **three** things hold together: `structRatio`

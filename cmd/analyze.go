@@ -152,6 +152,10 @@ type ImageResult struct {
 	// not be made -- too few stars with a measurable aureole -- and the report
 	// says so rather than writing 0 ADU, which would read as a measured calm sky.
 	HaloStars int
+	// Airmass is the airmass recorded in the header, if the acquisition wrote it.
+	// Zero means it was not recorded, and the transparency rule falls back to a
+	// time neighbourhood.
+	Airmass float64
 	// Transparency is the frame's image contrast-to-noise divided by the best its
 	// own session reached: 1.0 means the clearest conditions of the night, 0.8 that
 	// the frame is a fifth dimmer. It is the observable behind thin cloud and any
@@ -346,6 +350,10 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 	if err != nil {
 		return ImageResult{Filename: name, Filter: filter, Date: date, Error: err}
 	}
+	// The header's airmass groups frames taken through the same slice of
+	// atmosphere, which is what lets the transparency rule compare like with like
+	// without a physical extinction model.
+	airmass, _, _ := readfits.ReadHeaderFloat(path, "AIRMASS")
 
 	scales := 5
 	mrsResult := mrs.EstimateBackgroundAndNoiseBinned(pixels, scales)
@@ -401,6 +409,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 			BgStructure:     bgStructure,
 			Halo:            halo,
 			HaloStars:       haloStars,
+			Airmass:         airmass,
 		}
 	}
 
@@ -452,6 +461,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 			BgStructure:   bgStructure,
 			Halo:          halo,
 			HaloStars:     haloStars,
+			Airmass:       airmass,
 		}
 	}
 
@@ -478,6 +488,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 		BgStructure:     bgStructure,
 		Halo:            halo,
 		HaloStars:       haloStars,
+		Airmass:         airmass,
 	}
 }
 
@@ -550,7 +561,7 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // every pre-existing column is unchanged for anything already reading this file.
 var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
-	"suggestedDecision", "haloStars", "transparency"}
+	"suggestedDecision", "haloStars", "transparency", "airmass"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -590,7 +601,16 @@ func imageResultRow(r ImageResult) []string {
 		r.SuggestedDecision,
 		strconv.Itoa(r.HaloStars),
 		formatRatio(r.Transparency),
+		formatAirmass(r.Airmass),
 	}
+}
+
+// formatAirmass renders the header's airmass, empty when it was not recorded.
+func formatAirmass(v float64) string {
+	if v <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(v, 'f', 3, 64)
 }
 
 // formatRatio renders a derived ratio, empty when it was not measured.
@@ -1316,18 +1336,22 @@ const (
 	// transparencyMinSample is the smallest neighbourhood a reference can be taken
 	// from.
 	transparencyMinSample = 8
-	// transparencyWindow is how far either side of a frame the reference looks.
+	// transparencyTolerances is how far in airmass the reference may reach, tried
+	// in order until a neighbourhood has enough frames.
 	//
-	// Not the whole session: conditions drift over a night with airmass, moonlight
-	// and cloud, so a night-wide percentile calls the second half of a clear night
-	// untransparent merely because the first half was better. An hour is longer
-	// than a cloud passage and short enough that the airmass has barely moved.
+	// Airmass rather than clock time, because it is the part of the drift that is
+	// predictable: a frame at 1.4 is dimmed by the geometry alone, so comparing it
+	// with frames at 1.05 would blame the atmosphere for what the sky position
+	// did. Grouping by airmass lets the reference span the night, which is both a
+	// larger sample and immune to a cloudy hour becoming its own benchmark.
+	// transparencyWindow is the fallback reference when the header carries no
+	// airmass: how far either side of a frame the reference looks.
 	transparencyWindow = 60 * time.Minute
 )
 
 // applyTransparencyRatios fills each frame's Transparency: its contrast-to-noise
-// divided by the 90th percentile of the frames taken within an hour of it, or by
-// the baseline a suggestion pinned.
+// divided by the 90th percentile of the frames taken through a similar airmass,
+// or by the baseline a suggestion pinned.
 func applyTransparencyRatios(results []*ImageResult, frozenBaseline float64) {
 	for _, r := range results {
 		r.Transparency = 0
@@ -1342,6 +1366,61 @@ func applyTransparencyRatios(results []*ImageResult, frozenBaseline float64) {
 		return
 	}
 
+	// Airmass first, because it explains the drift that is not weather. Whatever it
+	// cannot judge -- no airmass in the header, or too few frames to bin -- falls
+	// back to the hour around the frame.
+	applyAirmassRatios(results)
+	applyTimeWindowRatios(results)
+}
+
+// transparencyTolerances is how far in airmass the reference may reach, tried in
+// order until a neighbourhood has enough frames.
+var transparencyTolerances = []float64{0.05, 0.10, 0.20}
+
+// applyAirmassRatios judges every frame that carries an airmass against the
+// frames taken through a similar one. It reports whether there were enough such
+// frames for the grouping to mean anything.
+func applyAirmassRatios(results []*ImageResult) bool {
+	usable := 0
+	for _, r := range results {
+		if r.Airmass > 0 && r.SNR > 0 {
+			usable++
+		}
+	}
+	if usable < transparencyMinSample {
+		return false
+	}
+
+	for _, r := range results {
+		if r.Airmass <= 0 || r.SNR <= 0 {
+			continue
+		}
+		for _, tol := range transparencyTolerances {
+			near := make([]float64, 0, usable)
+			for _, o := range results {
+				if o.Airmass <= 0 || o.SNR <= 0 {
+					continue
+				}
+				if diff := o.Airmass - r.Airmass; diff <= tol && diff >= -tol {
+					near = append(near, o.SNR)
+				}
+			}
+			if len(near) < transparencyMinSample {
+				continue
+			}
+			sort.Float64s(near)
+			if ref := percentileSorted(near, transparencyP90); ref > 0 {
+				r.Transparency = r.SNR / ref
+			}
+			break
+		}
+	}
+	return true
+}
+
+// applyTimeWindowRatios fills the frames the airmass grouping could not judge,
+// using the frames taken within an hour of them.
+func applyTimeWindowRatios(results []*ImageResult) {
 	type stamped struct {
 		r  *ImageResult
 		ts time.Time
@@ -1350,6 +1429,9 @@ func applyTransparencyRatios(results []*ImageResult, frozenBaseline float64) {
 	frames := make([]stamped, 0, len(results))
 	var all []float64
 	for _, r := range results {
+		if r.Transparency > 0 {
+			continue
+		}
 		ts, ok := frameTimestamp(r.Filename)
 		frames = append(frames, stamped{r: r, ts: ts, ok: ok})
 		if ok && r.SNR > 0 {

@@ -2169,7 +2169,7 @@ var framesCSVHeader = []string{
 	"decision", "error", "background", "noise", "bgStructure",
 	"halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
-	"suggestedDecision", "haloStars", "transparency",
+	"suggestedDecision", "haloStars", "transparency", "airmass",
 }
 
 // writeFramesCSV records the per-frame quality metrics that decided the split
