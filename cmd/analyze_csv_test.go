@@ -185,7 +185,7 @@ func TestWriteResultsCSVHeader(t *testing.T) {
 		"decision", "error", "background", "noise", "bgStructure",
 		"halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 		"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
-		"suggestedDecision", "haloStars",
+		"suggestedDecision", "haloStars", "transparency",
 	}
 
 	var sb strings.Builder

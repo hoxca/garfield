@@ -1135,7 +1135,7 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency
 ```
 
 `decision` holds one of **eight** values, which are **data, not messages** —
@@ -1152,6 +1152,7 @@ contract:
 | `REJECTED SCORING` | failed `--min-score` |
 | `REJECTED CLOUDS` | bright-star aureole above the session's (§10.1.1) |
 | `REJECTED STRUCTURE` | structured sky, and a frame soft enough for it to be seeing (§10.1.1) |
+| `REJECTED TRANSPARENCY` | contrast-to-noise below `--min-transparency` of the best of the hour around it (§10.1.2) |
 
 Both reports record the **bare** session name, never a path, so consumers join
 on the session column. Metric columns come from the same `imageResultRow` used
@@ -1304,6 +1305,29 @@ remains provisional — expect to retune after another cloudy target.
 `analyze` infers the session from acquisition time, which is exact except when a
 night contains a pause longer than two hours: that is treated as two sessions, so
 each half gets its own baseline. `prepare` uses the real session directory.
+
+### 10.1.2 The transparency rule
+
+Thin cloud does not produce the compact aureole §10.1.1 measures -- on 30 s
+narrowband frames the veiling is a flat ADU or two across hundreds of pixels,
+which a ring difference cancels. What it does produce is a loss of contrast: the
+stars dim, the frame flattens, and the MRS image signal-to-noise falls with them.
+
+```
+reference    = p90(SNR of the frames within an hour either side of this one)
+transparency = SNR / reference
+untransparent = transparency < --min-transparency        (default 0.90)
+```
+
+The hour-wide reference is what makes it usable: a night-wide percentile calls the
+second half of a clear night untransparent simply because the first half was
+better, and Airmass, moonlight and transparency drift over hours. Measured on one
+target, a +-60 minute window caught 13 of the 15 frames the observer identified as
+cloudy and flagged none of the 20 confirmed-clear ones; a whole-night window
+flagged a third of the night.
+
+The column is empty when the frame had no usable neighbourhood (fewer than eight
+frames within the hour, or no timestamps at all).
 
 ### 10.2 The session profile and the suggestion
 

@@ -130,6 +130,7 @@ func entryFromResult(key measurecache.Key, r ImageResult, opts analyzeOptions, e
 		Noise:           r.Noise,
 		BgStructure:     r.BgStructure,
 		Halo:            r.Halo,
+		HaloStars:       r.HaloStars,
 	}
 }
 
@@ -156,6 +157,7 @@ func resultFromEntry(path string, e measurecache.Entry) ImageResult {
 		Noise:           e.Noise,
 		BgStructure:     e.BgStructure,
 		Halo:            e.Halo,
+		HaloStars:       e.HaloStars,
 		Cached:          true,
 	}
 	if e.Status == measurecache.StatusNoStars {

@@ -29,6 +29,12 @@ type qualityThresholds struct {
 	maxFWHMSigma float64
 	maxHaloRatio float64
 	maxStructure float64
+	// minTransparency bounds a frame's contrast-to-noise against the best of the
+	// hour around it: 0.90 means a frame more than 10% flatter than its
+	// neighbourhood is rejected as untransparent. It is a relative test like the
+	// cloud and structure rules, because a night can be uniformly hazy and every
+	// frame then looks normal against an absolute cut.
+	minTransparency float64
 	// moffat selects the PSF profile used to measure width and shape. It is not
 	// a threshold: it decides how the metrics are obtained, not whether a frame
 	// passes. It lives here because this struct is the one thing analyze and
@@ -58,6 +64,9 @@ var defaultThresholds = qualityThresholds{
 	maxFWHMSigma: 4.0,
 	maxHaloRatio: 2.0,
 	maxStructure: 1.12,
+	// Transparency is a bystander gate: it should catch a cloud that visibly
+	// dims the field, not the ordinary frame-to-frame scatter.
+	minTransparency: 0.90,
 	// moffat is true, matching conf/garfield.yaml: a Gaussian reads the width of
 	// a real PSF about 0.3 px wide on undersampled frames, which makes the FWHM
 	// gate compare numbers that are not the half-maximum contour.
@@ -79,6 +88,8 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 		"reject a frame whose bright-star halo exceeds this multiple of its session's; 0 disables")
 	fs.Float64Var(&dst.maxStructure, "max-structure", defaultThresholds.maxStructure,
 		"reject a frame that is both softer than its session and unusually structured above this multiple; 0 disables")
+	fs.Float64Var(&dst.minTransparency, "min-transparency", defaultThresholds.minTransparency,
+		"reject a frame whose contrast is below this fraction of the best of the hour around it; 0 disables")
 	fs.BoolVar(&dst.moffat, "moffat", defaultThresholds.moffat,
 		"fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight)")
 }

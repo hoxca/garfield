@@ -32,14 +32,15 @@ type Reference struct {
 
 // Thresholds are the values to apply, in config-key form.
 type Thresholds struct {
-	MinSNR       float64 `json:"min-snr"`
-	MaxFWHM      float64 `json:"max-fwhm"`
-	MaxEcc       float64 `json:"max-ecc"`
-	MinScore     float64 `json:"min-score"`
-	MinStars     int     `json:"min-stars"`
-	MaxFWHMSigma float64 `json:"max-fwhm-sigma"`
-	MaxHaloRatio float64 `json:"max-halo-ratio"`
-	MaxStructure float64 `json:"max-structure"`
+	MinSNR          float64 `json:"min-snr"`
+	MaxFWHM         float64 `json:"max-fwhm"`
+	MaxEcc          float64 `json:"max-ecc"`
+	MinScore        float64 `json:"min-score"`
+	MinStars        int     `json:"min-stars"`
+	MaxFWHMSigma    float64 `json:"max-fwhm-sigma"`
+	MaxHaloRatio    float64 `json:"max-halo-ratio"`
+	MaxStructure    float64 `json:"max-structure"`
+	MinTransparency float64 `json:"min-transparency"`
 }
 
 // Population describes the frames the suggestion was derived from, so a later
@@ -68,12 +69,16 @@ type Suggestion struct {
 	Heterogeneity float64    `json:"heterogeneity"`
 	// Band is how many robust sigmas around the good stack's median the gates
 	// sit, kept so a later run can describe the suggestion it is applying.
-	Band       float64              `json:"band"`
-	Kept       float64              `json:"kept"`
-	Reference  map[string]Reference `json:"reference"`
-	Thresholds Thresholds           `json:"thresholds"`
-	Sessions   []SessionNote        `json:"sessions,omitempty"`
-	Created    time.Time            `json:"created"`
+	Band      float64              `json:"band"`
+	Kept      float64              `json:"kept"`
+	Reference map[string]Reference `json:"reference"`
+	// TransparencyBase is the star flux the suggestion treated as the best
+	// conditions of the stack: the denominator of the transparency ratio, stored
+	// so a later run can compute the same ratio without its own population.
+	TransparencyBase float64       `json:"transparencyBase,omitempty"`
+	Thresholds       Thresholds    `json:"thresholds"`
+	Sessions         []SessionNote `json:"sessions,omitempty"`
+	Created          time.Time     `json:"created"`
 }
 
 // Store is the open file of suggestions.

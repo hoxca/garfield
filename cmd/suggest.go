@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -80,6 +81,10 @@ type suggestedThresholds struct {
 	// Band is the width of the gates in robust sigmas around the good stack's
 	// median.
 	Band float64
+	// TransparencyBase is the contrast-to-noise that counted as the good stack's
+	// best conditions: the denominator of the transparency ratio a later run
+	// applies.
+	TransparencyBase float64
 }
 
 // suggestForFilter derives a threshold set for one filter from the run's
@@ -164,6 +169,13 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 
 	out.Band = band
 	out.Thresholds = thresholdsFromRefs(refs, band)
+	// The transparency policy is not derived from the stack: the threshold is the
+	// operator's tolerance, and only its denominator comes from the data.
+	out.Thresholds.MinTransparency = opts.minTransparency
+	if snrs := sessionSNRs(results, good); len(snrs) >= transparencyMinSample {
+		sort.Float64s(snrs)
+		out.TransparencyBase = percentileSorted(snrs, transparencyP90)
+	}
 	out.KeptGood = countAccepted(results, good, out.Thresholds)
 	out.KeptCount = countAccepted(results, indices, out.Thresholds)
 	out.Kept = float64(out.KeptCount) / float64(out.Total)
@@ -197,6 +209,18 @@ func thresholdsFromRefs(refs map[string]stackRef, band float64) suggeststore.Thr
 		t.MaxStructure = roundTo((structure.Median+band*structure.Sigma)/structure.P25, 2)
 	}
 	return t
+}
+
+// sessionSNRs collects the good stack's contrast-to-noise values, ready to be
+// quantiled: the denominator of the transparency ratio.
+func sessionSNRs(results []ImageResult, indices []int) []float64 {
+	out := make([]float64, 0, len(indices))
+	for _, i := range indices {
+		if results[i].SNR > 0 {
+			out = append(out, results[i].SNR)
+		}
+	}
+	return out
 }
 
 // measuredFrames returns the indices of a filter's frames that carry a
@@ -364,21 +388,22 @@ func simulateSuggestion(results []ImageResult, s suggestedThresholds, opts analy
 		refs:     map[string]frozenReference{},
 	}
 	gates.byFilter[s.Filter] = qualityThresholds{
-		minSNR:       s.Thresholds.MinSNR,
-		maxFWHM:      s.Thresholds.MaxFWHM,
-		maxEcc:       s.Thresholds.MaxEcc,
-		minScore:     s.Thresholds.MinScore,
-		minStars:     s.Thresholds.MinStars,
-		maxFWHMSigma: s.Thresholds.MaxFWHMSigma,
-		maxHaloRatio: s.Thresholds.MaxHaloRatio,
-		maxStructure: s.Thresholds.MaxStructure,
-		moffat:       opts.moffat,
+		minTransparency: s.Thresholds.MinTransparency,
+		minSNR:          s.Thresholds.MinSNR,
+		maxFWHM:         s.Thresholds.MaxFWHM,
+		maxEcc:          s.Thresholds.MaxEcc,
+		minScore:        s.Thresholds.MinScore,
+		minStars:        s.Thresholds.MinStars,
+		maxFWHMSigma:    s.Thresholds.MaxFWHMSigma,
+		maxHaloRatio:    s.Thresholds.MaxHaloRatio,
+		maxStructure:    s.Thresholds.MaxStructure,
+		moffat:          opts.moffat,
 	}
 	refs := map[string]stackRef{}
 	for name, ref := range s.Reference {
 		refs[name] = stackRef{Median: ref.Median, Sigma: ref.Sigma, P25: ref.P25}
 	}
-	gates.refs[s.Filter] = frozenReference{Refs: refs}
+	gates.refs[s.Filter] = frozenReference{Refs: refs, TransparencyBase: s.TransparencyBase}
 
 	sim := make([]ImageResult, len(results))
 	copy(sim, results)
@@ -433,6 +458,7 @@ func printSuggestion(s suggestedThresholds, current qualityThresholds, now, then
 		{"min-score", current.minScore, s.Thresholds.MinScore},
 		{"max-halo-ratio", current.maxHaloRatio, s.Thresholds.MaxHaloRatio},
 		{"max-structure", current.maxStructure, s.Thresholds.MaxStructure},
+		{"min-transparency", current.minTransparency, s.Thresholds.MinTransparency},
 	}
 	for _, row := range rows {
 		fmt.Printf("  %-14s %10s %10s %*d → %d\n", row.key,
@@ -503,6 +529,7 @@ func renderSuggestionYAML(s suggestedThresholds) string {
 	fmt.Fprintf(&b, "  max-fwhm-sigma: %s\n", formatSuggestion(s.Thresholds.MaxFWHMSigma))
 	fmt.Fprintf(&b, "  max-halo-ratio: %s\n", formatSuggestion(s.Thresholds.MaxHaloRatio))
 	fmt.Fprintf(&b, "  max-structure: %s\n", formatSuggestion(s.Thresholds.MaxStructure))
+	fmt.Fprintf(&b, "  min-transparency: %s\n", formatSuggestion(s.Thresholds.MinTransparency))
 	return b.String()
 }
 
@@ -517,17 +544,18 @@ func suggestionFileName(filter string) string {
 // writeSuggestion stores the suggestion and writes the YAML artifact.
 func writeSuggestion(output string, s suggestedThresholds) error {
 	rec := suggeststore.Suggestion{
-		SuggestVersion: suggeststore.SuggestVersion,
-		MeasureVersion: measureVersion,
-		Filter:         s.Filter,
-		Population:     s.Population,
-		Heterogeneity:  s.Heterogeneity,
-		Band:           s.Band,
-		Kept:           s.Kept,
-		Reference:      s.Reference,
-		Thresholds:     s.Thresholds,
-		Sessions:       s.Sessions,
-		Created:        time.Now().UTC(),
+		SuggestVersion:   suggeststore.SuggestVersion,
+		MeasureVersion:   measureVersion,
+		Filter:           s.Filter,
+		Population:       s.Population,
+		Heterogeneity:    s.Heterogeneity,
+		TransparencyBase: s.TransparencyBase,
+		Band:             s.Band,
+		Kept:             s.Kept,
+		Reference:        s.Reference,
+		Thresholds:       s.Thresholds,
+		Sessions:         s.Sessions,
+		Created:          time.Now().UTC(),
 	}
 
 	store, err := suggeststore.Open(suggestionPath(output))

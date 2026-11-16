@@ -74,6 +74,7 @@ thresholds:
   max-fwhm-sigma: 4.0  # FWHM outliers above the filter's median; 0 disables
   max-halo-ratio: 2.0  # session-relative bright-star halo; 0 disables
   max-structure: 1.12  # session-relative sky structure (bad seeing); 0 disables
+  min-transparency: 0.90  # contrast against the best of the hour; 0 disables
   moffat: true         # Moffat PSF fit (slower, FWHM matches PixInsight); false = Gaussian
 
 concurrency:
@@ -177,6 +178,7 @@ Flags:
       --min-score float            minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float              minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int              minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
+      --min-transparency float     reject a frame whose contrast is below this fraction of the best of the hour around it; 0 disables [config: garfield.yaml] (default 0.9)
       --moffat                     fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml] (default true)
   -o, --output string              output directory for the report and copied rejected frames
       --quiet                      suppress console output
@@ -253,16 +255,16 @@ filtered run writes `<output>/analyse_report_<FILTER>.csv`, so reports for
 different filters can share one output directory:
 
 ```
-filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars
+filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency
 ```
 
 `cached` is `true` on a row whose numbers were read from the measurement cache
 instead of measured in this run. It is the only column a `--cache` run changes.
 
-`decision` holds one of **eight** values, which are **data, not messages** —
+`decision` holds one of **nine** values, which are **data, not messages** —
 `APPROVED`, `REJECTED NO STARS`, `REJECTED ECCENTRICITY`, `REJECTED FWHM`,
-`REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`, `REJECTED STRUCTURE`.
-Match on them exactly.
+`REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`, `REJECTED STRUCTURE`,
+`REJECTED TRANSPARENCY`. Match on them exactly.
 
 `background`, `noise` and `bgStructure` are measurements, not decisions:
 
@@ -303,6 +305,15 @@ filter, and is skipped when the MAD is zero, because the bound would then sit
 exactly on the median. Because the population is every frame passed to the
 command, analyzing a single night and analyzing the whole target can produce
 different bounds.
+
+A frame is `REJECTED TRANSPARENCY` when its image contrast-to-noise is below
+`--min-transparency` of the best of the hour around it. That is the thin-cloud
+signal: cloud dims the stars and flattens the contrast while the sky barely moves,
+and on one night it tracked the observer's own visual labels (13 of 15 cloudy
+frames caught, none of the confirmed-clear ones). The reference is local rather
+than nightly because airmass and moonlight drift over a night faster than cloud
+does; the 90th percentile of the surrounding frames is the benchmark, so a
+uniformly hazy hour is not rejected merely for being worse than a clear one.
 
 A frame is `REJECTED CLOUDS` when `haloRatio > --max-halo-ratio`. It is
 `REJECTED STRUCTURE` only when **three** things hold together: `structRatio`
@@ -585,6 +596,7 @@ Flags:
       --min-score float        minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float          minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int          minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
+      --min-transparency float reject a frame whose contrast is below this fraction of the best of the hour around it; 0 disables [config: garfield.yaml] (default 0.9)
       --moffat                 fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml] (default true)
   -o, --output string          destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
       --quiet                  suppress console output

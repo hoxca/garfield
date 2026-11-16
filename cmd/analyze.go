@@ -152,6 +152,11 @@ type ImageResult struct {
 	// not be made -- too few stars with a measurable aureole -- and the report
 	// says so rather than writing 0 ADU, which would read as a measured calm sky.
 	HaloStars int
+	// Transparency is the frame's image contrast-to-noise divided by the best its
+	// own session reached: 1.0 means the clearest conditions of the night, 0.8 that
+	// the frame is a fifth dimmer. It is the observable behind thin cloud and any
+	// other loss of throughput.
+	Transparency float64
 	// StructRatio is the frame's bgStructure relative to its session. It is
 	// reported and gated separately as bad seeing: a strongly structured sky
 	// produces frames that no amount of stacking repairs.
@@ -182,14 +187,15 @@ type ImageResult struct {
 }
 
 const (
-	decisionApproved  = "APPROVED"
-	decisionNoStars   = "REJECTED NO STARS"
-	decisionEcc       = "REJECTED ECCENTRICITY"
-	decisionFWHM      = "REJECTED FWHM"
-	decisionSNR       = "REJECTED SNR"
-	decisionScoring   = "REJECTED SCORING"
-	decisionClouds    = "REJECTED CLOUDS"
-	decisionStructure = "REJECTED STRUCTURE"
+	decisionApproved     = "APPROVED"
+	decisionNoStars      = "REJECTED NO STARS"
+	decisionEcc          = "REJECTED ECCENTRICITY"
+	decisionFWHM         = "REJECTED FWHM"
+	decisionSNR          = "REJECTED SNR"
+	decisionScoring      = "REJECTED SCORING"
+	decisionClouds       = "REJECTED CLOUDS"
+	decisionTransparency = "REJECTED TRANSPARENCY"
+	decisionStructure    = "REJECTED STRUCTURE"
 )
 
 // Reasons recorded for frames that were rejected without a quality verdict.
@@ -544,7 +550,7 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // every pre-existing column is unchanged for anything already reading this file.
 var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
-	"suggestedDecision", "haloStars"}
+	"suggestedDecision", "haloStars", "transparency"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -583,7 +589,16 @@ func imageResultRow(r ImageResult) []string {
 		strconv.FormatFloat(r.StructRatioStack, 'f', 4, 64),
 		r.SuggestedDecision,
 		strconv.Itoa(r.HaloStars),
+		formatRatio(r.Transparency),
 	}
+}
+
+// formatRatio renders a derived ratio, empty when it was not measured.
+func formatRatio(v float64) string {
+	if v <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(v, 'f', 4, 64)
 }
 
 // formatHalo renders the halo, or an empty field when it could not be measured.
@@ -1275,7 +1290,7 @@ func sessionKeys(results []ImageResult) []string {
 // four measured frames neither percentile is meaningful, so neither test runs
 // and the session is left alone.
 func applySessionRules(results []*ImageResult, q qualityThresholds) {
-	applySessionRulesWith(results, q, 0, 0, 0)
+	applySessionRulesWith(results, q, 0, 0, 0, 0)
 }
 
 // structureSigma is how many robust sigmas above the session's median structure a
@@ -1292,7 +1307,101 @@ func applySessionRules(results []*ImageResult, q qualityThresholds) {
 const (
 	structureSigma     = 4.0
 	structureMinSample = 4
+
+	// transparencyP90 is where the reference sits in the surrounding frames'
+	// distribution of contrast-to-noise: the 90th percentile is the best of those
+	// conditions, not the median, so a hazy hour cannot lower the bar it is judged
+	// against.
+	transparencyP90 = 0.90
+	// transparencyMinSample is the smallest neighbourhood a reference can be taken
+	// from.
+	transparencyMinSample = 8
+	// transparencyWindow is how far either side of a frame the reference looks.
+	//
+	// Not the whole session: conditions drift over a night with airmass, moonlight
+	// and cloud, so a night-wide percentile calls the second half of a clear night
+	// untransparent merely because the first half was better. An hour is longer
+	// than a cloud passage and short enough that the airmass has barely moved.
+	transparencyWindow = 60 * time.Minute
 )
+
+// applyTransparencyRatios fills each frame's Transparency: its contrast-to-noise
+// divided by the 90th percentile of the frames taken within an hour of it, or by
+// the baseline a suggestion pinned.
+func applyTransparencyRatios(results []*ImageResult, frozenBaseline float64) {
+	for _, r := range results {
+		r.Transparency = 0
+	}
+
+	if frozenBaseline > 0 {
+		for _, r := range results {
+			if r.SNR > 0 {
+				r.Transparency = r.SNR / frozenBaseline
+			}
+		}
+		return
+	}
+
+	type stamped struct {
+		r  *ImageResult
+		ts time.Time
+		ok bool
+	}
+	frames := make([]stamped, 0, len(results))
+	var all []float64
+	for _, r := range results {
+		ts, ok := frameTimestamp(r.Filename)
+		frames = append(frames, stamped{r: r, ts: ts, ok: ok})
+		if ok && r.SNR > 0 {
+			all = append(all, r.SNR)
+		}
+	}
+	sort.Slice(frames, func(i, j int) bool {
+		if frames[i].ok != frames[j].ok {
+			return frames[i].ok
+		}
+		return frames[i].ts.Before(frames[j].ts)
+	})
+
+	// A frame with no usable stamp cannot be placed in time, so the whole group
+	// is its neighbourhood -- which is what a run with no timestamps at all gets.
+	windowRef := 0.0
+	if len(all) >= transparencyMinSample {
+		sort.Float64s(all)
+		windowRef = percentileSorted(all, transparencyP90)
+	}
+
+	for i, f := range frames {
+		if f.r.SNR <= 0 {
+			continue
+		}
+		if !f.ok {
+			if windowRef > 0 {
+				f.r.Transparency = f.r.SNR / windowRef
+			}
+			continue
+		}
+
+		var near []float64
+		for j := i; j >= 0 && f.ts.Sub(frames[j].ts) <= transparencyWindow; j-- {
+			if frames[j].ok && frames[j].r.SNR > 0 {
+				near = append(near, frames[j].r.SNR)
+			}
+		}
+		for j := i + 1; j < len(frames) && frames[j].ts.Sub(f.ts) <= transparencyWindow; j++ {
+			if frames[j].r.SNR > 0 {
+				near = append(near, frames[j].r.SNR)
+			}
+		}
+		if len(near) < transparencyMinSample {
+			continue
+		}
+		sort.Float64s(near)
+		if ref := percentileSorted(near, transparencyP90); ref > 0 {
+			f.r.Transparency = f.r.SNR / ref
+		}
+	}
+}
 
 // applySessionRulesWith is the session rule with its baselines supplied.
 //
@@ -1300,7 +1409,7 @@ const (
 // without a suggestion does; a non-zero one is the value a suggestion pinned, so
 // a night is judged against the stack it was analysed with rather than against
 // itself.
-func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBaseline, structBaseline, fwhmBaseline float64) {
+func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBaseline, structBaseline, fwhmBaseline, transparencyBaseline float64) {
 	var halos, structures []float64
 	for _, r := range results {
 		r.HaloRatio = 0
@@ -1356,6 +1465,12 @@ func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBase
 		}
 	}
 
+	// Transparency: the frame's contrast-to-noise against the best of the hour
+	// around it. A night can be uniformly hazy, so the comparison is relative, and
+	// it is local because conditions drift: airmass and moonlight move the contrast
+	// over a night faster than cloud does.
+	applyTransparencyRatios(results, transparencyBaseline)
+
 	// Bad seeing means soft stars. Structure on its own is not evidence: an
 	// extended object, or the scattered light around bright stars, raises it
 	// while the PSF stays as sharp as the night allows. Without this test the
@@ -1375,20 +1490,18 @@ func applySessionRulesWith(results []*ImageResult, q qualityThresholds, haloBase
 		if r.Decision != decisionApproved {
 			continue
 		}
-		if q.maxHaloRatio > 0 && r.HaloRatio > q.maxHaloRatio {
+		switch {
+		case q.maxHaloRatio > 0 && r.HaloRatio > q.maxHaloRatio:
+			// Cloud first: it is the more specific diagnosis, and a cloud dims the
+			// field as a consequence.
 			r.Decision = decisionClouds
-			continue
+		case q.minTransparency > 0 && r.Transparency > 0 && r.Transparency < q.minTransparency:
+			r.Decision = decisionTransparency
+		case q.maxStructure > 0 && r.StructRatio > q.maxStructure &&
+			(structBound <= 0 || r.StructRatio > structBound) &&
+			(fwhmRef <= 0 || r.AvgFWHM > fwhmRef):
+			r.Decision = decisionStructure
 		}
-		if q.maxStructure <= 0 || r.StructRatio <= q.maxStructure {
-			continue
-		}
-		if structBound > 0 && r.StructRatio <= structBound {
-			continue
-		}
-		if fwhmRef > 0 && r.AvgFWHM <= fwhmRef {
-			continue
-		}
-		r.Decision = decisionStructure
 	}
 }
 
@@ -1434,13 +1547,14 @@ const rejectedOutDir = "rejected"
 // invent a folder the first time a value is added. Anything not listed is
 // placed under "other" so a new decision cannot drop frames on the floor.
 var rejectCategories = map[string]string{
-	decisionNoStars:   "no-stars",
-	decisionEcc:       "eccentricity",
-	decisionFWHM:      "fwhm",
-	decisionSNR:       "snr",
-	decisionScoring:   "scoring",
-	decisionClouds:    "clouds",
-	decisionStructure: "structure",
+	decisionNoStars:      "no-stars",
+	decisionEcc:          "eccentricity",
+	decisionFWHM:         "fwhm",
+	decisionSNR:          "snr",
+	decisionScoring:      "scoring",
+	decisionClouds:       "clouds",
+	decisionStructure:    "structure",
+	decisionTransparency: "transparency",
 }
 
 // rejectCategory returns the folder a rejected frame belongs in.

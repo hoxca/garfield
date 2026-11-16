@@ -1047,13 +1047,14 @@ func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measu
 		for k, g := range groups {
 			filter := filterOfSessionKey(k)
 			q := gates.thresholds(filter)
-			var haloRef, structRef, fwhmRef float64
+			var haloRef, structRef, fwhmRef, transparencyRef float64
 			if ref, ok := gates.frozen(filter); ok {
 				haloRef = ref.Refs["halo"].P25
 				structRef = ref.Refs["struct"].P25
 				fwhmRef = ref.Refs["fwhm"].Median
+				transparencyRef = ref.TransparencyBase
 			}
-			applySessionRulesWith(g, q, haloRef, structRef, fwhmRef)
+			applySessionRulesWith(g, q, haloRef, structRef, fwhmRef, transparencyRef)
 		}
 	}
 
@@ -2168,7 +2169,7 @@ var framesCSVHeader = []string{
 	"decision", "error", "background", "noise", "bgStructure",
 	"halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
-	"suggestedDecision", "haloStars",
+	"suggestedDecision", "haloStars", "transparency",
 }
 
 // writeFramesCSV records the per-frame quality metrics that decided the split
