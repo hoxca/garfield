@@ -66,12 +66,17 @@ owns fails the run (a malformed invocation otherwise reports success with zero
 tests). Wall time is ~14 s against ~36 s single-threaded, and `make test-race` drops
 from 6 minutes to 1.5.
 
-The report is one gotestsum run, with the domain in the package label —
-`✓ cmd (prepare-bias) (9.8s)` … `DONE 643 tests in 14s`. The internal packages are
-listed first, then the command domains in the order they finished, so the quick
-ones come before prepare and core the way a live report would have shown them.
-`make test-verbose` switches it to `testdox`, grouping each domain's tests under its
-own header.
+The report **streams**: each domain is formatted on its own and printed the moment
+it finishes, so a failure appears as it happens rather than at the end. The domain
+is in the package label — `✓ cmd (cloud) (1.2s)` first, `✓ cmd (core) (13.5s)` last
+— which is the order the shards actually completed in, and the internal packages
+usually lead because they are the quickest.
+
+`GOTEST_MERGE=1 make test` waits and prints one consolidated report instead, with
+the internal packages first and the command domains in completion order; that is
+the shape to prefer in a CI log, where one summary block greps better than
+interleaved arrivals. `make test-verbose` streams `testdox`, grouping each domain's
+tests under its own header.
 
 ---
 
