@@ -49,12 +49,20 @@ Go 1.23 or later.
 ```sh
 make build          # → bin/garfield
 go build -o bin/garfield .   # equivalent, without version stamping
-make test           # gofmt, golangci-lint, then the test suite
+make test           # gofmt, golangci-lint, then the test suite (sharded, see below)
 ```
 
 `make build` stamps the version from `git describe --tags`, so
 `garfield version` reports something meaningful on a tagged build and `dev`
 otherwise.
+
+`make test` runs the command package's tests as parallel domain shards
+(`scripts/test-cmd-domains.sh`): prepare alone is two thirds of the suite, so one
+binary is slow however many tests it holds. The domains are the name prefixes in
+that script's table, and the last shard takes whatever they did not match, so a new
+test always runs exactly once. A test matching two prefixes would run twice, and
+the script fails rather than doing that. Wall time is ~14 s against ~36 s
+single-threaded, and `make test-race` drops from 6 minutes to 1.5.
 
 ---
 

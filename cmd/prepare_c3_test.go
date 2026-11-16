@@ -20,7 +20,7 @@ import (
 // and prepare_bias_test.go are grouped by pipeline stage, and the tests that
 // justify those patterns belong beside them.
 
-func TestPrepareParsesLightNames(t *testing.T) {
+func TestPrepareCameraParsesC3LightNames(t *testing.T) {
 	// The filename conventions the planner relies on.
 	light := lightName("LBN527", "H", "20260910", "025946", "489", "310")
 	if !frameDateRe.MatchString(light) {
@@ -66,12 +66,12 @@ func TestPrepareParsesLightNames(t *testing.T) {
 	}
 }
 
-// TestFlatFilterReAcceptsOnlyKnownFilters pins the narrowed capture group.
+// TestPrepareCameraC3FlatFilterAcceptsKnown pins the narrowed capture group.
 //
 // The group is a character class spliced in from knownFilters, so the failure
 // mode worth guarding is structural: a non-capturing group, or losing the
 // brackets, matches nothing at all and drops every flat silently.
-func TestFlatFilterReAcceptsOnlyKnownFilters(t *testing.T) {
+func TestPrepareCameraC3FlatFilterAcceptsKnown(t *testing.T) {
 	for _, f := range []string{"L", "R", "G", "B", "S", "H", "O"} {
 		name := fmt.Sprintf("FLAT_%s_41.4s_BIN1_PA310.FIT", f)
 		m := flatFilterRe.FindStringSubmatch(name)
@@ -132,10 +132,10 @@ func TestFlatFilterReAcceptsOnlyKnownFilters(t *testing.T) {
 	}
 }
 
-// TestIndexFlatsWarnsOnUnusableFlats checks the two ways a real flat is
+// TestPrepareCameraIndexFlatsWarnsUnusable checks the two ways a real flat is
 // dropped, both of which used to be silent: an unrecognised filter, and a
 // filter with no position angle.
-func TestIndexFlatsWarnsOnUnusableFlats(t *testing.T) {
+func TestPrepareCameraIndexFlatsWarnsUnusable(t *testing.T) {
 	dir := t.TempDir()
 	usable := flatName("S", "67.02", "20260916", "071758", "808", "310")
 	for _, n := range []string{
@@ -186,10 +186,10 @@ func TestIndexFlatsWarnsOnUnusableFlats(t *testing.T) {
 	}
 }
 
-// TestPrepareFiltersFlatsByAngle is the load-bearing case: Flats/<date> can
+// TestPrepareCameraFiltersFlatsByAngle is the load-bearing case: Flats/<date> can
 // hold frames at several parallactic angles, and only the one matching the
 // session's lights is valid calibration.
-func TestPrepareFiltersFlatsByAngle(t *testing.T) {
+func TestPrepareCameraFiltersFlatsByAngle(t *testing.T) {
 	const target = "SH2-101"
 	root := t.TempDir()
 
@@ -239,7 +239,7 @@ func TestPrepareFiltersFlatsByAngle(t *testing.T) {
 
 // TestPrepareMixedAnglesWarns covers a session whose lights somehow span two
 // parallactic angles, which the acquisition software should prevent.
-// TestPrepareMixedAnglesIsFatal checks that a session holding two angles stops
+// TestPrepareCameraMixedAnglesFatal checks that a session holding two angles stops
 // the run.
 //
 // This used to be a warning that took the lowest angle and carried on, which
@@ -247,7 +247,7 @@ func TestPrepareFiltersFlatsByAngle(t *testing.T) {
 // the report named only one. A target is acquired at a single angle chosen
 // before the run, so a second angle means the instrument was rotated and the
 // data cannot be trusted.
-func TestPrepareMixedAnglesIsFatal(t *testing.T) {
+func TestPrepareCameraMixedAnglesFatal(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 
@@ -290,11 +290,11 @@ func TestPrepareMixedAnglesIsFatal(t *testing.T) {
 	}
 }
 
-// TestPrepareMixedAnglesAcrossSessionsIsFatal covers the case that was
+// TestPrepareCameraMixedAnglesAcrossSessionsFatal covers the case that was
 // silently accepted before any of this: each session internally consistent, but
 // the target rotated between nights. Every session matched its own date's flats,
 // so nothing looked wrong and sessions.csv simply carried two angles.
-func TestPrepareMixedAnglesAcrossSessionsIsFatal(t *testing.T) {
+func TestPrepareCameraMixedAnglesAcrossSessionsFatal(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 
@@ -334,10 +334,10 @@ func TestPrepareMixedAnglesAcrossSessionsIsFatal(t *testing.T) {
 	}
 }
 
-// TestPrepareReportsEveryMixedAngleAtOnce checks the failures batch rather than
+// TestPrepareCameraReportsEveryMixedAngle checks the failures batch rather than
 // stopping at the first, so one run names everything that needs fixing instead
 // of demanding a fix-and-rerun per session.
-func TestPrepareReportsEveryMixedAngleAtOnce(t *testing.T) {
+func TestPrepareCameraReportsEveryMixedAngle(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 
@@ -397,9 +397,9 @@ func TestPrepareReportsEveryMixedAngleAtOnce(t *testing.T) {
 	}
 }
 
-// TestPrepareSingleAngleTargetIsUnaffected guards the other side: a target
+// TestPrepareCameraSingleAngleUnaffected guards the other side: a target
 // acquired at one angle throughout must still plan and copy as before.
-func TestPrepareSingleAngleTargetIsUnaffected(t *testing.T) {
+func TestPrepareCameraSingleAngleUnaffected(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 
@@ -438,10 +438,10 @@ func TestPrepareSingleAngleTargetIsUnaffected(t *testing.T) {
 	}
 }
 
-// TestMixedAnglesAcrossSessions covers the predicate on its own, including the
+// TestPrepareCameraMixedAnglesAcrossSessions covers the predicate on its own, including the
 // cases that must not be mistaken for a rotation: a target with one angle, and
 // sessions carrying no angle at all.
-func TestMixedAnglesAcrossSessions(t *testing.T) {
+func TestPrepareCameraMixedAnglesAcrossSessions(t *testing.T) {
 	tests := []struct {
 		name     string
 		sessions []sessionPlan
@@ -465,10 +465,10 @@ func TestMixedAnglesAcrossSessions(t *testing.T) {
 	}
 }
 
-// TestPlanSessionLeavesAngleUnsetOnMixedAngles pins that the failing session
+// TestPrepareCameraPlanLeavesAngleUnsetOnMixed pins that the failing session
 // carries no position angle. A half-built session with an arbitrary angle
 // recorded is worse than none: it looks like a usable plan.
-func TestPlanSessionLeavesAngleUnsetOnMixedAngles(t *testing.T) {
+func TestPrepareCameraPlanLeavesAngleUnsetOnMixed(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 

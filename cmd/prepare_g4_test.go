@@ -27,8 +27,8 @@ const (
 	g4Dark = "masterDark_900s_-20C_20201024.xisf"
 )
 
-// TestG4PatternsExtractKeys pins the G4 regexes on real names.
-func TestG4PatternsExtractKeys(t *testing.T) {
+// TestPrepareCameraG4PatternsExtractKeys pins the G4 regexes on real names.
+func TestPrepareCameraG4PatternsExtractKeys(t *testing.T) {
 	light := g4LightName("IC1805HA", "H", "900s", "-20C", "20201024", "204428", "998")
 	key, ok := g4Camera.lightDark(light)
 	if !ok {
@@ -86,10 +86,10 @@ func TestG4PatternsExtractKeys(t *testing.T) {
 	}
 }
 
-// TestCameraProfilesAreDisjoint is the property that lets both cameras share one
+// TestPrepareCameraProfilesAreDisjoint is the property that lets both cameras share one
 // acquisition tree: a name belonging to one camera must not parse as the other,
 // so the inactive profile leaves it alone instead of mis-indexing it.
-func TestCameraProfilesAreDisjoint(t *testing.T) {
+func TestPrepareCameraProfilesAreDisjoint(t *testing.T) {
 	c3Light := lightName("LBN527", "S", "20260910", "220000", "000", "310")
 	c3Flat := flatName("S", "67.02", "20260910", "071758", "808", "310")
 	c3Dark := "masterDark_300s_GA0_-10C_20251118.xisf"
@@ -156,9 +156,9 @@ func TestCameraProfilesAreDisjoint(t *testing.T) {
 	})
 }
 
-// TestG4PlanHasNoAngleAndMatchesFlatsByFilter is the core of the G4 behaviour:
+// TestPrepareCameraG4PlanNoAngleMatchesFlats is the core of the G4 behaviour:
 // no position angle is recorded, and flats match on filter alone.
-func TestG4PlanHasNoAngleAndMatchesFlatsByFilter(t *testing.T) {
+func TestPrepareCameraG4PlanNoAngleMatchesFlats(t *testing.T) {
 	const target = "IC1805"
 	root := t.TempDir()
 
@@ -209,10 +209,10 @@ func TestG4PlanHasNoAngleAndMatchesFlatsByFilter(t *testing.T) {
 	}
 }
 
-// TestG4IgnoresC3FlatsInTheSameDirectory covers the shared Flats tree. A C3 flat
+// TestPrepareCameraG4IgnoresC3Flats covers the shared Flats tree. A C3 flat
 // shot the same night must not be indexed under the angle-less key the G4 uses,
 // or it would be copied into a G4 session.
-func TestG4IgnoresC3FlatsInTheSameDirectory(t *testing.T) {
+func TestPrepareCameraG4IgnoresC3Flats(t *testing.T) {
 	const target = "IC1805"
 	root := t.TempDir()
 
@@ -254,9 +254,9 @@ func TestG4IgnoresC3FlatsInTheSameDirectory(t *testing.T) {
 	}
 }
 
-// TestG4PrepareCopiesMastersKeyedOnSetpoint drives a whole run: bias keyed on
+// TestPrepareCameraG4CopiesMastersOnSetpoint drives a whole run: bias keyed on
 // the setpoint, dark on exposure plus setpoint, neither on gain.
-func TestG4PrepareCopiesMastersKeyedOnSetpoint(t *testing.T) {
+func TestPrepareCameraG4CopiesMastersOnSetpoint(t *testing.T) {
 	const target = "IC1805"
 	root := t.TempDir()
 
@@ -309,9 +309,9 @@ func TestG4PrepareCopiesMastersKeyedOnSetpoint(t *testing.T) {
 	}
 }
 
-// TestG4MixedSetpointsDrawTwoMasters is the reason the setpoint is in the G4
+// TestPrepareCameraG4MixedSetpointsTwoMasters is the reason the setpoint is in the G4
 // bias key as well as the dark key.
-func TestG4MixedSetpointsDrawTwoMasters(t *testing.T) {
+func TestPrepareCameraG4MixedSetpointsTwoMasters(t *testing.T) {
 	const target = "IC1805"
 	root := t.TempDir()
 
@@ -357,9 +357,9 @@ func TestG4MixedSetpointsDrawTwoMasters(t *testing.T) {
 	}
 }
 
-// TestG4DoesNotFailOnMissingAngle pins that the C3 mixed-angle rules do not
+// TestPrepareCameraG4NoAngleIsFine pins that the C3 mixed-angle rules do not
 // reach a camera that has no rotator.
-func TestG4DoesNotFailOnMissingAngle(t *testing.T) {
+func TestPrepareCameraG4NoAngleIsFine(t *testing.T) {
 	const target = "IC1805"
 	root := t.TempDir()
 
@@ -384,9 +384,9 @@ func TestG4DoesNotFailOnMissingAngle(t *testing.T) {
 	}
 }
 
-// TestCameraFlagValidation checks an unknown camera is refused rather than
+// TestPrepareCameraFlagValidation checks an unknown camera is refused rather than
 // defaulted: the matching rules are not interchangeable.
-func TestCameraFlagValidation(t *testing.T) {
+func TestPrepareCameraFlagValidation(t *testing.T) {
 	if _, err := cameraProfileFor("c3"); err != nil {
 		t.Errorf("c3 rejected: %v", err)
 	}
@@ -400,10 +400,10 @@ func TestCameraFlagValidation(t *testing.T) {
 	}
 }
 
-// TestCameraMismatchWarning covers the one-line diagnosis when the switch does
+// TestPrepareCameraMismatchWarning covers the one-line diagnosis when the switch does
 // not match the data. Without it the run still fails, but only with a pile of
 // per-filter and per-master warnings that never name the cause.
-func TestCameraMismatchWarning(t *testing.T) {
+func TestPrepareCameraMismatchWarning(t *testing.T) {
 	c3Light := lightName("LBN527", "S", "20260910", "220000", "000", "310")
 	g4Light := g4LightName("IC1805HA", "H", "900s", "-20C", "20201024", "204428", "998")
 
@@ -431,9 +431,9 @@ func TestCameraMismatchWarning(t *testing.T) {
 	}
 }
 
-// TestG4FlatFilterReStillRejectsBadFilters keeps the G4 pattern honest: the
+// TestPrepareCameraG4FlatFilterRejectsBad keeps the G4 pattern honest: the
 // prefix is optional-looking but the filter set is not.
-func TestG4FlatFilterReStillRejectsBadFilters(t *testing.T) {
+func TestPrepareCameraG4FlatFilterRejectsBad(t *testing.T) {
 	for _, name := range []string{
 		"IC1805_FLAT_Ha_BIN1_-20C_001_20201024_071758_808_W.FIT",
 		"IC1805_FLAT_OIII_BIN1_-20C_001_20201024_071758_808_W.FIT",
@@ -450,9 +450,9 @@ func TestG4FlatFilterReStillRejectsBadFilters(t *testing.T) {
 	}
 }
 
-// TestG4MastersInFlatDarksDirectory pins the layout difference: a CCD writes no
+// TestPrepareCameraG4MastersInFlatDarksDir pins the layout difference: a CCD writes no
 // per-gain subdirectory, so masters sit directly in Darks/Masters.
-func TestG4MastersInFlatDarksDirectory(t *testing.T) {
+func TestPrepareCameraG4MastersInFlatDarksDir(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, darksDir, darksMastersDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -476,9 +476,9 @@ func TestG4MastersInFlatDarksDirectory(t *testing.T) {
 	}
 }
 
-// TestAnalyzeParsesG4Names pins that analyze needs no camera switch: its
+// TestPrepareCameraAnalyzeParsesG4Names pins that analyze needs no camera switch: its
 // positional parser happens to be correct for both G4 lights and G4 flats.
-func TestAnalyzeParsesG4Names(t *testing.T) {
+func TestPrepareCameraAnalyzeParsesG4Names(t *testing.T) {
 	light := g4LightName("IC1805HA", "H", "900s", "-20C", "20201024", "204428", "998")
 	filter, date := parseFilename(light)
 	if filter != "H" || date != "2020-10-24" {
@@ -496,10 +496,10 @@ func TestAnalyzeParsesG4Names(t *testing.T) {
 	}
 }
 
-// TestCameraIsAConfigKey checks the switch is drivable from the config file.
+// TestPrepareCameraIsAConfigKey checks the switch is drivable from the config file.
 // knownConfigKeys walks the command's flags, so a new prepare flag must appear
 // as a known key rather than being reported as an unknown one.
-func TestCameraIsAConfigKey(t *testing.T) {
+func TestPrepareCameraIsAConfigKey(t *testing.T) {
 	if !knownConfigKeys()["prepare.camera"] {
 		t.Error("prepare.camera is not a known config key")
 	}

@@ -41,9 +41,9 @@ func darkOutDir(out, target string) string {
 	return filepath.Join(sessionOutDir(filepath.Join(out, target), ""), darksOutDir)
 }
 
-// TestPrepareCopiesBothDarksForMixedExposureSession is the core case: one
+// TestPrepareDarkCopiesBothForMixedExposure is the core case: one
 // session needing two masters, keyed on gain and exposure together.
-func TestPrepareCopiesBothDarksForMixedExposureSession(t *testing.T) {
+func TestPrepareDarkCopiesBothForMixedExposure(t *testing.T) {
 	const target = "SH2-54"
 	root := t.TempDir()
 	darkFixture(target).build(t, root)
@@ -79,10 +79,10 @@ func TestPrepareCopiesBothDarksForMixedExposureSession(t *testing.T) {
 	}
 }
 
-// TestIndexDarkMastersKeysOnFilenameNotDirectory is the silent-failure case. The
+// TestPrepareDarkIndexKeysOnFilename is the silent-failure case. The
 // acquisition holds these in "G2750/" while the files inside are named GA2750,
 // so a key taken from the directory would match nothing and copy nothing.
-func TestIndexDarkMastersKeysOnFilenameNotDirectory(t *testing.T) {
+func TestPrepareDarkIndexKeysOnFilename(t *testing.T) {
 	dir := t.TempDir()
 
 	for gain, sub := range map[string]string{"GA0": "G0", "GA2750": "G2750"} {
@@ -123,9 +123,9 @@ func TestIndexDarkMastersKeysOnFilenameNotDirectory(t *testing.T) {
 	}
 }
 
-// TestIndexDarkMastersPrefersTheLatestDate pins the collision rule: the master
+// TestPrepareDarkIndexPrefersLatestDate pins the collision rule: the master
 // carrying the later date wins, because it supersedes rather than competes.
-func TestIndexDarkMastersPrefersTheLatestDate(t *testing.T) {
+func TestPrepareDarkIndexPrefersLatestDate(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "G0")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
@@ -166,13 +166,13 @@ func TestIndexDarkMastersPrefersTheLatestDate(t *testing.T) {
 	}
 }
 
-// TestIndexDarkMastersReportsAnUndecidedTie covers the branch where the date
+// TestPrepareDarkIndexReportsUndecidedTie covers the branch where the date
 // does not choose between two masters. The names carry one file per combination
 // per date, so this needs two files differing only outside the key to reach.
 //
 // The warning must not present a winner: nothing in the pair ranks them, so the
 // one kept is merely the first in sorted order.
-func TestIndexDarkMastersReportsAnUndecidedTie(t *testing.T) {
+func TestPrepareDarkIndexReportsUndecidedTie(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "G0")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
@@ -204,7 +204,7 @@ func TestIndexDarkMastersReportsAnUndecidedTie(t *testing.T) {
 	}
 }
 
-// TestIndexDarkMastersRejectsNonMasters checks the raw calibration frames and
+// TestPrepareDarkIndexRejectsNonMasters checks the raw calibration frames and
 // the syncthing partials stay out. Darks/-10C/G0/30s/ holds ~100 .FIT files
 // that are master inputs, not masters.
 //
@@ -212,7 +212,7 @@ func TestIndexDarkMastersReportsAnUndecidedTie(t *testing.T) {
 // not merely surviving on the strength of the other guard: a .tmp file is
 // already excluded by the extension check, and an AppleDouble sidecar already
 // passes it, so mixing them hides both.
-func TestIndexDarkMastersRejectsNonMasters(t *testing.T) {
+func TestPrepareDarkIndexRejectsNonMasters(t *testing.T) {
 	tests := []struct {
 		name  string
 		files []string
@@ -313,10 +313,10 @@ func TestIndexDarkMastersRejectsNonMasters(t *testing.T) {
 	})
 }
 
-// TestPrepareDarksOnlyForApprovedFrames is the rule that separates darks from
+// TestPrepareDarkOnlyForApprovedFrames is the rule that separates darks from
 // the biases: a dark is wanted only for frames that reach lights/. A frame that
 // cannot be read is rejected, which is how a single frame is isolated here.
-func TestPrepareDarksOnlyForApprovedFrames(t *testing.T) {
+func TestPrepareDarkOnlyForApprovedFrames(t *testing.T) {
 	t.Run("a rejected frame does not drag its dark along", func(t *testing.T) {
 		const target = "M51"
 		root := t.TempDir()
@@ -380,9 +380,9 @@ func TestPrepareDarksOnlyForApprovedFrames(t *testing.T) {
 	})
 }
 
-// TestPrepareDarksSharedAcrossSessions checks N nights still yield one file per
+// TestPrepareDarkSharedAcrossSessions checks N nights still yield one file per
 // combination. For LBN527 across 20 sessions that is 467 MB rather than 9.3 GB.
-func TestPrepareDarksSharedAcrossSessions(t *testing.T) {
+func TestPrepareDarkSharedAcrossSessions(t *testing.T) {
 	const target = "M31"
 	root := t.TempDir()
 
@@ -424,9 +424,9 @@ func TestPrepareDarksSharedAcrossSessions(t *testing.T) {
 	}
 }
 
-// TestPrepareWarnsOnMissingDark checks a combination with no master is reported
+// TestPrepareDarkWarnsOnMissing checks a combination with no master is reported
 // against the sessions it affects and the run still succeeds.
-func TestPrepareWarnsOnMissingDark(t *testing.T) {
+func TestPrepareDarkWarnsOnMissing(t *testing.T) {
 	const target = "NGC7000"
 	root := t.TempDir()
 
@@ -456,9 +456,9 @@ func TestPrepareWarnsOnMissingDark(t *testing.T) {
 	}
 }
 
-// TestPrepareWithoutDarksMastersIsNotAnError checks a target with no Darks/
+// TestPrepareDarkMastersAreOptional checks a target with no Darks/
 // directory prepares normally.
-func TestPrepareWithoutDarksMastersIsNotAnError(t *testing.T) {
+func TestPrepareDarkMastersAreOptional(t *testing.T) {
 	const target = "WR134"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root) // no darks written
@@ -475,11 +475,11 @@ func TestPrepareWithoutDarksMastersIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestPrepareReportsCopiedDarks checks the console line names the combinations
+// TestPrepareDarkReportsCopied checks the console line names the combinations
 // it actually copied. When a master is missing the copied and wanted sets
 // differ, and a line reporting the wrong one would claim a copy that never
 // happened.
-func TestPrepareReportsCopiedDarks(t *testing.T) {
+func TestPrepareDarkReportsCopied(t *testing.T) {
 	const target = "M51"
 	root := t.TempDir()
 	darkFixture(target).build(t, root)
@@ -511,8 +511,8 @@ func TestPrepareReportsCopiedDarks(t *testing.T) {
 	}
 }
 
-// TestPrepareDarksDryRunTouchesNothing checks dry-run reports without copying.
-func TestPrepareDarksDryRunTouchesNothing(t *testing.T) {
+// TestPrepareDarkDryRunTouchesNothing checks dry-run reports without copying.
+func TestPrepareDarkDryRunTouchesNothing(t *testing.T) {
 	const target = "M87-1"
 	root := t.TempDir()
 	darkFixture(target).build(t, root)
@@ -528,8 +528,8 @@ func TestPrepareDarksDryRunTouchesNothing(t *testing.T) {
 	}
 }
 
-// TestPrepareDarksSkipExistingIsIdempotent checks a second run does not recopy.
-func TestPrepareDarksSkipExistingIsIdempotent(t *testing.T) {
+// TestPrepareDarkSkipExistingIsIdempotent checks a second run does not recopy.
+func TestPrepareDarkSkipExistingIsIdempotent(t *testing.T) {
 	const target = "IC4090"
 	root := t.TempDir()
 	darkFixture(target).build(t, root)
@@ -548,12 +548,12 @@ func TestPrepareDarksSkipExistingIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestFixtureLightNamesAreParseable guards the filename builders themselves.
+// TestPrepareFlatsFixtureLightNamesParseable guards the filename builders themselves.
 // A doubled suffix once produced "300ss_BIN1_", which every extraction silently
 // declined to match -- so the fixtures built frames no master dark could ever be
 // found for, and the tests failed for the wrong reason. Nothing caught it
 // because the tests that pinned the patterns used real filenames instead.
-func TestFixtureLightNamesAreParseable(t *testing.T) {
+func TestPrepareFlatsFixtureLightNamesParseable(t *testing.T) {
 	const target = "M31"
 	for _, tc := range []struct {
 		name string
@@ -581,9 +581,9 @@ func TestFixtureLightNamesAreParseable(t *testing.T) {
 	}
 }
 
-// TestDarkKeyString pins the rendering, which is what the console line and the
+// TestPrepareDarkKeyString pins the rendering, which is what the console line and the
 // sessions.csv column both use.
-func TestDarkKeyString(t *testing.T) {
+func TestPrepareDarkKeyString(t *testing.T) {
 	tests := map[darkKey]string{
 		{gain: "GA0", exposure: 30, temp: "-10C"}:     "GA0/30s/-10C",
 		{gain: "GA0", exposure: 300, temp: "-10C"}:    "GA0/300s/-10C",
@@ -600,9 +600,9 @@ func TestDarkKeyString(t *testing.T) {
 	}
 }
 
-// TestLightDarkKeyRe pins the extraction on real acquisition filename shapes,
+// TestPrepareDarkLightKeyRe pins the extraction on real acquisition filename shapes,
 // including the exposure values that appear across the whole Lights tree.
-func TestLightDarkKeyRe(t *testing.T) {
+func TestPrepareDarkLightKeyRe(t *testing.T) {
 	tests := []struct {
 		name string
 		gain string
@@ -644,13 +644,13 @@ func TestLightDarkKeyRe(t *testing.T) {
 	}
 }
 
-// TestNormaliseTempCollapsesSignedZero pins the one normalisation the key
+// TestPrepareDarkNormaliseTempSignedZero pins the one normalisation the key
 // applies. "-0C" and "0C" are the same temperature, so treating them as two keys
 // would leave a light unable to find a dark that is sitting right there.
 //
 // Only zero collapses. "-10C" and "10C" are different temperatures and must stay
 // apart -- collapsing them would substitute a dark shot twenty degrees warm.
-func TestNormaliseTempCollapsesSignedZero(t *testing.T) {
+func TestPrepareDarkNormaliseTempSignedZero(t *testing.T) {
 	tests := map[string]string{
 		"-0C":  "0C",
 		"0C":   "0C",
@@ -666,10 +666,10 @@ func TestNormaliseTempCollapsesSignedZero(t *testing.T) {
 	}
 }
 
-// TestDarkKeysMatchAcrossSignedZero is the case the normalisation exists for: a
+// TestPrepareDarkKeysMatchAcrossSignedZero is the case the normalisation exists for: a
 // light at "-0C" and a dark named "0C" must be one key, or the run reports a
 // missing master that is present on disk.
-func TestDarkKeysMatchAcrossSignedZero(t *testing.T) {
+func TestPrepareDarkKeysMatchAcrossSignedZero(t *testing.T) {
 	const (
 		negZero = "LBN527_LIGHT_B_300s_BIN1_-0C_GA0_20260910_220000_000_PA310_E.FIT"
 		plain   = "masterDark_300s_GA0_0C_20251118.xisf"
@@ -689,8 +689,8 @@ func TestDarkKeysMatchAcrossSignedZero(t *testing.T) {
 	}
 }
 
-// TestDarkComboRe pins the master-side pattern on the real filenames.
-func TestDarkComboRe(t *testing.T) {
+// TestPrepareDarkComboRe pins the master-side pattern on the real filenames.
+func TestPrepareDarkComboRe(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		gain string
@@ -721,10 +721,10 @@ func TestDarkComboRe(t *testing.T) {
 	}
 }
 
-// TestDarkComboReGroupOrderDiffersFromLight pins the asymmetry the previous test
+// TestPrepareDarkComboReGroupOrder pins the asymmetry the previous test
 // cannot catch on its own: the two patterns use the same three tokens in opposite
 // orders, so the same index means different things on each side.
-func TestDarkComboReGroupOrderDiffersFromLight(t *testing.T) {
+func TestPrepareDarkComboReGroupOrder(t *testing.T) {
 	const light = "LBN527_LIGHT_B_300s_BIN1_-10C_GA0_20260910_220000_000_PA310_E.FIT"
 	const dark = "masterDark_300s_GA0_-10C_20251118.xisf"
 
@@ -746,11 +746,11 @@ func TestDarkComboReGroupOrderDiffersFromLight(t *testing.T) {
 	}
 }
 
-// TestPrepareMixedTemperatureTargetNeedsTwoDarks is the reason the sensor
+// TestPrepareDarkMixedTemperatureNeedsTwo is the reason the sensor
 // temperature setpoint is in the key at all. One target, two nights, two
 // setpoints -- a season at a remote site can straddle a change of cooling. Each
 // night must draw its own dark.
-func TestPrepareMixedTemperatureTargetNeedsTwoDarks(t *testing.T) {
+func TestPrepareDarkMixedTemperatureNeedsTwo(t *testing.T) {
 	const target = "M31"
 	root := t.TempDir()
 
@@ -797,11 +797,11 @@ func TestPrepareMixedTemperatureTargetNeedsTwoDarks(t *testing.T) {
 	}
 }
 
-// TestPrepareDoesNotBorrowADarkAtTheWrongTemperature is the silent-failure case
+// TestPrepareDarkDoesNotBorrowWrongTemperature is the silent-failure case
 // the sensor temperature setpoint guards. A -10C light with only a 0C dark on
 // hand must report the gap rather than quietly calibrate with the
 // wrong-temperature master.
-func TestPrepareDoesNotBorrowADarkAtTheWrongTemperature(t *testing.T) {
+func TestPrepareDarkDoesNotBorrowWrongTemperature(t *testing.T) {
 	const target = "NGC7000"
 	root := t.TempDir()
 
@@ -847,12 +847,12 @@ func TestPrepareDoesNotBorrowADarkAtTheWrongTemperature(t *testing.T) {
 	}
 }
 
-// TestFlatsAreNotFilteredByTemperature pins the other half of the rule. A flat
+// TestPrepareFlatsAreNotFilteredByTemperature pins the other half of the rule. A flat
 // is a shuttered frame of sky: its dark current is negligible and the setpoint
 // does not change what it corrects, so a flat is matched on filter and angle
 // only. Requiring the temperatures to agree would reject good flats for no
 // physical reason.
-func TestFlatsAreNotFilteredByTemperature(t *testing.T) {
+func TestPrepareFlatsAreNotFilteredByTemperature(t *testing.T) {
 	root := t.TempDir()
 	// The session's lights are at -10C; the only flats are at 0C.
 	buildFlatDirs(t, root, map[string][]string{

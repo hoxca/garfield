@@ -70,12 +70,12 @@ func TestTransparencyIsRelativeToTheHour(t *testing.T) {
 	}
 }
 
-// TestSuggestionDoesNotFreezeTheTransparencyReference is the regression test for
+// TestTransparencyReferenceIsNotFrozen is the regression test for
 // the suggestion table that read "min-transparency 0.9 → 0.9, rejects 6 → 33": a
 // suggestion used to carry one denominator for the whole stack, which rejected
 // every night taken lower in the sky. The threshold travels; the neighbourhood
 // does not.
-func TestSuggestionDoesNotFreezeTheTransparencyReference(t *testing.T) {
+func TestTransparencyReferenceIsNotFrozen(t *testing.T) {
 	high := exhaust(12, 0, 20.0)
 	for _, r := range high {
 		r.Airmass, r.StarCount, r.DetectedStars, r.Filter = 1.05, 400, 400, "G"

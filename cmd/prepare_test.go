@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestPrepareSessionsAndFilterDirs(t *testing.T) {
+func TestPrepareSessionSessionsAndFilterDirs(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -50,13 +50,13 @@ func TestPrepareSessionsAndFilterDirs(t *testing.T) {
 	}
 }
 
-// TestPrepareSessionsLiveUnderSessionsDir pins the target layout. Approved data
+// TestPrepareSessionLiveUnderSessionsDir pins the target layout. Approved data
 // sits under <target>/Sessions/Session_NN/ while rejects stay at the target
 // root under <target>/rejected/Session_NN/, so no session directory may appear
 // directly in the target root. The other layout tests only assert that session
 // directories exist, not where, so this is the guard against the wrapper
 // silently disappearing again.
-func TestPrepareSessionsLiveUnderSessionsDir(t *testing.T) {
+func TestPrepareSessionLiveUnderSessionsDir(t *testing.T) {
 	const target = "NGC7000"
 	root := t.TempDir()
 
@@ -135,7 +135,7 @@ func TestPrepareSessionsLiveUnderSessionsDir(t *testing.T) {
 	}
 }
 
-func TestPrepareCopiesFlatsIntoSession(t *testing.T) {
+func TestPrepareFlatsCopiedIntoSession(t *testing.T) {
 	const target = "M51"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -151,7 +151,7 @@ func TestPrepareCopiesFlatsIntoSession(t *testing.T) {
 		t.Fatalf("read flats dir: %v", err)
 	}
 	// The default --flat-count is 0, so the session keeps only the flat its own
-	// date held. Borrowing is opt-in; TestPrepareBorrowsFlatsAndCopiesThem
+	// date held. Borrowing is opt-in; TestPrepareFlatsBorrowedCopied
 	// covers the other case.
 	if len(files) != 1 {
 		t.Fatalf("got %d flats, want 1 (the session's own date only)", len(files))
@@ -175,9 +175,9 @@ func TestPrepareCopiesFlatsIntoSession(t *testing.T) {
 	}
 }
 
-// TestPrepareSkipsFlatsWithoutLights covers a night where the operator took
+// TestPrepareFlatsSkippedWithoutLights covers a night where the operator took
 // flats for filters that were never imaged.
-func TestPrepareSkipsFlatsWithoutLights(t *testing.T) {
+func TestPrepareFlatsSkippedWithoutLights(t *testing.T) {
 	const target = "NGC7822"
 	root := t.TempDir()
 
@@ -220,11 +220,11 @@ func TestPrepareSkipsFlatsWithoutLights(t *testing.T) {
 	}
 }
 
-// TestPrepareUsesSessionDateForFlats is the subtlety that makes the tool work.
+// TestPrepareFlatsUseSessionDate is the subtlety that makes the tool work.
 // Sessions run past midnight, so the date inside a light filename routinely
 // differs from the directory naming the session. Flats must be matched on the
 // directory date.
-func TestPrepareUsesSessionDateForFlats(t *testing.T) {
+func TestPrepareFlatsUseSessionDate(t *testing.T) {
 	const target = "IC63"
 	root := t.TempDir()
 
@@ -272,9 +272,9 @@ func TestPrepareUsesSessionDateForFlats(t *testing.T) {
 	}
 }
 
-// TestPrepareWarnsOnMissingFlats covers a night with lights but no calibration.
+// TestPrepareFlatsWarnOnMissing covers a night with lights but no calibration.
 // The session is still produced; the gap is reported rather than fatal.
-func TestPrepareWarnsOnMissingFlats(t *testing.T) {
+func TestPrepareFlatsWarnOnMissing(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 
@@ -352,10 +352,10 @@ func TestPrepareDryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestPrepareConsoleShowsCloudThresholds checks the quality banner records the
+// TestPrepareRoutingConsoleShowsThresholds checks the quality banner records the
 // cloud thresholds. prepare applies the same rule as analyze, so a log of a
 // prepare run has to say which values it used.
-func TestPrepareConsoleShowsCloudThresholds(t *testing.T) {
+func TestPrepareRoutingConsoleShowsThresholds(t *testing.T) {
 	const target = "NGC2237-1"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -470,7 +470,7 @@ func TestPrepareSkipExistingIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestPrepareIgnoresDotFiles(t *testing.T) {
+func TestPrepareSessionIgnoresDotFiles(t *testing.T) {
 	const target = "LDN1527"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -509,7 +509,7 @@ func TestPrepareIgnoresDotFiles(t *testing.T) {
 	}
 }
 
-func TestPrepareOnlyAcceptsDateDirs(t *testing.T) {
+func TestPrepareSessionOnlyAcceptsDateDirs(t *testing.T) {
 	const target = "M13"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -548,7 +548,7 @@ func TestPrepareOnlyAcceptsDateDirs(t *testing.T) {
 	}
 }
 
-func TestPrepareErrors(t *testing.T) {
+func TestPrepareSessionErrors(t *testing.T) {
 	t.Run("missing target", func(t *testing.T) {
 		root := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(root, lightsDir), 0o755); err != nil {
@@ -625,7 +625,7 @@ func TestPrepareErrors(t *testing.T) {
 	})
 }
 
-func TestPrepareSessionsCSV(t *testing.T) {
+func TestPrepareReportsSessionsCSV(t *testing.T) {
 	const target = "IC4090"
 	root := t.TempDir()
 
@@ -715,7 +715,7 @@ func TestPrepareSessionsCSV(t *testing.T) {
 	}
 }
 
-func TestPrepareMultipleFiltersPerSession(t *testing.T) {
+func TestPrepareSessionMultipleFilters(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 
@@ -762,7 +762,7 @@ func TestPrepareMultipleFiltersPerSession(t *testing.T) {
 	}
 }
 
-func TestPrepareMissingFlatsRoot(t *testing.T) {
+func TestPrepareFlatsMissingRoot(t *testing.T) {
 	const target = "SH2-54"
 	root := t.TempDir()
 
@@ -850,10 +850,10 @@ func TestPrepareSessionLayoutIsSymmetric(t *testing.T) {
 	}
 }
 
-// TestPrepareRoutesByDecision is the core of the quality filtering: approved
+// TestPrepareRoutingRoutesByDecision is the core of the quality filtering: approved
 // frames go into the session, everything else into the target-level rejected
 // tree.
-func TestPrepareRoutesByDecision(t *testing.T) {
+func TestPrepareRoutingRoutesByDecision(t *testing.T) {
 	const target = "SH2-101"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -878,9 +878,9 @@ func TestPrepareRoutesByDecision(t *testing.T) {
 	}
 }
 
-// TestPrepareRejectsUnusableFrames drives the rejection path with thresholds no
+// TestPrepareRoutingRejectsUnusableFrames drives the rejection path with thresholds no
 // frame can satisfy, and checks the frames are quarantined rather than dropped.
-func TestPrepareRejectsUnusableFrames(t *testing.T) {
+func TestPrepareRoutingRejectsUnusableFrames(t *testing.T) {
 	const target = "WR134"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -923,9 +923,9 @@ func TestPrepareRejectsUnusableFrames(t *testing.T) {
 	}
 }
 
-// TestPrepareThresholdsRouteFrames checks each threshold can move a frame
+// TestPrepareRoutingThresholdsRouteFrames checks each threshold can move a frame
 // between the two trees.
-func TestPrepareThresholdsRouteFrames(t *testing.T) {
+func TestPrepareRoutingThresholdsRouteFrames(t *testing.T) {
 	const target = "IC2087"
 
 	tests := []struct {
@@ -970,9 +970,9 @@ func TestPrepareThresholdsRouteFrames(t *testing.T) {
 	}
 }
 
-// TestPrepareUnreadableFrameIsRejected checks a frame that cannot be analysed is
+// TestPrepareRoutingUnreadableFrameRejected checks a frame that cannot be analysed is
 // quarantined rather than silently promoted into lights/.
-func TestPrepareUnreadableFrameIsRejected(t *testing.T) {
+func TestPrepareRoutingUnreadableFrameRejected(t *testing.T) {
 	const target = "LDN1527"
 	root := t.TempDir()
 
@@ -1022,10 +1022,10 @@ func TestPrepareUnreadableFrameIsRejected(t *testing.T) {
 	}
 }
 
-// TestDominantRejectReasonUsesEnglishTokens pins the labels used when a frame
+// TestPrepareRoutingDominantRejectReasonTokens pins the labels used when a frame
 // has no quality decision. They are console-only, but the operator reads them,
 // and a non-English token would be the odd one out among the decision values.
-func TestDominantRejectReasonUsesEnglishTokens(t *testing.T) {
+func TestPrepareRoutingDominantRejectReasonTokens(t *testing.T) {
 	s := sessionPlan{rejectReasons: map[string]int{reasonError: 2, reasonUnknown: 1}}
 	if got, want := s.dominantRejectReason(), "ERROR (2)"; got != want {
 		t.Errorf("dominantRejectReason() = %q, want %q", got, want)
@@ -1037,9 +1037,9 @@ func TestDominantRejectReasonUsesEnglishTokens(t *testing.T) {
 	}
 }
 
-// TestPrepareRejectedTreeIsTargetScoped pins the layout: rejected frames live
+// TestPrepareRoutingRejectedTreeIsTargetScoped pins the layout: rejected frames live
 // under <target>/rejected/<session>/<filter>, never inside a session.
-func TestPrepareRejectedTreeIsTargetScoped(t *testing.T) {
+func TestPrepareRoutingRejectedTreeIsTargetScoped(t *testing.T) {
 	const target = "M51"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -1085,9 +1085,9 @@ func TestPrepareRejectedTreeIsTargetScoped(t *testing.T) {
 	}
 }
 
-// TestWriteFramesCSV covers the per-frame metrics report: one row per analysed
+// TestPrepareReportsWriteFramesCSV covers the per-frame metrics report: one row per analysed
 // frame, approved and rejected alike.
-func TestWriteFramesCSV(t *testing.T) {
+func TestPrepareReportsWriteFramesCSV(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -1159,9 +1159,9 @@ func TestWriteFramesCSV(t *testing.T) {
 	}
 }
 
-// TestWriteFramesCSVIncludesApprovedAndRejected checks both outcomes are
+// TestPrepareReportsFramesCSVIncludesAll checks both outcomes are
 // recorded, since the point of the file is diagnosing rejections.
-func TestWriteFramesCSVIncludesApprovedAndRejected(t *testing.T) {
+func TestPrepareReportsFramesCSVIncludesAll(t *testing.T) {
 	const target = "M51"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -1184,9 +1184,9 @@ func TestWriteFramesCSVIncludesApprovedAndRejected(t *testing.T) {
 	}
 }
 
-// TestFramesCSVUsesSessionDateNotFrameDate covers the midnight rollover: the
+// TestPrepareReportsFramesCSVSessionDate covers the midnight rollover: the
 // session column carries the directory date while the filename keeps its own.
-func TestFramesCSVUsesSessionDateNotFrameDate(t *testing.T) {
+func TestPrepareReportsFramesCSVSessionDate(t *testing.T) {
 	const target = "IC63"
 	root := t.TempDir()
 
@@ -1228,9 +1228,9 @@ func TestFramesCSVUsesSessionDateNotFrameDate(t *testing.T) {
 	}
 }
 
-// TestFramesCSVRecordsUnreadableFrames checks a frame that failed to analyse
+// TestPrepareReportsFramesCSVUnreadable checks a frame that failed to analyse
 // still gets a row, carrying the error rather than silent empty metrics.
-func TestFramesCSVRecordsUnreadableFrames(t *testing.T) {
+func TestPrepareReportsFramesCSVUnreadable(t *testing.T) {
 	const target = "WR134"
 	root := t.TempDir()
 
@@ -1284,9 +1284,9 @@ func TestFramesCSVRecordsUnreadableFrames(t *testing.T) {
 	}
 }
 
-// TestImageResultRowSharedByBothCommands is the cross-check that extracting the
+// TestPrepareReportsImageResultRowShared is the cross-check that extracting the
 // row builder did not change either command's output.
-func TestImageResultRowSharedByBothCommands(t *testing.T) {
+func TestPrepareReportsImageResultRowShared(t *testing.T) {
 	r := ImageResult{
 		Filename: "a.FIT", Filter: "B", Date: "2026-01-01",
 		DetectedStars: 100, StarCount: 50,
@@ -1412,9 +1412,9 @@ func TestPrepareReportsLiveInMetricsDir(t *testing.T) {
 	}
 }
 
-// TestPrepareRejectsUnwritableMetricsDir checks the failure is reported rather
+// TestPrepareReportsUnwritableMetricsDir checks the failure is reported rather
 // than silently skipped when the reports cannot be written.
-func TestPrepareRejectsUnwritableMetricsDir(t *testing.T) {
+func TestPrepareReportsUnwritableMetricsDir(t *testing.T) {
 	const target = "SH2-54"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -1438,7 +1438,7 @@ func TestPrepareRejectsUnwritableMetricsDir(t *testing.T) {
 	}
 }
 
-func TestPrepareFlagDefaults(t *testing.T) {
+func TestPrepareRoutingFlagDefaults(t *testing.T) {
 	want := map[string]string{
 		"target":        "",
 		"input":         defaultPrepareInput,
@@ -1478,10 +1478,10 @@ func TestPrepareFlagDefaults(t *testing.T) {
 	}
 }
 
-// TestSessionPlanApproved pins the approval predicate directly, including the
+// TestPrepareSessionPlanApproved pins the approval predicate directly, including the
 // defensive paths that the end-to-end tests cannot reach: an absent verdict and
 // an error paired with a decision.
-func TestSessionPlanApproved(t *testing.T) {
+func TestPrepareSessionPlanApproved(t *testing.T) {
 	tests := []struct {
 		name    string
 		verdict ImageResult
@@ -1535,10 +1535,10 @@ func TestSessionPlanApproved(t *testing.T) {
 	}
 }
 
-// TestPrepareThresholdsMatchAnalyze guards against the two commands drifting:
+// TestPrepareRoutingThresholdsMatchAnalyze guards against the two commands drifting:
 // analyze is the reference for what an acceptable frame is, so prepare must
 // register identical defaults.
-func TestPrepareThresholdsMatchAnalyze(t *testing.T) {
+func TestPrepareRoutingThresholdsMatchAnalyze(t *testing.T) {
 	// workers is not a quality threshold but is shared by both commands, so it
 	// is checked here too.
 	pairs := [][2]string{
@@ -1568,9 +1568,9 @@ func TestPrepareThresholdsMatchAnalyze(t *testing.T) {
 	}
 }
 
-// TestDefaultThresholdsAreRegistered checks every threshold reaches both
+// TestPrepareRoutingDefaultThresholdsRegistered checks every threshold reaches both
 // commands with the configured value.
-func TestDefaultThresholdsAreRegistered(t *testing.T) {
+func TestPrepareRoutingDefaultThresholdsRegistered(t *testing.T) {
 	tests := []struct {
 		flag  string
 		want  string
@@ -1611,10 +1611,10 @@ func TestDefaultThresholdsAreRegistered(t *testing.T) {
 	}
 }
 
-// TestQualityThresholdsAnalyzeConversion checks the conversion prepare hands to
+// TestPrepareRoutingQualityThresholdsConversion checks the conversion prepare hands to
 // measureAndDecide carries the thresholds through unchanged, and sets the star limit
 // measureAndDecide requires.
-func TestQualityThresholdsAnalyzeConversion(t *testing.T) {
+func TestPrepareRoutingQualityThresholdsConversion(t *testing.T) {
 	q := qualityThresholds{
 		minSNR:   1.5,
 		maxFWHM:  2.5,
@@ -1634,7 +1634,7 @@ func TestQualityThresholdsAnalyzeConversion(t *testing.T) {
 	}
 }
 
-// TestKnownFilters pins the recognised filter set and isKnownFilter.
+// TestPrepareFlatsKnownFilters pins the recognised filter set and isKnownFilter.
 //
 // isKnownFilter gates both the flat filename token and the light filter
 // subdirectory name, so an entry that drifts out of step with knownFilters
@@ -1645,7 +1645,7 @@ func TestQualityThresholdsAnalyzeConversion(t *testing.T) {
 // the set into a character class that ignores order. So this equality is the
 // only thing recording that sequence, and a well-meaning sort would pass every
 // behavioural test while losing it.
-func TestKnownFilters(t *testing.T) {
+func TestPrepareFlatsKnownFilters(t *testing.T) {
 	if knownFilters != "LRGBSHO" {
 		t.Errorf("knownFilters = %q, want %q (filter wheel, positions 1-7)", knownFilters, "LRGBSHO")
 	}
@@ -1666,10 +1666,10 @@ func TestKnownFilters(t *testing.T) {
 	}
 }
 
-// TestFilterSubdirsSkipsUnknownFilters checks the light side: a session
+// TestPrepareFlatsFilterSubdirsSkipUnknown checks the light side: a session
 // subdirectory that is not a known filter is reported and dropped rather than
 // carried into the plan as a filter that will then look for flats.
-func TestFilterSubdirsSkipsUnknownFilters(t *testing.T) {
+func TestPrepareFlatsFilterSubdirsSkipUnknown(t *testing.T) {
 	dir := t.TempDir()
 	for _, n := range []string{"B", "R", "Ha", "calibration", ".hidden"} {
 		if err := os.MkdirAll(filepath.Join(dir, n), 0o755); err != nil {
@@ -1702,14 +1702,14 @@ func TestFilterSubdirsSkipsUnknownFilters(t *testing.T) {
 	}
 }
 
-// TestCollectFlatsZeroTargetKeepsOnlyTheSessionDate pins the default.
+// TestPrepareFlatsCollectZeroKeepsSessionDate pins the default.
 //
 // Zero means "no goal", not "a goal of zero". Testing len(matched) >= target
 // without guarding on a positive target is true immediately, so the function
 // would hand back no flats at all -- which reads as a night that shot none,
 // rather than a run that declined to borrow. This is the default path, so it
 // is the one that must not be quietly wrong.
-func TestCollectFlatsZeroTargetKeepsOnlyTheSessionDate(t *testing.T) {
+func TestPrepareFlatsCollectZeroKeepsSessionDate(t *testing.T) {
 	root := t.TempDir()
 	buildFlatDirs(t, root, map[string][]string{
 		"2026-09-09": flatSet("S", "2026-09-09", "310", 20),
@@ -1736,10 +1736,10 @@ func TestCollectFlatsZeroTargetKeepsOnlyTheSessionDate(t *testing.T) {
 	}
 }
 
-// TestPrepareZeroFlatCountWarnsNothing checks the default run is quiet about
+// TestPrepareFlatsZeroCountWarnsNothing checks the default run is quiet about
 // flats: three own-date frames is a complete session when no target is set, so
 // neither a shortfall warning nor a missingFlats entry is warranted.
-func TestPrepareZeroFlatCountWarnsNothing(t *testing.T) {
+func TestPrepareFlatsZeroCountWarnsNothing(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 
@@ -1775,10 +1775,10 @@ func TestPrepareZeroFlatCountWarnsNothing(t *testing.T) {
 	}
 }
 
-// TestPrepareRejectsNegativeFlatCount checks a mistyped count is refused rather
+// TestPrepareFlatsRejectsNegativeCount checks a mistyped count is refused rather
 // than clamped. Clamping would silently turn borrowing off, which is a
 // behaviour change the operator never asked for.
-func TestPrepareRejectsNegativeFlatCount(t *testing.T) {
+func TestPrepareFlatsRejectsNegativeCount(t *testing.T) {
 	root := t.TempDir()
 	opts := prepareOptionsForTest("TEST", root, t.TempDir())
 	opts.targetFlats = -1
@@ -1792,10 +1792,10 @@ func TestPrepareRejectsNegativeFlatCount(t *testing.T) {
 	}
 }
 
-// TestFlatCountIsAConfigKey checks the flag is drivable from the config file.
+// TestPrepareFlatsCountIsAConfigKey checks the flag is drivable from the config file.
 // knownConfigKeys walks the command's flags, so a new prepare flag must show up
 // as a known key rather than being reported as an unknown one.
-func TestFlatCountIsAConfigKey(t *testing.T) {
+func TestPrepareFlatsCountIsAConfigKey(t *testing.T) {
 	if !knownConfigKeys()["prepare.flat-count"] {
 		t.Error("prepare.flat-count is not a known config key")
 	}
@@ -1814,11 +1814,11 @@ func TestFlatCountIsAConfigKey(t *testing.T) {
 // it from the flag rather than a constant, so the tests state it explicitly.
 const flatTarget = 14
 
-// TestFlatSearchOrder pins the consultation order: own date, then previous
+// TestPrepareFlatsSearchOrder pins the consultation order: own date, then previous
 // before next, stepping outward. The first session has no previous, so its walk
 // starts at the following date, which is what makes borrowing possible at all
 // for the opening night.
-func TestFlatSearchOrder(t *testing.T) {
+func TestPrepareFlatsSearchOrder(t *testing.T) {
 	tests := []struct {
 		name string
 		n    int
@@ -1846,9 +1846,9 @@ func TestFlatSearchOrder(t *testing.T) {
 	}
 }
 
-// TestCollectFlatsBorrowsFromPreviousDate covers topping a short session up
+// TestPrepareFlatsBorrowsFromPreviousDate covers topping a short session up
 // from the night before, and stopping as soon as the target is reached.
-func TestCollectFlatsBorrowsFromPreviousDate(t *testing.T) {
+func TestPrepareFlatsBorrowsFromPreviousDate(t *testing.T) {
 	root := t.TempDir()
 	buildFlatDirs(t, root, map[string][]string{
 		"2026-09-09": flatSet("S", "2026-09-09", "310", 20),
@@ -1880,9 +1880,9 @@ func TestCollectFlatsBorrowsFromPreviousDate(t *testing.T) {
 	}
 }
 
-// TestCollectFlatsFirstSessionBorrowsFromNextDate covers the opening session,
+// TestPrepareFlatsFirstSessionBorrowsNextDate covers the opening session,
 // which has no previous date and must reach forward instead.
-func TestCollectFlatsFirstSessionBorrowsFromNextDate(t *testing.T) {
+func TestPrepareFlatsFirstSessionBorrowsNextDate(t *testing.T) {
 	root := t.TempDir()
 	buildFlatDirs(t, root, map[string][]string{
 		"2026-09-09": flatSet("S", "2026-09-09", "310", 3),
@@ -1916,10 +1916,10 @@ func TestCollectFlatsFirstSessionBorrowsFromNextDate(t *testing.T) {
 	}
 }
 
-// TestCollectFlatsWalksPastAnEmptyNeighbour covers the rained-out night: the
+// TestPrepareFlatsWalksPastEmptyNeighbour covers the rained-out night: the
 // immediately previous date holds nothing usable, so the search must reach
 // further rather than stop at the first neighbour that does not help.
-func TestCollectFlatsWalksPastAnEmptyNeighbour(t *testing.T) {
+func TestPrepareFlatsWalksPastEmptyNeighbour(t *testing.T) {
 	root := t.TempDir()
 	buildFlatDirs(t, root, map[string][]string{
 		// Previous date has flats, but only for another angle.
@@ -1948,10 +1948,10 @@ func TestCollectFlatsWalksPastAnEmptyNeighbour(t *testing.T) {
 	}
 }
 
-// TestCollectFlatsNeverBorrowsAForeignDate pins the scoping: only dates the
+// TestPrepareFlatsNeverBorrowsForeignDate pins the scoping: only dates the
 // target itself acquired on are searched, so a flat directory belonging to
 // another target is never reached into.
-func TestCollectFlatsNeverBorrowsAForeignDate(t *testing.T) {
+func TestPrepareFlatsNeverBorrowsForeignDate(t *testing.T) {
 	root := t.TempDir()
 	buildFlatDirs(t, root, map[string][]string{
 		"2026-09-08": flatSet("S", "2026-09-08", "310", 20), // another target's night
@@ -1973,10 +1973,10 @@ func TestCollectFlatsNeverBorrowsAForeignDate(t *testing.T) {
 	}
 }
 
-// TestCollectFlatsReportsAShortfall covers the case where every date the target
+// TestPrepareFlatsReportsShortfall covers the case where every date the target
 // observed has been searched and the target cannot be met: the caller warns
 // and continues rather than failing.
-func TestCollectFlatsReportsAShortfall(t *testing.T) {
+func TestPrepareFlatsReportsShortfall(t *testing.T) {
 	root := t.TempDir()
 	buildFlatDirs(t, root, map[string][]string{
 		"2026-09-09": flatSet("S", "2026-09-09", "310", 2),
@@ -2003,11 +2003,11 @@ func TestCollectFlatsReportsAShortfall(t *testing.T) {
 	}
 }
 
-// TestPrepareBorrowsFlatsAndCopiesThem is the end-to-end guard for the refactor:
+// TestPrepareFlatsBorrowedCopied is the end-to-end guard for the refactor:
 // a flat collected from a neighbouring date must actually be copied from that
 // date. Resolving the source from the session date instead would compile and
 // plan perfectly, then fail at copy time.
-func TestPrepareBorrowsFlatsAndCopiesThem(t *testing.T) {
+func TestPrepareFlatsBorrowedCopied(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 
@@ -2061,10 +2061,10 @@ func TestPrepareBorrowsFlatsAndCopiesThem(t *testing.T) {
 	}
 }
 
-// TestPrepareWarnsWhenShortOfFlats checks the shortfall warning names the count
+// TestPrepareFlatsWarnWhenShort checks the shortfall warning names the count
 // and the dates searched, which is the only way to tell a genuinely short
 // session from one that was never looked for properly.
-func TestPrepareWarnsWhenShortOfFlats(t *testing.T) {
+func TestPrepareFlatsWarnWhenShort(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 
@@ -2106,7 +2106,7 @@ func TestPrepareWarnsWhenShortOfFlats(t *testing.T) {
 	}
 }
 
-func TestPrepareFormatFrameDate(t *testing.T) {
+func TestPrepareReportsFormatFrameDate(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"20260910", "2026-09-10"},
 		{"20261231", "2026-12-31"},
@@ -2121,10 +2121,10 @@ func TestPrepareFormatFrameDate(t *testing.T) {
 	}
 }
 
-// TestPrepareRealTreeShape runs against a fixture mirroring the real acquisition
+// TestPrepareSessionRealTreeShape runs against a fixture mirroring the real acquisition
 // layout, including a directory named like a FITS file and stray files at the
 // target level.
-func TestPrepareRealTreeShape(t *testing.T) {
+func TestPrepareSessionRealTreeShape(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 
@@ -2219,11 +2219,11 @@ func TestPrepareSessionDirPadding(t *testing.T) {
 	}
 }
 
-// TestPlanSessionsReportsUnusableFlatsOnce checks the two directions of the
+// TestPrepareFlatsPlanReportsUnusableOnce checks the two directions of the
 // flat-index warning path: a flat the parser cannot use is surfaced instead of
 // being dropped silently, and it is reported once per run even though every
 // filter of the session consults the same date.
-func TestPlanSessionsReportsUnusableFlatsOnce(t *testing.T) {
+func TestPrepareFlatsPlanReportsUnusableOnce(t *testing.T) {
 	const target = "TEST"
 	root := t.TempDir()
 

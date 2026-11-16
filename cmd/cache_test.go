@@ -250,7 +250,7 @@ func TestPrepareCacheReusesMeasurements(t *testing.T) {
 	}
 }
 
-func TestPrepareDryRunWritesNoCache(t *testing.T) {
+func TestPrepareCacheDryRunWritesNothing(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)

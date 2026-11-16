@@ -47,10 +47,10 @@ func wantDate(name string) string {
 	return ""
 }
 
-// TestPrepareCopiesBothBiasesForMixedGainSession is the core case: one session
+// TestPrepareBiasCopiesBothForMixedGain is the core case: one session
 // needing two masters, copied once each into a shared directory, never per
 // session.
-func TestPrepareCopiesBothBiasesForMixedGainSession(t *testing.T) {
+func TestPrepareBiasCopiesBothForMixedGain(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 	biasFixture(target).build(t, root)
@@ -140,9 +140,9 @@ func TestPrepareBiasIsSharedAcrossSessions(t *testing.T) {
 	}
 }
 
-// TestPrepareCopiesOnlyTheBiasesNeeded checks a single-gain target copies one
+// TestPrepareBiasCopiesOnlyNeeded checks a single-gain target copies one
 // master even though another is present.
-func TestPrepareCopiesOnlyTheBiasesNeeded(t *testing.T) {
+func TestPrepareBiasCopiesOnlyNeeded(t *testing.T) {
 	const target = "IC63"
 	root := t.TempDir()
 
@@ -164,10 +164,10 @@ func TestPrepareCopiesOnlyTheBiasesNeeded(t *testing.T) {
 	}
 }
 
-// TestPrepareWarnsOnMissingBias checks a gain the lights need but the masters
+// TestPrepareBiasWarnsOnMissing checks a gain the lights need but the masters
 // lack is reported and the run still succeeds, matching how a missing flat is
 // handled: the session is usable data, and the reduction can add the bias.
-func TestPrepareWarnsOnMissingBias(t *testing.T) {
+func TestPrepareBiasWarnsOnMissing(t *testing.T) {
 	const target = "NGC7000"
 	root := t.TempDir()
 
@@ -193,9 +193,9 @@ func TestPrepareWarnsOnMissingBias(t *testing.T) {
 	}
 }
 
-// TestPrepareWithoutBiasMastersIsNotAnError checks a target with no Bias/
+// TestPrepareBiasMastersAreOptional checks a target with no Bias/
 // directory prepares normally. The bias can be supplied during the reduction.
-func TestPrepareWithoutBiasMastersIsNotAnError(t *testing.T) {
+func TestPrepareBiasMastersAreOptional(t *testing.T) {
 	const target = "WR134"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root) // no biases written
@@ -214,10 +214,10 @@ func TestPrepareWithoutBiasMastersIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestPrepareSkipsNonMasterFilesInBiasDir checks the syncthing partials and the
+// TestPrepareBiasSkipsNonMasters checks the syncthing partials and the
 // dotfiles beside the masters are never copied. A half-transferred master would
 // be worse than none at all.
-func TestPrepareSkipsNonMasterFilesInBiasDir(t *testing.T) {
+func TestPrepareBiasSkipsNonMasters(t *testing.T) {
 	const target = "SH2-54"
 	root := t.TempDir()
 	biasFixture(target).build(t, root)
@@ -253,8 +253,8 @@ func TestPrepareSkipsNonMasterFilesInBiasDir(t *testing.T) {
 	}
 }
 
-// TestIndexBiasMasters covers the indexing rules directly.
-func TestIndexBiasMasters(t *testing.T) {
+// TestPrepareBiasIndexMasters covers the indexing rules directly.
+func TestPrepareBiasIndexMasters(t *testing.T) {
 	t.Run("keys by the gain in the name", func(t *testing.T) {
 		dir := t.TempDir()
 		for _, n := range []string{
@@ -581,12 +581,12 @@ func TestIndexBiasMasters(t *testing.T) {
 	})
 }
 
-// TestTargetBiasKeysUnionsAcrossSessions checks the union and the ordering.
+// TestPrepareBiasKeysUnionAcrossSessions checks the union and the ordering.
 //
 // The key set is what a master bias is looked up by: a gain on the C3, a
 // sensor temperature setpoint on the G4. On the C3 the two coincide, which is
 // why the field is separate from gains rather than the same slice.
-func TestTargetBiasKeysUnionsAcrossSessions(t *testing.T) {
+func TestPrepareBiasKeysUnionAcrossSessions(t *testing.T) {
 	sessions := []sessionPlan{
 		{biasKeys: []string{"GA0"}},
 		{biasKeys: []string{"GA2750", "GA0"}},
@@ -607,9 +607,9 @@ func TestTargetBiasKeysUnionsAcrossSessions(t *testing.T) {
 	}
 }
 
-// TestPrepareDryRunTouchesNoBias checks dry-run reports the biases without
+// TestPrepareBiasDryRunTouchesNothing checks dry-run reports the biases without
 // copying them.
-func TestPrepareDryRunTouchesNoBias(t *testing.T) {
+func TestPrepareBiasDryRunTouchesNothing(t *testing.T) {
 	const target = "M87-1"
 	root := t.TempDir()
 	biasFixture(target).build(t, root)
@@ -631,11 +631,11 @@ func TestPrepareDryRunTouchesNoBias(t *testing.T) {
 }
 
 // TestPrepareBiasSkipExistingIsIdempotent checks a second run does not recopy.
-// TestPrepareReportsCopiedBiases checks the console line names the gains it
+// TestPrepareBiasReportsCopied checks the console line names the gains it
 // actually copied, and not the ones it wanted. The distinction matters when a
 // master is missing: the two sets differ, and a line reporting the wanted gains
 // would claim a copy that never happened.
-func TestPrepareReportsCopiedBiases(t *testing.T) {
+func TestPrepareBiasReportsCopied(t *testing.T) {
 	t.Run("every gain copied is named", func(t *testing.T) {
 		const target = "M51"
 		root := t.TempDir()
@@ -741,10 +741,10 @@ func TestPrepareBiasSkipExistingIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestGainReMatchesAcquisitionNames pins the token shape on both sides. The
+// TestPrepareBiasGainReMatchesNames pins the token shape on both sides. The
 // master names were renamed from G0 to GA0 to match the light frames; a
 // regression here would silently find no master at all.
-func TestGainReMatchesAcquisitionNames(t *testing.T) {
+func TestPrepareBiasGainReMatchesNames(t *testing.T) {
 	tests := []struct {
 		name string
 		want string

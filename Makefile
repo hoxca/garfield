@@ -47,7 +47,7 @@ test-race:    ARGS=-race         ## Run tests with race detector
 $(TEST_TARGETS): NAME=$(MAKECMDGOALS:test-%=%)
 $(TEST_TARGETS): test
 check test tests: fmt lint ; $(info $(M) running $(NAME:%=% )tests…) @ ## Run tests
-	$Q $(GOTEST) -- -timeout $(TIMEOUT)s $(ARGS) $(TESTPKGS)
+	$Q ./scripts/test-cmd-domains.sh -timeout $(TIMEOUT)s $(ARGS)
 
 .PHONY: test-integration
 test-integration: fmt lint ; $(info $(M) running $(NAME:%=% )tests…) @ ## Run tests

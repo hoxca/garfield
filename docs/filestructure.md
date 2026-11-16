@@ -556,7 +556,7 @@ to the frame date would break it.
 
 This is why `frameDateMin` and `frameDateMax` are reported separately from `date`
 in `sessions.csv` (§10.1) — `date` is the one that matched flats, and the frame
-dates are a range for reference. Pinned by `TestFramesCSVUsesSessionDateNotFrameDate`.
+dates are a range for reference. Pinned by `TestPrepareReportsFramesCSVSessionDate`.
 
 ---
 
@@ -724,7 +724,7 @@ A **flat** is a shuttered frame of sky, so its dark current is negligible and th
 setpoint does not change what it corrects. A flat shot at `0C` calibrates a
 `-10C` light perfectly well, and matching them on temperature would reject good
 flats for no physical reason. Pinned by
-`TestFlatsAreNotFilteredByTemperature`.
+`TestPrepareFlatsAreNotFilteredByTemperature`.
 
 A **C3 or ASI2600 bias** is keyed on gain alone even though `masterBias_GA0_-10C_...` carries
 a setpoint. Bias is a much weaker function of temperature than a dark, and
@@ -747,7 +747,7 @@ dark:   masterDark_300s_GA0_-10C_...    exp, gain, setpoint   → m[1] m[2] m[3]
 Copying a group index from the light side to the dark side reads the setpoint as
 a gain and indexes every master under a key nothing can match — quietly, since
 the only symptom is a missing dark. Pinned by
-`TestDarkComboReGroupOrderDiffersFromLight`.
+`TestPrepareDarkComboReGroupOrder`.
 
 The G4 patterns avoid the problem differently: both sides are
 `exposure, setpoint`, in that order, so the two are interchangeable. The cost is
@@ -1053,7 +1053,7 @@ whole filter population rather than one target:
 
 So a clean run leaves two, not three. `rejected/` is created lazily by the
 first quarantine copy — an empty `rejected/Session_01/` would imply a session
-failed when it did not. Pinned by `TestPrepareRealTreeShape`
+failed when it did not. Pinned by `TestPrepareSessionRealTreeShape`
 (`cmd/prepare_test.go:2603`) for the shape and by `TestPrepareSessionLayoutIsSymmetric`
 (`cmd/prepare_test.go:1082`) for the absence.
 
@@ -1527,57 +1527,57 @@ Layout claims in this document are enforced by tests, not just documented:
 
 | Behaviour | Test |
 |---|---|
-| only `YYYY-MM-DD` directories are sessions | `TestPrepareOnlyAcceptsDateDirs` |
-| full output tree shape at the target root | `TestPrepareRealTreeShape` |
+| only `YYYY-MM-DD` directories are sessions | `TestPrepareSessionOnlyAcceptsDateDirs` |
+| full output tree shape at the target root | `TestPrepareSessionRealTreeShape` |
 | no `rejected/` tree when nothing was rejected | `TestPrepareSessionLayoutIsSymmetric` |
 | `Session_%02d` numbering and padding | `TestPrepareSessionDirPadding` |
-| session dirs live under `Sessions/` | `TestPrepareSessionsLiveUnderSessionsDir` |
-| darks keyed on filename not directory | `TestIndexDarkMastersKeysOnFilenameNotDirectory` |
-| `.fit` masters rejected | `TestIndexDarkMastersRejectsNonMasters` |
-| duplicate dark resolved by date; tie reported | `TestIndexDarkMastersPrefersTheLatestDate`, `TestIndexDarkMastersReportsAnUndecidedTie` |
-| gain token shape, legacy `G0` must **not** match | `TestGainReMatchesAcquisitionNames` |
-| light→dark exposure/setpoint/gain extraction | `TestLightDarkKeyRe`, `TestDarkComboRe` |
-| the two patterns' group order is reversed | `TestDarkComboReGroupOrderDiffersFromLight` |
-| `-0C` and `0C` are one key; other signs stay distinct | `TestNormaliseTempCollapsesSignedZero`, `TestDarkKeysMatchAcrossSignedZero` |
-| a target spanning two setpoints draws one dark each | `TestPrepareMixedTemperatureTargetNeedsTwoDarks` |
-| a dark at the wrong setpoint is reported, not substituted | `TestPrepareDoesNotBorrowADarkAtTheWrongTemperature` |
-| flats are not matched on setpoint | `TestFlatsAreNotFilteredByTemperature` |
-| non-master files and dotfiles skipped in bias dir | `TestPrepareSkipsNonMasterFilesInBiasDir` |
+| session dirs live under `Sessions/` | `TestPrepareSessionLiveUnderSessionsDir` |
+| darks keyed on filename not directory | `TestPrepareDarkIndexKeysOnFilename` |
+| `.fit` masters rejected | `TestPrepareDarkIndexRejectsNonMasters` |
+| duplicate dark resolved by date; tie reported | `TestPrepareDarkIndexPrefersLatestDate`, `TestPrepareDarkIndexReportsUndecidedTie` |
+| gain token shape, legacy `G0` must **not** match | `TestPrepareBiasGainReMatchesNames` |
+| light→dark exposure/setpoint/gain extraction | `TestPrepareDarkLightKeyRe`, `TestPrepareDarkComboRe` |
+| the two patterns' group order is reversed | `TestPrepareDarkComboReGroupOrder` |
+| `-0C` and `0C` are one key; other signs stay distinct | `TestPrepareDarkNormaliseTempSignedZero`, `TestPrepareDarkKeysMatchAcrossSignedZero` |
+| a target spanning two setpoints draws one dark each | `TestPrepareDarkMixedTemperatureNeedsTwo` |
+| a dark at the wrong setpoint is reported, not substituted | `TestPrepareDarkDoesNotBorrowWrongTemperature` |
+| flats are not matched on setpoint | `TestPrepareFlatsAreNotFilteredByTemperature` |
+| non-master files and dotfiles skipped in bias dir | `TestPrepareBiasSkipsNonMasters` |
 | biases shared across sessions | `TestPrepareBiasIsSharedAcrossSessions` |
-| darks shared across sessions | `TestPrepareDarksSharedAcrossSessions` |
-| only needed biases copied | `TestPrepareCopiesOnlyTheBiasesNeeded` |
-| only approved frames draw a dark | `TestPrepareDarksOnlyForApprovedFrames` |
-| flats keyed on the **session** date | `TestPrepareUsesSessionDateForFlats`, `TestFramesCSVUsesSessionDateNotFrameDate` |
-| flats topped up to 14 from the previous night | `TestCollectFlatsBorrowsFromPreviousDate` |
-| first session borrows from the following night | `TestCollectFlatsFirstSessionBorrowsFromNextDate` |
-| search walks past a neighbour with no match | `TestCollectFlatsWalksPastAnEmptyNeighbour` |
-| borrowing never crosses to another target | `TestCollectFlatsNeverBorrowsAForeignDate` |
-| shortfall reported with count and dates | `TestCollectFlatsReportsAShortfall`, `TestPrepareWarnsWhenShortOfFlats` |
-| `--flat-count 0` keeps the session's own date | `TestCollectFlatsZeroTargetKeepsOnlyTheSessionDate`, `TestPrepareZeroFlatCountWarnsNothing` |
-| negative `--flat-count` rejected | `TestPrepareRejectsNegativeFlatCount` |
-| `prepare.flat-count` is a config key | `TestFlatCountIsAConfigKey` |
-| a borrowed flat is copied from its own date | `TestPrepareBorrowsFlatsAndCopiesThem` |
-| consultation order, first session included | `TestFlatSearchOrder` |
-| mixed angles within a session are fatal | `TestPrepareMixedAnglesIsFatal`, `TestPlanSessionLeavesAngleUnsetOnMixedAngles` |
-| sessions at different angles are fatal | `TestPrepareMixedAnglesAcrossSessionsIsFatal`, `TestMixedAnglesAcrossSessions` |
-| every offending session reported at once | `TestPrepareReportsEveryMixedAngleAtOnce` |
-| a single-angle target still prepares | `TestPrepareSingleAngleTargetIsUnaffected` |
-| flats matched on PA, multi-angle flats fine | `TestPrepareFiltersFlatsByAngle` |
-| missing bias/dark/flats are warnings, not errors | `TestPrepareWarnsOnMissing{Bias,Dark,Flats}`, `TestPrepareWithout{Bias,Darks}MastersIsNotAnError` |
-| no verdict means not approved | `TestSessionPlanApproved` |
+| darks shared across sessions | `TestPrepareDarkSharedAcrossSessions` |
+| only needed biases copied | `TestPrepareBiasCopiesOnlyNeeded` |
+| only approved frames draw a dark | `TestPrepareDarkOnlyForApprovedFrames` |
+| flats keyed on the **session** date | `TestPrepareFlatsUseSessionDate`, `TestPrepareReportsFramesCSVSessionDate` |
+| flats topped up to 14 from the previous night | `TestPrepareFlatsBorrowsFromPreviousDate` |
+| first session borrows from the following night | `TestPrepareFlatsFirstSessionBorrowsNextDate` |
+| search walks past a neighbour with no match | `TestPrepareFlatsWalksPastEmptyNeighbour` |
+| borrowing never crosses to another target | `TestPrepareFlatsNeverBorrowsForeignDate` |
+| shortfall reported with count and dates | `TestPrepareFlatsReportsShortfall`, `TestPrepareFlatsWarnWhenShort` |
+| `--flat-count 0` keeps the session's own date | `TestPrepareFlatsCollectZeroKeepsSessionDate`, `TestPrepareFlatsZeroCountWarnsNothing` |
+| negative `--flat-count` rejected | `TestPrepareFlatsRejectsNegativeCount` |
+| `prepare.flat-count` is a config key | `TestPrepareFlatsCountIsAConfigKey` |
+| a borrowed flat is copied from its own date | `TestPrepareFlatsBorrowedCopied` |
+| consultation order, first session included | `TestPrepareFlatsSearchOrder` |
+| mixed angles within a session are fatal | `TestPrepareCameraMixedAnglesFatal`, `TestPrepareCameraPlanLeavesAngleUnsetOnMixed` |
+| sessions at different angles are fatal | `TestPrepareCameraMixedAnglesAcrossSessionsFatal`, `TestPrepareCameraMixedAnglesAcrossSessions` |
+| every offending session reported at once | `TestPrepareCameraReportsEveryMixedAngle` |
+| a single-angle target still prepares | `TestPrepareCameraSingleAngleUnaffected` |
+| flats matched on PA, multi-angle flats fine | `TestPrepareCameraFiltersFlatsByAngle` |
+| missing bias/dark/flats are warnings, not errors | `TestPrepareBiasWarnsOnMissing`, `TestPrepareDarkWarnsOnMissing`, `TestPrepareFlatsWarnOnMissing`, `TestPrepareBiasMastersAreOptional`, `TestPrepareDarkMastersAreOptional` |
+| no verdict means not approved | `TestPrepareSessionPlanApproved` |
 | analyze master-name filter limitation | `TestParseFilenameMasterFlat` |
 | documented output paths in help | `TestPrepareLongHelpDocumentsLayout` |
-| G4 patterns extract exposure and setpoint, not gain | `TestG4PatternsExtractKeys` |
-| the C3 patterns never match G4 or ASI2600 names | `TestCameraProfilesAreDisjoint` |
-| G4 records no angle and matches flats on filter alone | `TestG4PlanHasNoAngleAndMatchesFlatsByFilter` |
-| a C3 flat in a shared Flats tree is ignored by a G4 run | `TestG4IgnoresC3FlatsInTheSameDirectory` |
-| G4 bias/dark copied under setpoint keys | `TestG4PrepareCopiesMastersKeyedOnSetpoint` |
-| a G4 target spanning setpoints draws one master each | `TestG4MixedSetpointsDrawTwoMasters` |
-| the C3 mixed-angle rules do not reach the G4 | `TestG4DoesNotFailOnMissingAngle` |
-| unknown `--camera` rejected | `TestCameraFlagValidation` |
-| a wrong `--camera` names the likely cause | `TestCameraMismatchWarning` |
-| `prepare.camera` is a config key | `TestCameraIsAConfigKey` |
-| `analyze` reads G4 names without a switch | `TestAnalyzeParsesG4Names` |
+| G4 patterns extract exposure and setpoint, not gain | `TestPrepareCameraG4PatternsExtractKeys` |
+| the C3 patterns never match G4 or ASI2600 names | `TestPrepareCameraProfilesAreDisjoint` |
+| G4 records no angle and matches flats on filter alone | `TestPrepareCameraG4PlanNoAngleMatchesFlats` |
+| a C3 flat in a shared Flats tree is ignored by a G4 run | `TestPrepareCameraG4IgnoresC3Flats` |
+| G4 bias/dark copied under setpoint keys | `TestPrepareCameraG4CopiesMastersOnSetpoint` |
+| a G4 target spanning setpoints draws one master each | `TestPrepareCameraG4MixedSetpointsTwoMasters` |
+| the C3 mixed-angle rules do not reach the G4 | `TestPrepareCameraG4NoAngleIsFine` |
+| unknown `--camera` rejected | `TestPrepareCameraFlagValidation` |
+| a wrong `--camera` names the likely cause | `TestPrepareCameraMismatchWarning` |
+| `prepare.camera` is a config key | `TestPrepareCameraIsAConfigKey` |
+| `analyze` reads G4 names without a switch | `TestPrepareCameraAnalyzeParsesG4Names` |
 
 Note that `TestPrepareLongHelpDocumentsLayout` asserts only the three session
 paths. `bias/`, `darks/` and `metrics/` are implemented and tested but are not

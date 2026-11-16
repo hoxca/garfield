@@ -250,7 +250,7 @@ func suggestionForFilter(filter string, th suggeststore.Thresholds) suggeststore
 	}
 }
 
-func TestPrepareSuggestedAppliesTheStoredThresholds(t *testing.T) {
+func TestSuggestStoredThresholdsAreApplied(t *testing.T) {
 	const target = "LBN527"
 
 	// A suggestion that rejects everything: the targets' frames have a FWHM
@@ -279,7 +279,7 @@ func TestPrepareSuggestedAppliesTheStoredThresholds(t *testing.T) {
 	}
 }
 
-func TestPrepareSuggestedUsesTheFrozenReference(t *testing.T) {
+func TestSuggestStoredUsesFrozenReference(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -355,7 +355,7 @@ func TestGatesFromSuggestionsWarnsAndFallsBack(t *testing.T) {
 	}
 }
 
-func TestPrepareSuggestedRefusesWhenNothingIsStored(t *testing.T) {
+func TestSuggestStoredRefusesWhenEmpty(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -718,7 +718,7 @@ func TestExplicitFlagsIgnoresConfigValues(t *testing.T) {
 	}
 }
 
-func TestPrepareSuggestedHonoursTheOperatorsGateFlags(t *testing.T) {
+func TestSuggestStoredHonoursOperatorFlags(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)

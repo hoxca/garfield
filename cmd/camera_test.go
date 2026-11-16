@@ -135,7 +135,7 @@ func TestCameraFromLightsUnknownInstrumeIsFatalWithHint(t *testing.T) {
 	}
 }
 
-func TestPrepareAutoDetectsC3AndLogsIt(t *testing.T) {
+func TestPrepareCameraAutoDetectsC3(t *testing.T) {
 	const target = "M51"
 	root := t.TempDir()
 	f := simpleFixture(target)
@@ -160,7 +160,7 @@ func TestPrepareAutoDetectsC3AndLogsIt(t *testing.T) {
 	}
 }
 
-func TestPrepareAutoDetectsG4AndLogsIt(t *testing.T) {
+func TestPrepareCameraAutoDetectsG4(t *testing.T) {
 	const target = "IC1805"
 	root := t.TempDir()
 
@@ -195,7 +195,7 @@ func TestPrepareAutoDetectsG4AndLogsIt(t *testing.T) {
 	}
 }
 
-func TestPrepareAutoMissingInstrumeIsFatalAndWritesNothing(t *testing.T) {
+func TestPrepareCameraAutoMissingInstrumentIsFatal(t *testing.T) {
 	const target = "M51"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root) // no INSTRUME card
@@ -218,7 +218,7 @@ func TestPrepareAutoMissingInstrumeIsFatalAndWritesNothing(t *testing.T) {
 	}
 }
 
-func TestPrepareExplicitCameraDoesNotNeedInstrume(t *testing.T) {
+func TestPrepareCameraExplicitSkipsInstrument(t *testing.T) {
 	const target = "M51"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root) // no INSTRUME card

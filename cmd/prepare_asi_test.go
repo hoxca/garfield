@@ -22,7 +22,7 @@ func asiFlatName(prefix, filter, date, time, ms, pa string) string {
 		prefix, filter, date, time, ms, pa)
 }
 
-func TestASI2600LightDarkKey(t *testing.T) {
+func TestPrepareCameraASI2600LightDarkKey(t *testing.T) {
 	tests := []struct {
 		name string
 		file string
@@ -58,7 +58,7 @@ func TestASI2600LightDarkKey(t *testing.T) {
 	}
 }
 
-func TestASI2600LightDarkRejectsOtherCameras(t *testing.T) {
+func TestPrepareCameraASI2600RejectsOtherCameras(t *testing.T) {
 	for _, name := range []string{
 		"LBN527_LIGHT_B_300s_BIN1_-10C_GA0_20260910_025946_489_PA310_E.FIT", // C3
 		"IC1805HA_LIGHT_H_900s_BIN1_-20C_001_20201024_204428_998_W.FIT",     // G4
@@ -71,7 +71,7 @@ func TestASI2600LightDarkRejectsOtherCameras(t *testing.T) {
 	}
 }
 
-func TestASI2600FlatFilterAndAngle(t *testing.T) {
+func TestPrepareCameraASI2600FlatFilterAndAngle(t *testing.T) {
 	tests := []struct {
 		prefix string
 		filter string
@@ -106,7 +106,7 @@ func TestASI2600FlatFilterAndAngle(t *testing.T) {
 	}
 }
 
-func TestASI2600MasterKeys(t *testing.T) {
+func TestPrepareCameraASI2600MasterKeys(t *testing.T) {
 	bias := "masterBias_GA100_-10C_257f_20260901.xisf"
 	if key, ok := asi2600Camera.biasKey(bias); !ok || key != "GA100" {
 		t.Errorf("biasKey(%q) = %q, %v, want GA100", bias, key, ok)
@@ -118,7 +118,7 @@ func TestASI2600MasterKeys(t *testing.T) {
 	}
 }
 
-func TestPrepareAutoDetectsASI2600(t *testing.T) {
+func TestPrepareCameraAutoDetectsASI2600(t *testing.T) {
 	const target = "SH2-142"
 	root := t.TempDir()
 
