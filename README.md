@@ -431,14 +431,15 @@ suggested thresholds for filter H (20 frame(s), 4 night(s), 2026-09-04..2026-09-
   reference excludes 2 night(s): 2026-09-02 (cloudy); 2026-09-03 (thin)
   band 4.0 sigma around the good stack: keeps 11/13 good frames; 12/20 of the filter overall (60%)
 
-  gate              current  suggested  rejects now → then
-  min-stars             380        100            0 → 0
-  max-ecc              0.64       0.59            0 → 0
-  max-fwhm              3.2       4.94           11 → 0
-  min-snr                11      11.73            0 → 8
+  gate                current  suggested  rejects now → then
+  min-stars               380        100            0 → 0
+  max-ecc                0.64       0.59            0 → 0
+  max-fwhm                3.2       4.94           11 → 0
+  min-snr                  11      11.73            0 → 8
   ...
-  no metrics              -          -            0 → 0
-  total                   -          -           11 → 8     (9/20 approved now, 12/20 under the suggestion)
+  min-transparency        0.9        0.9            0 → 0
+  no metrics                -          -            0 → 0
+  total                     -          -           11 → 8     (9/20 approved now, 12/20 under the suggestion)
 
   the suggestion would change 11 frame(s): 8 newly rejected, 3 newly approved
 ```

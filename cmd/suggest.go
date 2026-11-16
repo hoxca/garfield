@@ -334,6 +334,7 @@ var gateRows = []struct{ key, decision string }{
 	{"min-score", decisionScoring},
 	{"max-halo-ratio", decisionClouds},
 	{"max-structure", decisionStructure},
+	{"min-transparency", decisionTransparency},
 }
 
 // rejectionCounts is how many frames each gate rejected.
@@ -446,7 +447,6 @@ func printSuggestion(s suggestedThresholds, current qualityThresholds, now, then
 		s.Band, s.KeptGood, s.GoodCount, s.KeptCount, s.Total, 100*s.Kept)
 
 	const arrowWidth = 12
-	fmt.Printf("  %-14s %10s %10s %*s → %s\n", "gate", "current", "suggested", arrowWidth, "rejects now", "then")
 	rows := []struct {
 		key            string
 		cur, suggested float64
@@ -460,15 +460,31 @@ func printSuggestion(s suggestedThresholds, current qualityThresholds, now, then
 		{"max-structure", current.maxStructure, s.Thresholds.MaxStructure},
 		{"min-transparency", current.minTransparency, s.Thresholds.MinTransparency},
 	}
+
+	// The name column is as wide as the longest label, so a new gate cannot push
+	// the columns out of line the way a hardcoded width did.
+	nameWidth := len("gate")
+	for _, label := range []string{"no metrics", "total"} {
+		if len(label) > nameWidth {
+			nameWidth = len(label)
+		}
+	}
 	for _, row := range rows {
-		fmt.Printf("  %-14s %10s %10s %*d → %d\n", row.key,
+		if len(row.key) > nameWidth {
+			nameWidth = len(row.key)
+		}
+	}
+
+	fmt.Printf("  %-*s %10s %10s %*s → %s\n", nameWidth, "gate", "current", "suggested", arrowWidth, "rejects now", "then")
+	for _, row := range rows {
+		fmt.Printf("  %-*s %10s %10s %*d → %d\n", nameWidth, row.key,
 			formatSuggestion(row.cur), formatSuggestion(row.suggested),
 			arrowWidth, now.byGate[row.key], then.byGate[row.key])
 	}
-	fmt.Printf("  %-14s %10s %10s %*d → %d\n", "no metrics", "-", "-",
+	fmt.Printf("  %-*s %10s %10s %*d → %d\n", nameWidth, "no metrics", "-", "-",
 		arrowWidth, now.noMetrics, then.noMetrics)
-	fmt.Printf("  %-14s %10s %10s %*d → %d     (%d/%d approved now, %d/%d under the suggestion)\n",
-		"total", "-", "-", arrowWidth, now.rejected(), then.rejected(),
+	fmt.Printf("  %-*s %10s %10s %*d → %d     (%d/%d approved now, %d/%d under the suggestion)\n",
+		nameWidth, "total", "-", "-", arrowWidth, now.rejected(), then.rejected(),
 		now.approved, now.total, then.approved, then.total)
 
 	fmt.Println()

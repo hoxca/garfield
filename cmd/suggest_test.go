@@ -405,11 +405,13 @@ func TestCountRejectionsAttributesEveryRejection(t *testing.T) {
 	results[6].Decision = decisionStructure
 	results[7].Decision = decisionNoStars
 	results[8].Error = errNoStarFound
+	results[9].Decision = decisionTransparency
 
 	counts := countRejections(results, nil)
 	for gate, want := range map[string]int{
 		"min-ecc": 0, "max-ecc": 1, "max-fwhm": 1, "min-snr": 1,
 		"min-score": 1, "max-halo-ratio": 1, "max-structure": 1, "min-stars": 1,
+		"min-transparency": 1,
 	} {
 		if gate == "min-ecc" {
 			continue // not a gate; guards against a typo in this table
@@ -590,5 +592,48 @@ func TestSuggestBandFollowsTheFWHMRule(t *testing.T) {
 	if s.Band != defaultThresholds.maxFWHMSigma {
 		t.Errorf("band = %v with the rule disabled, want the default %v",
 			s.Band, defaultThresholds.maxFWHMSigma)
+	}
+}
+
+// TestSuggestionTableColumnsLineUp pins the rendering: every line puts the arrow
+// in the same column, whatever the length of the gate names. A hardcoded width
+// once left the longest row out of line.
+func TestSuggestionTableColumnsLineUp(t *testing.T) {
+	s := suggestedThresholds{
+		Filter:     "H",
+		Population: suggeststore.Population{N: 20, Sessions: 2, From: "2026-09-10", To: "2026-09-17"},
+		Band:       4,
+		Total:      20,
+		GoodCount:  13,
+		KeptCount:  12,
+		KeptGood:   11,
+		Kept:       0.6,
+	}
+	now := rejectionCounts{byGate: map[string]int{}, total: 20, approved: 9, noMetrics: 1}
+	then := rejectionCounts{byGate: map[string]int{}, total: 20, approved: 12}
+
+	stdout := captureStdout(t, func() { printSuggestion(s, defaultThresholds, now, then) })
+
+	arrow := -1
+	for _, line := range strings.Split(stdout, "\n") {
+		i := strings.Index(line, "→")
+		if i < 0 {
+			continue
+		}
+		if arrow < 0 {
+			arrow = i
+		}
+		if i != arrow {
+			t.Errorf("arrow at column %d, want %d (first line set it):\n%s", i, arrow, stdout)
+			break
+		}
+	}
+	if arrow < 0 {
+		t.Fatalf("no row rendered an arrow:\n%s", stdout)
+	}
+	// The transparency row must be present and counted, or the rows cannot sum to
+	// the total.
+	if !strings.Contains(stdout, "min-transparency") {
+		t.Errorf("the table has no transparency row:\n%s", stdout)
 	}
 }
