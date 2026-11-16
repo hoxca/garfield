@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -161,8 +160,8 @@ func describeGates(store *suggeststore.Store, filter string) string {
 		since, rec.Population.N, rec.Population.Sessions, band)
 }
 
-// sortedFilters returns the filters a set of sessions holds, sorted, so the
-// console and the warnings come out the same way twice.
+// sortedFilters returns the filters a set of sessions holds, in wheel order, so
+// the console and the warnings come out the same way twice.
 func sortedFilters(sessions []sessionPlan) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -175,7 +174,7 @@ func sortedFilters(sessions []sessionPlan) []string {
 			out = append(out, f)
 		}
 	}
-	sort.Strings(out)
+	sortFilters(out)
 	return out
 }
 

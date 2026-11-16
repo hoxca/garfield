@@ -401,7 +401,9 @@ frame. The prefixed patterns require a prefix before `_FLAT_`, which is what kee
 off a C3 flat and keeps the C3 pattern off a prefixed flat. The G4 and ASI2600
 entries are the same shape because the G4 and ASI2600 write a prefix and no exposure;
 which one applies is decided by the profile selected from `INSTRUME`, never by
-the name.
+the name. A character class is order-independent; the sequence in `knownFilters`
+is the wheel's positions, and it is also the order filters are run and reported in
+(`L R G B S H O`).
 
 The recognised set is **exactly one character** from `LRGBSHO` — L, R, G, B,
 S, H, O:
@@ -861,7 +863,8 @@ and `asi2600` return their profile without touching the data, while `auto` (the
 default) calls `cameraNameFromLights`.
 
 `cameraNameFromLights` reads `INSTRUME` from the first FITS frame of the
-chronologically first `YYYY-MM-DD` session, in sorted filter and filename order.
+chronologically first `YYYY-MM-DD` session, in wheel filter order and sorted
+filename order.
 `C3-61000` selects `c3`; `Gx/Cx USB` selects `g4`; `ASI2600` selects
 `asi2600`. Matching is case-insensitive and by substring, so a model or firmware
 suffix still resolves (the real value is `ZWO ASI2600MM Pro`). A frame whose
@@ -951,8 +954,9 @@ shortened.
 **`--target` reads the tree prepare reads, one filter at a time.** `-t X` resolves
 the frames to `<input>/Lights/X`, walks the two levels to `<date>/<filter>` that
 layout implies, discovers the filters from the file names (`--filter` narrows to
-one) and runs the analysis once per filter, so each writes its own
-`analyse_report_<F>`, `sessions_<F>.csv` and `suggested_<F>.yaml`. Discovery reads
+one) and runs the analysis once per filter in wheel order (`L R G B S H O`, not
+alphabetically), so each writes its own `analyse_report_<F>`, `sessions_<F>.csv`
+and `suggested_<F>.yaml`. Discovery reads
 the filename token rather than the directory name, because that is what `--filter`
 matches and what every rule is keyed on. A filter whose stack is too thin to suggest
 from is a warning, not a failed run; frames carrying no known filter are skipped
@@ -1139,10 +1143,10 @@ Session_02;2026-09-20;PA310;O;1;1;0;1;H;;2026-09-20;2026-09-20;GA0;GA0/300s/-10C
 | `session` | **Bare** name (`Session_01`), never a path — join on this |
 | `date` | the session **directory** date, the one flats matched on (§3.3) |
 | `pa` | the session position angle; **empty** for a camera with no rotator |
-| `filters` | filter directories the session actually holds |
+| `filters` | filter directories the session actually holds, in wheel order (`L R G B S H O`) |
 | `lightCount` / `approvedCount` / `rejectedCount` | frames analysed, and how they split |
 | `flatCount` | flats **copied**, including borrowed ones (§3.2) |
-| `missingFlats` | filters with lights but no flats at all |
+| `missingFlats` | filters with lights but no flats at all, same order |
 | `frameDateMin` / `frameDateMax` | range of the dates **inside** the light filenames |
 | `gains` | distinct gains among the approved frames; **empty** on the G4, which has no gain |
 | `darks` | keys a dark was copied for: `gain/exposure/setpoint` on the C3, `exposure/setpoint` on the G4 (§5.2) |

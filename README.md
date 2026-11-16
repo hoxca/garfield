@@ -252,9 +252,10 @@ garfield prepare -t LBN527 -o /Volumes/T7/Workspace --cache --suggested
 the frames' names and the whole analysis runs once per filter — its own report,
 session profile and suggestion each — because every threshold and every population
 rule belongs to one filter; a report mixing them would judge O against L's noise.
-`--filter` narrows the run to one of them. A filter whose stack is too thin to
-suggest from is a warning — the other filters are still analysed and suggested —
-and frames carrying no known filter are skipped with one warning.
+Filters run in wheel order, `L R G B S H O`, not alphabetically. `--filter`
+narrows the run to one of them. A filter whose stack is too thin to suggest from
+is a warning — the other filters are still analysed and suggested — and frames
+carrying no known filter are skipped with one warning.
 
 The scan walks `<input>/Lights/<target>/<date>/<filter>/`, which is the layout
 `prepare` reads, so `-r` is implied. Reports, the session profile and the suggested
@@ -926,7 +927,8 @@ Session_01;2026-09-10;PA310;S;2;2;0;2;;2026-09-10;2026-09-10;GA0;GA0/300s/-10C
 `frameDateMin`/`frameDateMax` are the range of dates inside the light filenames,
 which disagree with `date` on most nights. `flatCount` counts every flat copied,
 **including any borrowed from a neighbouring date**, so it does not imply they
-came from that night.
+came from that night. `filters` and `missingFlats` list letters in wheel order,
+`L R G B S H O`.
 
 `metrics/frames.csv` — one row per analysed frame, approved or not, with the
 same six `decision` values as `analyze`. Metric columns come from the same row

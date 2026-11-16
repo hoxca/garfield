@@ -176,8 +176,8 @@ type sessionProfiles struct {
 	// flags maps a result index to the tokens of its session, so the report can
 	// carry them per frame.
 	flags map[int][]string
-	// order keeps the filters in the order they first appear, so the console and
-	// the files come out the same way twice.
+	// order keeps the filters in wheel order, so the console and the files come
+	// out the same way twice.
 	order []string
 }
 
@@ -259,6 +259,10 @@ func profileRun(results []ImageResult) sessionProfiles {
 		}
 		byFilterIdx[r.Filter] = append(byFilterIdx[r.Filter], i)
 	}
+	// The map above is keyed by filter and filled in scan order; sort once so the
+	// console and the files come out in wheel order rather than in the order the
+	// directories happened to be walked.
+	sortFilters(out.order)
 
 	for _, filter := range out.order {
 		pop := byFilterIdx[filter]

@@ -888,7 +888,7 @@ func targetFilters(dir string) (filters []string, skipped int, err error) {
 			filters = append(filters, filter)
 		}
 	}
-	sort.Strings(filters)
+	sortFilters(filters)
 	return filters, skipped, nil
 }
 

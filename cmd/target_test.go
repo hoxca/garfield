@@ -238,6 +238,42 @@ func TestAnalyzeTargetWithoutFilterRunsPerFilter(t *testing.T) {
 	}
 }
 
+// A target's filters run in wheel order, L R G B S H O, because that is how the
+// wheel is loaded and how every other filter list reads. Alphabetical order would
+// put B before R and O before S.
+func TestAnalyzeTargetRunsFiltersInWheelOrder(t *testing.T) {
+	root, target := multiFilterTree(t, []string{"B", "G", "H", "O", "R", "S"}, 2)
+	const wheel = "R G B S H O"
+
+	o := defaultOpts()
+	o.target = target
+	o.input = root
+	o.minStars, o.minSNR, o.minScore = 0, 0, 0
+
+	stdout := captureStdout(t, func() {
+		if err := runAnalyze("", o); err != nil {
+			t.Fatalf("runAnalyze: %v", err)
+		}
+	})
+
+	if !strings.Contains(stdout, "6 filter(s): "+wheel) {
+		t.Errorf("filter list is not in wheel order; want %q in:\n%s", wheel, stdout)
+	}
+	// The pass loop consumes the discovered slice in order, so the Processing
+	// lines are the execution order itself.
+	prev := -1
+	for _, filter := range strings.Fields(wheel) {
+		at := strings.Index(stdout, "for filter "+filter+" in ")
+		switch {
+		case at < 0:
+			t.Fatalf("no pass for filter %s in:\n%s", filter, stdout)
+		case at < prev:
+			t.Errorf("filter %s ran out of wheel order:\n%s", filter, stdout)
+		}
+		prev = at
+	}
+}
+
 func TestAnalyzeTargetDiscoversFiltersFromFilenames(t *testing.T) {
 	root, target := multiFilterTree(t, []string{"H"}, 8)
 	// A frame filed under H but named O belongs to O: the name is what --filter

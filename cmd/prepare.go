@@ -113,15 +113,13 @@ var sessionDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 var paRe = regexp.MustCompile(`_PA(\d+)`)
 
 // knownFilters are the colour filters the acquisition names, in a flat's
-// filter token and in a light filter subdirectory. It is a membership set, not a
-// display order, since filters are reported alphabetically. The token is a
-// single character, so the set doubles as a character class for flatFilterRe
-// below.
+// filter token and in a light filter subdirectory. The token is a single
+// character, so the set doubles as a character class for flatFilterRe below.
 //
-// The set is the filter wheel's inventory: seven positions, all occupied, in
-// this order. Do not sort it. Nothing here depends on the sequence -- a
-// character class is order-independent -- so the order is the only record of
-// which physical position each letter names.
+// The set is the filter wheel's inventory: seven positions, all occupied, and
+// the sequence is the order every list is executed and reported in (see
+// sortFilters). Do not sort it: reordering it reorders the runs. A character
+// class is order-independent, so nothing else depends on the sequence.
 //
 // Narrowband is therefore not a pending extension. FLAT_Ha_ and FLAT_OIII_ would
 // need a different wheel to be acquired at all, not a letter added here, and
@@ -133,6 +131,32 @@ const knownFilters = "LRGBSHO"
 // of the set just as it does "B", and only single-character tokens are filters.
 func isKnownFilter(f string) bool {
 	return len(f) == 1 && strings.Contains(knownFilters, f)
+}
+
+// filterRank orders a filter as the wheel holds it: L, R, G, B, S, H, O. An
+// unrecognised name sorts after every known one, so a stray token is visibly
+// last rather than mixed in.
+func filterRank(filter string) int {
+	if len(filter) == 1 {
+		if i := strings.Index(knownFilters, filter); i >= 0 {
+			return i
+		}
+	}
+	return len(knownFilters)
+}
+
+// sortFilters orders filters as the wheel does rather than alphabetically, so
+// the execution order, the warnings and the reports all read the same way. It is
+// the one sort every filter list goes through; sorting by name would claim the
+// wheel puts B before R.
+func sortFilters(filters []string) {
+	sort.Slice(filters, func(i, j int) bool {
+		ri, rj := filterRank(filters[i]), filterRank(filters[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return filters[i] < filters[j]
+	})
 }
 
 // flatNamePrefix opens every flat filename. A name carrying it that
@@ -629,13 +653,13 @@ func (s sessionPlan) sessionDir() string {
 	return fmt.Sprintf("Session_%02d", s.number)
 }
 
-// filterNames returns the session's filters in sorted order.
+// filterNames returns the session's filters in wheel order.
 func (s sessionPlan) filterNames() []string {
 	names := make([]string, 0, len(s.filters))
 	for name := range s.filters {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	sortFilters(names)
 	return names
 }
 
@@ -1523,7 +1547,7 @@ func filterSubdirs(sessionDir string) ([]string, []string, error) {
 		}
 		names = append(names, e.Name())
 	}
-	sort.Strings(names)
+	sortFilters(names)
 	return names, warnings, nil
 }
 

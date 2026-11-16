@@ -754,8 +754,8 @@ func TestPrepareSessionMultipleFilters(t *testing.T) {
 	}
 
 	recs := readSessionsCSV(t, metricsPath(filepath.Join(out, target), sessionsCSVName))
-	if recs[1][3] != "B G R" {
-		t.Errorf("filters = %q, want %q (sorted)", recs[1][3], "B G R")
+	if recs[1][3] != "R G B" {
+		t.Errorf("filters = %q, want %q (wheel order)", recs[1][3], "R G B")
 	}
 	if recs[1][7] != "3" {
 		t.Errorf("flatCount = %q, want 3", recs[1][5])
@@ -1682,8 +1682,8 @@ func TestPrepareFlatsFilterSubdirsSkipUnknown(t *testing.T) {
 		t.Fatalf("filterSubdirs: %v", err)
 	}
 
-	if got := strings.Join(names, " "); got != "B R" {
-		t.Errorf("names = %q, want %q", got, "B R")
+	if got := strings.Join(names, " "); got != "R B" {
+		t.Errorf("names = %q, want %q", got, "R B")
 	}
 
 	// Ha and calibration are reported; the dotfile is not, matching the rule
