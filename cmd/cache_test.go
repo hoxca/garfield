@@ -264,7 +264,7 @@ func TestPrepareCacheDryRunWritesNothing(t *testing.T) {
 		t.Fatalf("runPrepare: %v", err)
 	}
 	// A dry run shows the plan without writing; the store is a write.
-	if _, err := os.Stat(cachePath(out)); !os.IsNotExist(err) {
+	if _, err := os.Stat(cachePath(targetMetricsDir(out, target))); !os.IsNotExist(err) {
 		t.Errorf("dry run left a measurement cache behind: %v", err)
 	}
 }

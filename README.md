@@ -208,6 +208,7 @@ Flags:
   -r, --recursive                  also walk the subdirectories of --dir, 2 levels deep [config: garfield.yaml]
       --stack-gate                 reject frames from a night that is systematically worse than its filter's stack
       --suggest                    suggest thresholds for --filter from the measured stack (requires --filter and --output)
+  -t, --target string              analyse <input>/Lights/<target>, the same tree prepare reads; implies --recursive
   -w, --workers int                processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
 
 Global Flags:
@@ -227,12 +228,32 @@ Global Flags:
 | `--format` | `console`, `csv`, or `both`. `csv`/`both` need `-o`. |
 | `-o`, `--output` | **a directory**, not a file. The report is written inside it as `analyse_report.csv`, or `analyse_report_<FILTER>.csv` when `--filter` is set. Without it, `--format csv` writes to stdout. |
 | `--copy-rejected` | copy every rejected frame into `<output>/rejected/<category>/`, one folder per rejection reason. Requires `-o`. |
+| `-t, --target` | analyse `<input>/Lights/<target>`, the same tree `prepare` reads, and write into `<output>/<target>/metrics/`. Implies `-r`. Cannot be combined with `--dir`. Not a config key. |
+| `-i, --input` | acquisition root used with `--target`. Config key `analyze.input`. |
 | `--cache` | reuse the measurements stored in `<output>/cache/measurements.jsonl`, and record this run's. Requires `-o`: the store lives in the output directory, never in the acquisition tree. See [Reusing measurements](#reusing-measurements-between-runs). |
 | `--stack-gate` | reject a frame from a night the stack condemns **when the frame itself sits outside the stack band**. Off by default. See [Session quality](#session-quality-and-suggested-thresholds). |
 | `--suggest` | derive thresholds for `--filter` from the measured stack and write them to `<output>/suggested_<FILTER>.yaml` plus the store `prepare --suggested` reads. Requires `--filter` and `-o`. Advisory: it never changes this run's verdicts. |
 | `--keep` | the fraction of the good stack a `--suggest` run aims to keep; `0` uses the band the FWHM rule applies (4 robust sigmas by default). |
 | `--quiet` | suppress console output. |
 | `-w`, `--conv-workers` | both default to 0 = automatic. |
+
+### Analysing a target
+
+`-t/--target` names the tree the way `prepare` does, so the two commands share one
+metrics directory per target:
+
+```
+garfield analyze -t LBN527 -i /Volumes/Dyno/Kosmodrom -o /Volumes/T7/Workspace \
+                 --filter H --cache --suggest
+garfield prepare -t LBN527 -o /Volumes/T7/Workspace --cache --suggested
+```
+
+The scan walks `<input>/Lights/<target>/<date>/<filter>/`, which is the layout
+`prepare` reads, so `-r` is implied. Reports, the session profile and the suggested
+YAML land in `<output>/<target>/metrics/`, beside `prepare`'s `frames.csv`; rejected
+frames go to `<output>/<target>/rejected/<category>/`. `--dir` remains the way to
+analyse an arbitrary directory, and the two flags are refused together rather than
+one silently winning.
 
 ### Output
 
@@ -377,7 +398,7 @@ soft frame is reported as soft rather than clouded.
 `--copy-rejected` puts every rejected frame into `<output>/rejected/<category>/`:
 
 ```
-<output>/
+<output>/                          ← or <output>/<target>/metrics/ with --target
 ├── analyse_report.csv          ← or analyse_report_<FILTER>.csv with --filter
 ├── sessions_<FILTER>.csv        ← per-night profile, one file per filter
 ├── suggested_<FILTER>.yaml      ← only with --suggest
@@ -551,7 +572,10 @@ garfield analyze -d Lights/LBN527 -r -o out --cache --format both   # reuses, re
 garfield prepare -t LBN527 -o out --cache                           # reuses the same store
 ```
 
-The store is `<output>/cache/measurements.jsonl`, one JSON object per frame,
+The store is `<output>/cache/measurements.jsonl` — or
+`<output>/<target>/metrics/cache/measurements.jsonl` when the run is target-scoped,
+where it sits beside the reports it describes and where `prepare` looks for it. It
+holds one JSON object per frame,
 plain enough to read with `jq`. **Nothing is ever written to a frame**: the
 cache lives in the output directory, so an acquisition tree stays read-only.
 That is also why `--cache` requires `-o`.

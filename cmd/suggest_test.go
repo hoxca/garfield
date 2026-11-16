@@ -220,10 +220,11 @@ func TestRunAnalyzeSuggestRequiresFilterAndOutput(t *testing.T) {
 	}
 }
 
-// storeSuggestion writes one suggestion into an output directory's store.
-func storeSuggestion(t *testing.T, output string, rec suggeststore.Suggestion) {
+// storeSuggestion writes one suggestion into a prepared target's store, which
+// lives beside that target's reports.
+func storeSuggestion(t *testing.T, output, target string, rec suggeststore.Suggestion) {
 	t.Helper()
-	store, err := suggeststore.Open(suggestionPath(output))
+	store, err := suggeststore.Open(suggestionPath(targetMetricsDir(output, target)))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -259,7 +260,7 @@ func TestSuggestStoredThresholdsAreApplied(t *testing.T) {
 	simpleFixture(target).build(t, root)
 	out := t.TempDir()
 
-	storeSuggestion(t, out, suggestionForFilter("H", suggeststore.Thresholds{
+	storeSuggestion(t, out, target, suggestionForFilter("H", suggeststore.Thresholds{
 		MaxFWHM: 0.5, MaxEcc: 0.9, MinSNR: 0, MinScore: 0, MinStars: 0,
 		MaxFWHMSigma: 0, MaxHaloRatio: 0, MaxStructure: 0,
 	}))
@@ -288,7 +289,7 @@ func TestSuggestStoredUsesFrozenReference(t *testing.T) {
 	// The reference pins the FWHM median at 2.0 px. frames.csv records the ratio
 	// against that median, so the column says whether the stored reference was
 	// used or one was recomputed from the target's own frames.
-	storeSuggestion(t, out, suggestionForFilter("H", suggeststore.Thresholds{
+	storeSuggestion(t, out, target, suggestionForFilter("H", suggeststore.Thresholds{
 		MaxFWHM: 100, MaxEcc: 0.9, MinSNR: 0, MinScore: 0, MinStars: 0,
 		MaxFWHMSigma: 0, MaxHaloRatio: 0, MaxStructure: 0,
 	}))
@@ -725,7 +726,7 @@ func TestSuggestStoredHonoursOperatorFlags(t *testing.T) {
 	out := t.TempDir()
 
 	// The stored suggestion rejects everything at this FWHM.
-	storeSuggestion(t, out, suggestionForFilter("H", suggeststore.Thresholds{
+	storeSuggestion(t, out, target, suggestionForFilter("H", suggeststore.Thresholds{
 		MaxFWHM: 0.5, MaxEcc: 0.9, MinSNR: 0, MinScore: 0, MinStars: 0,
 		MaxFWHMSigma: 0, MaxHaloRatio: 0, MaxStructure: 0,
 	}))

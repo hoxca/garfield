@@ -924,6 +924,8 @@ Much looser. Any directory of FITS frames works.
 | `--format` | `console` (or `csv`, `both`) |
 | `--output`, `-o` | *(directory; the report is `analyse_report.csv` inside it)* |
 | `--cache` | `false` (requires `-o`) |
+| `--input`, `-i` | `$HOME` acquisition root, used with `--target` |
+| `--target`, `-t` | *(no target: `--dir` is scanned)* |
 | `--stack-gate` | `false` |
 | `--suggest` | `false` (requires `--filter` and `-o`) |
 | `--keep` | `0` (the band `--max-fwhm-sigma` sets, 4 by default) |
@@ -943,6 +945,15 @@ The index appears only for the grammars that carry one: the C3 writes `GA0` in
 that position, the G4 and the ASI2600 an index. A name matching neither grammar
 prints in full. The reports keep the full filename; only the console is
 shortened.
+
+**`--target` reads the tree prepare reads.** `-t X` resolves the frames to
+`<input>/Lights/X`, walks the two levels to `<date>/<filter>` that layout implies,
+and writes reports, the session profile and the suggested YAML into
+`<output>/X/metrics/`, with rejected frames under `<output>/X/rejected/<category>/`.
+The measurement and suggestion stores follow the reports, so a target owns
+`<output>/X/metrics/cache/` and `prepare` finds what `analyze` wrote without any
+extra flag. A run without `--target` keeps the older shape: reports in `-o` and the
+store in `<output>/cache/`.
 
 **`--cache` trades disk for recomputation.** Measurement results are stored in
 `<output>/cache/measurements.jsonl` and reused on a later run over the same
@@ -1044,7 +1055,9 @@ root, and one of them is conditional:
 Two things live *above* the target, in the output root, because they describe the
 whole filter population rather than one target:
 
-- `<output>/cache/`, holding `measurements.jsonl` (`--cache`) and
+- `<output>/<target>/metrics/cache/` for a prepared or target-scoped run — and
+`<output>/cache/` for an `analyze` without `--target` — holding
+`measurements.jsonl` (`--cache`) and
   `suggestions.jsonl` (`--suggest`). It is shared by every target prepared into
   that output, on purpose: a frame is identified by its own path and timestamp,
   not by which target it happened to be prepared under.

@@ -81,6 +81,13 @@ const framesCSVName = "frames.csv"
 // sessionsCSVName is the session index, written under metricsDir.
 const sessionsCSVName = "sessions.csv"
 
+// targetMetricsDir is where a prepared target keeps its reports and, beside them,
+// the caches those reports describe. analyze --target writes to the same place, so
+// one target owns one metrics directory.
+func targetMetricsDir(output, target string) string {
+	return filepath.Join(output, target, metricsDir)
+}
+
 // metricsPath returns the location of a report inside a prepared target.
 func metricsPath(targetOut, name string) string {
 	return filepath.Join(targetOut, metricsDir, name)
@@ -729,7 +736,7 @@ func runPrepare(opts prepareOptions) error {
 	// plan without touching disk, and the store is a write.
 	var measures *measurecache.Cache
 	if opts.cache && !opts.dryRun {
-		c, err := openMeasureCache(opts.output)
+		c, err := openMeasureCache(targetMetricsDir(opts.output, opts.target))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 		} else {
@@ -741,14 +748,15 @@ func runPrepare(opts prepareOptions) error {
 	// reference a previous `analyze --suggest` left in the output directory.
 	gates := baseGates(opts.qualityThresholds)
 	if opts.suggested {
-		store, err := suggeststore.Open(suggestionPath(opts.output))
+		store, err := suggeststore.Open(suggestionPath(targetMetricsDir(opts.output, opts.target)))
 		if err != nil {
 			return fmt.Errorf("--suggested: %w", err)
 		}
 		gates, warnings = gatesFromSuggestions(store, sortedFilters(sessions), sessions, opts)
 		if len(gates.byFilter) == 0 {
 			store.Close()
-			return fmt.Errorf("--suggested: no suggested thresholds in %q; run `garfield analyze --suggest` first", suggestionPath(opts.output))
+			return fmt.Errorf("--suggested: no suggested thresholds in %q; run `garfield analyze --suggest` first",
+				suggestionPath(targetMetricsDir(opts.output, opts.target)))
 		}
 		if !opts.quiet {
 			for _, filter := range sortedFilters(sessions) {
@@ -777,7 +785,8 @@ func runPrepare(opts prepareOptions) error {
 				measured++
 			}
 		}
-		fmt.Printf("  cache: %d measured, %d reused from %q\n", measured, cached, cachePath(opts.output))
+		fmt.Printf("  cache: %d measured, %d reused from %q\n", measured, cached,
+			cachePath(targetMetricsDir(opts.output, opts.target)))
 	}
 
 	// After the assessment, because a master dark is only wanted for frames

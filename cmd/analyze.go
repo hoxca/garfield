@@ -27,6 +27,11 @@ type analyzeOptions struct {
 	qualityThresholds
 
 	dir string
+	// input is the acquisition root and target a directory under its Lights/, the
+	// same selection prepare makes. --dir stays for an arbitrary directory; the two
+	// ways of naming the data cannot be mixed.
+	input  string
+	target string
 	// filter restricts the run to one colour filter (L R G B S H O). Empty
 	// analyses every discovered frame. It is matched against the filename token
 	// parseFilename reports, which is also the CSV's filter column.
@@ -95,6 +100,10 @@ Example:
 
 func init() {
 	analyzeCmd.Flags().StringVarP(&analyzeOpts.dir, "dir", "d", "images", "directory containing the FITS files")
+	analyzeCmd.Flags().StringVarP(&analyzeOpts.input, "input", "i", defaultPrepareInput,
+		"root of the acquisition data, used with --target")
+	analyzeCmd.Flags().StringVarP(&analyzeOpts.target, "target", "t", "",
+		"analyse <input>/Lights/<target>, the same tree prepare reads; implies --recursive")
 	analyzeCmd.Flags().BoolVarP(&analyzeOpts.recursive, "recursive", "r", false,
 		fmt.Sprintf("also walk the subdirectories of --dir, %d levels deep", maxRecursiveDepth))
 	registerWorkerFlags(analyzeCmd.Flags(), &analyzeOpts.workers, &analyzeOpts.convWorkers)
@@ -787,6 +796,32 @@ func warnDuplicateBasenames(fitsFiles []string) []string {
 }
 
 func runAnalyze(dir string, opts analyzeOptions) error {
+	// A target names the tree prepare reads, so the reports land where prepare's do.
+	// --dir is the ad-hoc way to analyse a directory and cannot be combined with it.
+	if opts.target != "" {
+		if opts.explicit["dir"] {
+			return fmt.Errorf("--target and --dir name the data two ways: --target scans <input>/%s/%s, --dir takes a directory",
+				lightsDir, opts.target)
+		}
+		if opts.input == "" {
+			return fmt.Errorf("--target requires --input: frames are looked for under <input>/%s/<target>", lightsDir)
+		}
+		dir = filepath.Join(opts.input, lightsDir, opts.target)
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			return fmt.Errorf("no %s/%s under %q", lightsDir, opts.target, opts.input)
+		}
+		// The target tree is <date>/<filter>/ deep by construction, so the walk is
+		// what the flag means rather than something to ask for twice.
+		opts.recursive = true
+	}
+	// reportDir is where this run's files belong: the output directory itself, or
+	// the target's metrics directory, which is the one prepare writes frames.csv
+	// into. The caches follow the reports.
+	reportDir := opts.output
+	if opts.target != "" && opts.output != "" {
+		reportDir = filepath.Join(opts.output, opts.target, metricsDir)
+	}
+
 	switch opts.format {
 	case "console", "csv", "both":
 	default:
@@ -799,12 +834,12 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		return fmt.Errorf("--copy-rejected requires --output")
 	}
 	if opts.cache && opts.output == "" {
-		return fmt.Errorf("--cache requires --output: measurements are stored under %s", cachePath("<output>"))
+		return fmt.Errorf("--cache requires --output: measurements are stored under %s", cachePath(reportDirLabel(opts)))
 	}
 
 	var measures *measurecache.Cache
 	if opts.cache {
-		c, err := openMeasureCache(opts.output)
+		c, err := openMeasureCache(reportDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
 		} else {
@@ -824,7 +859,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 			return fmt.Errorf("--suggest requires --filter: a suggestion is derived from, and belongs to, one filter's population")
 		}
 		if opts.output == "" {
-			return fmt.Errorf("--suggest requires --output: the suggestion is written under %s", suggestionPath("<output>"))
+			return fmt.Errorf("--suggest requires --output: the suggestion is written under %s", suggestionPath(reportDirLabel(opts)))
 		}
 		if opts.keep < 0 || opts.keep >= 1 {
 			return fmt.Errorf("invalid --keep %v: expected 0 (the default band) or a fraction below 1", opts.keep)
@@ -901,12 +936,15 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	csvToStdout := opts.format == "csv" && opts.output == ""
 	reportPath := ""
 	if opts.output != "" {
-		reportPath = filepath.Join(opts.output, analyseReportNameFor(filter))
+		reportPath = filepath.Join(reportDir, analyseReportNameFor(filter))
 	}
 	if !opts.quiet && showConsole {
 		scope := ""
+		if opts.target != "" {
+			scope = " of target " + opts.target
+		}
 		if filter != "" {
-			scope = " for filter " + filter
+			scope += " for filter " + filter
 		}
 		fmt.Printf("\nProcessing %d FITS file(s)%s in %q (%d workers, conv=%d, max-fwhm-sigma=%s, max-halo=%s, max-structure=%s)...\n\n",
 			len(fitsFiles), scope, dir, outerWorkers, convWorkers,
@@ -957,7 +995,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	// over the same tree spends its time in the outlier rules, not in pixels.
 	if measures != nil && !opts.quiet {
 		cached, measured := countCached(results)
-		fmt.Printf("  cache: %d measured, %d reused from %q\n", measured, cached, cachePath(opts.output))
+		fmt.Printf("  cache: %d measured, %d reused from %q\n", measured, cached, cachePath(reportDir))
 	}
 
 	// Cloud is a session-level decision: it compares a frame against its own
@@ -977,7 +1015,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 	}
 	if opts.output != "" && !prof.empty() {
 		for _, f := range prof.order {
-			if err := writeSessionsProfileCSV(opts.output, f, prof.profiles(f), prof.refs[f]); err != nil {
+			if err := writeSessionsProfileCSV(reportDir, f, prof.profiles(f), prof.refs[f]); err != nil {
 				return err
 			}
 		}
@@ -1007,7 +1045,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		}
 		nowCounts = countRejections(results, nil)
 		thenCounts = countRejections(results, simulated)
-		if err := writeSuggestion(opts.output, s); err != nil {
+		if err := writeSuggestion(reportDir, s); err != nil {
 			return err
 		}
 	}
@@ -1085,7 +1123,7 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		}
 		if !opts.quiet {
 			fmt.Printf("Rejected images copied to %q (%d file(s)).\n",
-				filepath.Join(opts.output, rejectedOutDir), copied)
+				rejectedRoot(opts), copied)
 		}
 	}
 
@@ -1096,8 +1134,8 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 				return fmt.Errorf("writing CSV: %w", err)
 			}
 		} else {
-			if err := os.MkdirAll(opts.output, 0o755); err != nil {
-				return fmt.Errorf("unable to create %q: %w", opts.output, err)
+			if err := os.MkdirAll(reportDir, 0o755); err != nil {
+				return fmt.Errorf("unable to create %q: %w", reportDir, err)
 			}
 			f, err := os.Create(reportPath)
 			if err != nil {
@@ -1619,6 +1657,26 @@ func analyseReportNameFor(filter string) string {
 	return "analyse_report_" + filter + ".csv"
 }
 
+// rejectedRoot is where --copy-rejected puts frames: under the target when one was
+// named, so a target's debris stays with the target, and beside the reports
+// otherwise. prepare's own rejected tree is a different shape (session/filter) and
+// lives under the same target directory.
+func rejectedRoot(opts analyzeOptions) string {
+	if opts.target != "" {
+		return filepath.Join(opts.output, opts.target, rejectedOutDir)
+	}
+	return filepath.Join(opts.output, rejectedOutDir)
+}
+
+// reportDirLabel renders where a run writes, for the messages that explain which
+// flag is missing. It names <output> itself, or the target's metrics directory.
+func reportDirLabel(opts analyzeOptions) string {
+	if opts.target != "" {
+		return filepath.Join("<output>", opts.target, metricsDir)
+	}
+	return "<output>"
+}
+
 // rejectedOutDir groups the copied rejected frames beneath the output
 // directory. Mirrors the name prepare uses for its quarantine tree.
 const rejectedOutDir = "rejected"
@@ -1656,7 +1714,7 @@ func rejectCategory(decision string) string {
 // so two different sources can share a basename. Losing one silently would be
 // worse than telling the operator the category folder is not unique.
 func copyRejectedFrames(results []ImageResult, paths []string, opts analyzeOptions) (int, []string, error) {
-	root := filepath.Join(opts.output, rejectedOutDir)
+	root := rejectedRoot(opts)
 	var warnings []string
 	copied := 0
 
