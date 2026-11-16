@@ -80,6 +80,15 @@ type suggestedThresholds struct {
 	// Band is the width of the gates in robust sigmas around the good stack's
 	// median.
 	Band float64
+	// Pinned lists the gates the operator fixed on the command line; their
+	// derived value was replaced by the one given.
+	Pinned []string
+	// PinnedBand reports that --max-fwhm-sigma fixed the band, so a --keep budget
+	// had nothing to search.
+	PinnedBand bool
+	// KeepIgnored reports that --keep was given alongside a pinned band and was
+	// therefore not applied.
+	KeepIgnored bool
 }
 
 // suggestForFilter derives a threshold set for one filter from the run's
@@ -149,6 +158,10 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 	if band <= 0 {
 		band = defaultThresholds.maxFWHMSigma
 	}
+	// The band and --max-fwhm-sigma are the same number, so an explicit flag pins
+	// it and leaves --keep nothing to search.
+	out.PinnedBand = opts.explicit["max-fwhm-sigma"]
+	out.KeepIgnored = out.PinnedBand && opts.keep > 0
 	// Approved counts come from the same simulation the table uses, so the
 	// headline and the total row cannot describe different rule sets. The band
 	// search needs the same thing: a budget spent on the absolute gates alone
@@ -168,7 +181,7 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 		return goodApproved, allApproved
 	}
 
-	if opts.keep > 0 {
+	if opts.keep > 0 && !out.PinnedBand {
 		steps := int(math.Round((keepBandMax - keepBandMin) / keepBandStep))
 		band = keepBandMax
 		for i := 0; i <= steps; i++ {
@@ -183,10 +196,12 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 	}
 
 	out.Band = band
-	out.Thresholds = thresholdsFromRefs(refs, band)
 	// The transparency policy is not derived from the stack: the threshold is the
-	// operator's tolerance, and only its denominator comes from the data.
-	out.Thresholds.MinTransparency = opts.minTransparency
+	// operator's tolerance, so it is copied rather than suggested.
+	derived := thresholdsFromRefs(refs, band)
+	derived.MinTransparency = opts.minTransparency
+	out.Thresholds = overrideThresholds(derived, opts.qualityThresholds, opts.explicit)
+	out.Pinned = pinnedGates(opts.explicit)
 	out.KeptGood, out.KeptCount = approved(out.Thresholds)
 	out.Kept = float64(out.KeptCount) / float64(out.Total)
 	return out, nil
@@ -283,6 +298,67 @@ func insideStack(r ImageResult, refs map[string]stackRef) bool {
 		}
 	}
 	return true
+}
+
+// gateFlags is the flag of every threshold the suggestion writes, in table order.
+var gateFlags = []struct{ flag, key string }{
+	{"min-stars", "min-stars"},
+	{"max-ecc", "max-ecc"},
+	{"max-fwhm", "max-fwhm"},
+	{"min-snr", "min-snr"},
+	{"min-score", "min-score"},
+	{"max-halo-ratio", "max-halo-ratio"},
+	{"max-structure", "max-structure"},
+	{"min-transparency", "min-transparency"},
+}
+
+// overrideThresholds replaces the derived value of every gate the operator fixed
+// on the command line: `--suggest --min-snr 15` means "suggest everything except
+// what I already decided".
+func overrideThresholds(t suggeststore.Thresholds, q qualityThresholds, explicit map[string]bool) suggeststore.Thresholds {
+	if explicit["min-stars"] {
+		t.MinStars = q.minStars
+	}
+	if explicit["max-ecc"] {
+		t.MaxEcc = q.maxEcc
+	}
+	if explicit["max-fwhm"] {
+		t.MaxFWHM = q.maxFWHM
+	}
+	if explicit["min-snr"] {
+		t.MinSNR = q.minSNR
+	}
+	if explicit["min-score"] {
+		t.MinScore = q.minScore
+	}
+	if explicit["max-halo-ratio"] {
+		t.MaxHaloRatio = q.maxHaloRatio
+	}
+	if explicit["max-structure"] {
+		t.MaxStructure = q.maxStructure
+	}
+	if explicit["min-transparency"] {
+		t.MinTransparency = q.minTransparency
+	}
+	if explicit["max-fwhm-sigma"] {
+		t.MaxFWHMSigma = q.maxFWHMSigma
+	}
+	return t
+}
+
+// pinnedGates names the gates the operator fixed, in table order, so the report
+// and the YAML can say which values were not derived.
+func pinnedGates(explicit map[string]bool) []string {
+	var out []string
+	for _, gate := range gateFlags {
+		if explicit[gate.flag] {
+			out = append(out, gate.key)
+		}
+	}
+	if explicit["max-fwhm-sigma"] {
+		out = append(out, "max-fwhm-sigma")
+	}
+	return out
 }
 
 // referenceCopy converts the good stack's statistics into the store's shape, so a
@@ -454,23 +530,36 @@ func printSuggestion(s suggestedThresholds, current qualityThresholds, now, then
 		{"min-transparency", current.minTransparency, s.Thresholds.MinTransparency},
 	}
 
+	pinned := map[string]bool{}
+	for _, key := range s.Pinned {
+		pinned[key] = true
+	}
+	// A gate fixed on the command line was not derived, and the table must say so
+	// or a suggestion that merely echoes the operator looks like a measurement.
+	label := func(key string) string {
+		if pinned[key] {
+			return key + " *"
+		}
+		return key
+	}
+
 	// The name column is as wide as the longest label, so a new gate cannot push
 	// the columns out of line the way a hardcoded width did.
 	nameWidth := len("gate")
-	for _, label := range []string{"no metrics", "total"} {
-		if len(label) > nameWidth {
-			nameWidth = len(label)
+	for _, l := range []string{"no metrics", "total"} {
+		if len(l) > nameWidth {
+			nameWidth = len(l)
 		}
 	}
 	for _, row := range rows {
-		if len(row.key) > nameWidth {
-			nameWidth = len(row.key)
+		if len(label(row.key)) > nameWidth {
+			nameWidth = len(label(row.key))
 		}
 	}
 
 	fmt.Printf("  %-*s %10s %10s %*s → %s\n", nameWidth, "gate", "current", "suggested", arrowWidth, "rejects now", "then")
 	for _, row := range rows {
-		fmt.Printf("  %-*s %10s %10s %*d → %d\n", nameWidth, row.key,
+		fmt.Printf("  %-*s %10s %10s %*d → %d\n", nameWidth, label(row.key),
 			formatSuggestion(row.cur), formatSuggestion(row.suggested),
 			arrowWidth, now.byGate[row.key], then.byGate[row.key])
 	}
@@ -479,6 +568,12 @@ func printSuggestion(s suggestedThresholds, current qualityThresholds, now, then
 	fmt.Printf("  %-*s %10s %10s %*d → %d     (%d/%d approved now, %d/%d under the suggestion)\n",
 		nameWidth, "total", "-", "-", arrowWidth, now.rejected(), then.rejected(),
 		now.approved, now.total, then.approved, then.total)
+	if len(s.Pinned) > 0 {
+		fmt.Printf("\n  * fixed on the command line, not derived from the stack\n")
+	}
+	if s.KeepIgnored {
+		fmt.Printf("  --keep ignored: --max-fwhm-sigma fixes the band\n")
+	}
 
 	fmt.Println()
 }
@@ -528,6 +623,12 @@ func renderSuggestionYAML(s suggestedThresholds) string {
 			parts = append(parts, fmt.Sprintf("%s %s", p.Date, strings.Join(p.Flags, ",")))
 		}
 		fmt.Fprintf(&b, "# excluded from the reference: %s\n", strings.Join(parts, "; "))
+	}
+	if len(s.Pinned) > 0 {
+		fmt.Fprintf(&b, "# fixed on the command line: %s\n", strings.Join(s.Pinned, ", "))
+	}
+	if s.KeepIgnored {
+		b.WriteString("# --keep was ignored: --max-fwhm-sigma fixes the band\n")
 	}
 	b.WriteString("thresholds:\n")
 	fmt.Fprintf(&b, "  min-snr: %s\n", formatSuggestion(s.Thresholds.MinSNR))

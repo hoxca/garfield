@@ -458,7 +458,10 @@ type prepareOptions struct {
 	// `analyze --suggest` stored, instead of the config. Off by default: the
 	// config stays the thing that decides verdicts unless asked otherwise.
 	suggested bool
-	quiet     bool
+	// explicit records the flags the operator typed, which override the stored
+	// suggestion gate by gate, exactly as they override a derived one in analyze.
+	explicit map[string]bool
+	quiet    bool
 
 	// targetFlats is how many flats a session wants per filter and angle. Zero
 	// means no goal at all: the session keeps whatever its own date holds and
@@ -498,7 +501,9 @@ Example:
   garfield prepare -t M51 --dry-run`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runPrepare(prepareOpts)
+		opts := prepareOpts
+		opts.explicit = explicitFlags(cmd)
+		return runPrepare(opts)
 	},
 }
 
@@ -740,7 +745,7 @@ func runPrepare(opts prepareOptions) error {
 		if err != nil {
 			return fmt.Errorf("--suggested: %w", err)
 		}
-		gates, warnings = gatesFromSuggestions(store, sortedFilters(sessions), sessions)
+		gates, warnings = gatesFromSuggestions(store, sortedFilters(sessions), sessions, opts)
 		if len(gates.byFilter) == 0 {
 			store.Close()
 			return fmt.Errorf("--suggested: no suggested thresholds in %q; run `garfield analyze --suggest` first", suggestionPath(opts.output))

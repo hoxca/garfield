@@ -465,7 +465,17 @@ and `suggestedDecision` in the CSV carries the same thing for a whole report
 was applied).
 
 `--keep` moves the band: `--keep 0.95` loosens it until 95% of the good stack
-survives, `--keep 0.6` tightens it. The clamps are not negotiable — `min-snr`
+survives, `--keep 0.6` tightens it. It has nothing to search when
+`--max-fwhm-sigma` is given explicitly, because that flag *is* the band; the
+suggestion says so rather than silently ignoring one of the two.
+
+**A gate you set on the command line is not suggested.** `--suggest --min-snr 15`
+derives everything except `min-snr`, keeps your 15, and marks that row with `*` —
+in the table, in the YAML provenance, and in the stored suggestion, so
+`prepare --suggested` applies your value without being told again. Only flags
+typed on the command line count; a value from `conf/garfield.yaml` is the baseline
+the suggestion improves on, and treating it as fixed would make `--suggest` echo
+the shipped config forever. The clamps are not negotiable — `min-snr`
 never below 3, `max-ecc` never above 0.8, `min-stars` never below 100 (the point
 below which no metric can be computed at all) and never above half the filter's
 median star count, `min-score` never negative. A gate that clamps to 0 is a gate

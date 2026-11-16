@@ -336,7 +336,7 @@ func TestGatesFromSuggestionsWarnsAndFallsBack(t *testing.T) {
 		filters: map[string][]string{"H": {"a.FIT"}, "O": {"b.FIT"}},
 	}}
 
-	gates, warnings := gatesFromSuggestions(store, []string{"H", "O"}, sessions)
+	gates, warnings := gatesFromSuggestions(store, []string{"H", "O"}, sessions, prepareOptionsForTest("", "", t.TempDir()))
 	if got := gates.thresholds("H"); got.maxFWHM != 2.5 || got.minSNR != 20 {
 		t.Errorf("H thresholds = %+v, want the stored ones", got)
 	}
@@ -635,5 +635,118 @@ func TestSuggestionTableColumnsLineUp(t *testing.T) {
 	// the total.
 	if !strings.Contains(stdout, "min-transparency") {
 		t.Errorf("the table has no transparency row:\n%s", stdout)
+	}
+}
+
+// TestSuggestHonoursTheOperatorsGateFlags pins the precedence the operator asked
+// for: `--suggest --min-snr 15` derives everything except the gate they fixed.
+func TestSuggestHonoursTheOperatorsGateFlags(t *testing.T) {
+	results := buildStack(t, "H", uniformNights(3, 8)...)
+	prof := profileRun(results)
+
+	opts := defaultOpts()
+	opts.minSNR = 40
+	opts.minStars = 250
+	opts.explicit = map[string]bool{"min-snr": true, "min-stars": true}
+
+	s, err := suggestForFilter(results, prof, "H", opts)
+	if err != nil {
+		t.Fatalf("suggestForFilter: %v", err)
+	}
+	if s.Thresholds.MinSNR != 40 {
+		t.Errorf("min-snr = %v, want the operator's 40", s.Thresholds.MinSNR)
+	}
+	if s.Thresholds.MinStars != 250 {
+		t.Errorf("min-stars = %v, want the operator's 250", s.Thresholds.MinStars)
+	}
+	if got := strings.Join(s.Pinned, ","); got != "min-stars,min-snr" {
+		t.Errorf("Pinned = %q, want the two gates that were fixed", got)
+	}
+	// A gate the operator did not touch is still derived.
+	if s.Thresholds.MaxFWHM == 0 {
+		t.Error("max-fwhm was not derived")
+	}
+
+	// The pinned value must reach the verdicts, not just the YAML.
+	decisions := simulateSuggestion(results, s, opts, prof)
+	if decisions[0] != decisionSNR {
+		t.Errorf("decision = %q under a pinned min-snr of 40, want %q", decisions[0], decisionSNR)
+	}
+}
+
+func TestSuggestPinnedBandIgnoresKeep(t *testing.T) {
+	results := buildStack(t, "H", uniformNights(3, 8)...)
+	prof := profileRun(results)
+
+	opts := defaultOpts()
+	opts.maxFWHMSigma = 3
+	opts.keep = 0.95
+	opts.explicit = map[string]bool{"max-fwhm-sigma": true}
+
+	s, err := suggestForFilter(results, prof, "H", opts)
+	if err != nil {
+		t.Fatalf("suggestForFilter: %v", err)
+	}
+	if s.Band != 3 {
+		t.Errorf("band = %v, want the pinned 3 rather than a searched one", s.Band)
+	}
+	if !s.KeepIgnored {
+		t.Error("KeepIgnored = false: --keep had nothing to search and must say so")
+	}
+}
+
+// TestExplicitFlagsIgnoresConfigValues is the invariant the override relies on:
+// a value pushed in from the config file is not an operator choice, so --suggest
+// still derives that gate rather than echoing the shipped defaults.
+func TestExplicitFlagsIgnoresConfigValues(t *testing.T) {
+	cmd := newAnalyzeCmd(&analyzeOptions{}, func(string, analyzeOptions) error { return nil })
+
+	if err := cmd.Flags().Set("min-snr", "17"); err != nil {
+		t.Fatalf("set flag: %v", err)
+	}
+	if !explicitFlags(cmd)["min-snr"] {
+		t.Error("a flag typed with FlagSet.Set was not reported as explicit")
+	}
+
+	// applySections assigns through the Value interface, which leaves Changed
+	// false -- exactly what the config path does.
+	if err := cmd.Flags().Lookup("min-stars").Value.Set("250"); err != nil {
+		t.Fatalf("set value: %v", err)
+	}
+	if explicitFlags(cmd)["min-stars"] {
+		t.Error("a config-applied value was reported as an operator flag")
+	}
+}
+
+func TestPrepareSuggestedHonoursTheOperatorsGateFlags(t *testing.T) {
+	const target = "LBN527"
+	root := t.TempDir()
+	simpleFixture(target).build(t, root)
+	out := t.TempDir()
+
+	// The stored suggestion rejects everything at this FWHM.
+	storeSuggestion(t, out, suggestionForFilter("H", suggeststore.Thresholds{
+		MaxFWHM: 0.5, MaxEcc: 0.9, MinSNR: 0, MinScore: 0, MinStars: 0,
+		MaxFWHMSigma: 0, MaxHaloRatio: 0, MaxStructure: 0,
+	}))
+
+	opts := prepareOptionsForTest(target, root, out)
+	opts.suggested = true
+	opts.maxFWHM = 100
+	opts.explicit = map[string]bool{"max-fwhm": true}
+
+	if err := runPrepare(opts); err != nil {
+		t.Fatalf("runPrepare: %v", err)
+	}
+	recs := readFramesCSV(t, filepath.Join(out, target))
+	decision := columnIndex(t, recs[0], "decision")
+	approved := 0
+	for _, r := range recs[1:] {
+		if r[decision] == decisionApproved {
+			approved++
+		}
+	}
+	if approved == 0 {
+		t.Error("no frame approved: the command-line --max-fwhm did not override the stored suggestion")
 	}
 }

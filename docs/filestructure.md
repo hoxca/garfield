@@ -1387,6 +1387,16 @@ The suggestion table counts the rejections each gate accounts for, attributed by
 the first gate that rejected the frame in pipeline order, so the rows sum to the
 total. Both FWHM rules share one row because the report gives them one token.
 
+**A gate fixed on the command line is not derived.** `--suggest --min-snr 15`
+computes everything else and keeps 15, which is what the operator meant by passing
+both. The pinned gates are marked in the table, recorded in the YAML provenance,
+and stored in the suggestion, so `prepare --suggested` applies them without the
+flag being repeated. The distinction between "typed" and "configured" is a pflag
+one: `applySections` assigns configured values through the flag's `Value`
+interface, which leaves the flag unmarked, while `explicitFlags` reads only marked
+flags. An explicit `--max-fwhm-sigma` also fixes the band, so `--keep` is ignored
+with a note rather than fighting it.
+
 `--suggest` needs at least `fwhmMinSample` frames outside the condemned nights,
 and refuses rather than deriving a band from a handful of frames.
 

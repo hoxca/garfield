@@ -62,7 +62,7 @@ func (g gateSet) suggested() bool { return len(g.byFilter) > 0 }
 // A filter without a suggestion is a warning rather than an error: falling back
 // to the config for it is better than refusing to prepare the target, and the
 // console names the filter so the mix is visible.
-func gatesFromSuggestions(store *suggeststore.Store, filters []string, sessions []sessionPlan) (gateSet, []string) {
+func gatesFromSuggestions(store *suggeststore.Store, filters []string, sessions []sessionPlan, opts prepareOptions) (gateSet, []string) {
 	gates := gateSet{
 		base:     defaultThresholds,
 		byFilter: map[string]qualityThresholds{},
@@ -108,16 +108,20 @@ func gatesFromSuggestions(store *suggeststore.Store, filters []string, sessions 
 			}
 		}
 
+		// A gate the operator typed on this command line overrides the stored
+		// suggestion, by the same rule analyze applies to a derived one: the store
+		// supplies what was measured, the flag supplies what was decided.
+		t := overrideThresholds(rec.Thresholds, opts.qualityThresholds, opts.explicit)
 		gates.byFilter[filter] = qualityThresholds{
-			minSNR:          rec.Thresholds.MinSNR,
-			maxFWHM:         rec.Thresholds.MaxFWHM,
-			maxEcc:          rec.Thresholds.MaxEcc,
-			minScore:        rec.Thresholds.MinScore,
-			minStars:        rec.Thresholds.MinStars,
-			maxFWHMSigma:    rec.Thresholds.MaxFWHMSigma,
-			maxHaloRatio:    rec.Thresholds.MaxHaloRatio,
-			maxStructure:    rec.Thresholds.MaxStructure,
-			minTransparency: rec.Thresholds.MinTransparency,
+			minSNR:          t.MinSNR,
+			maxFWHM:         t.MaxFWHM,
+			maxEcc:          t.MaxEcc,
+			minScore:        t.MinScore,
+			minStars:        t.MinStars,
+			maxFWHMSigma:    t.MaxFWHMSigma,
+			maxHaloRatio:    t.MaxHaloRatio,
+			maxStructure:    t.MaxStructure,
+			minTransparency: t.MinTransparency,
 			// The profile is a measurement choice, not a threshold: it comes from
 			// the run's own flags, never from a suggestion.
 			moffat: gates.base.moffat,

@@ -55,6 +55,20 @@ var configExcluded = map[string]map[string]bool{
 	sectionPrepare: {"cache": true, "stack-gate": true, "suggested": true},
 }
 
+// explicitFlags returns the flags the operator typed on the command line.
+//
+// The distinction matters for `--suggest`, which must not overwrite a gate the
+// operator fixed by hand while deriving the rest. Config values look identical in
+// the flag's value but are not marked changed (see applySections), so they
+// correctly do not appear here.
+func explicitFlags(cmd *cobra.Command) map[string]bool {
+	set := map[string]bool{}
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		set[f.Name] = true
+	})
+	return set
+}
+
 // excluded reports whether a section must leave a flag alone.
 func excluded(section, flag string) bool {
 	return configExcluded[section][flag]
@@ -141,6 +155,10 @@ func applyConfig(cmd *cobra.Command) error {
 // set explicitly is left alone, so the precedence is:
 //
 //	explicit flag  >  config file  >  compiled-in default
+//
+// It assigns through the flag's Value interface rather than the FlagSet, which
+// leaves the flag unmarked: after this runs, a flag that pflag reports as changed
+// is one the operator typed. explicitFlags below depends on that.
 func applySections(cmd *cobra.Command, v *viper.Viper, path string) error {
 	var errs []error
 

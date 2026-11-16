@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -340,7 +341,9 @@ func TestAnalyzeFlagParsing(t *testing.T) {
 			if gotDir != tc.wantDir {
 				t.Errorf("resolved dir = %q, want %q", gotDir, tc.wantDir)
 			}
-			if gotOpts != tc.want {
+			// DeepEqual rather than ==: analyzeOptions carries the set of flags the
+			// operator typed, which is a map and not comparable.
+			if !reflect.DeepEqual(gotOpts, tc.want) {
 				t.Errorf("options = %+v, want %+v", gotOpts, tc.want)
 			}
 		})

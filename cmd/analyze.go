@@ -57,8 +57,11 @@ type analyzeOptions struct {
 	// of this run are not changed by it.
 	suggest bool
 	// keep is the fraction of the filter's frames a suggestion aims to keep.
-	keep  float64
-	quiet bool
+	keep float64
+	// explicit records the flags the operator typed, so `--suggest` derives the
+	// gates they did not fix and keeps the ones they did.
+	explicit map[string]bool
+	quiet    bool
 }
 
 var analyzeOpts = analyzeOptions{}
@@ -84,7 +87,9 @@ Example:
 		if len(args) == 1 {
 			dir = args[0]
 		}
-		return runAnalyze(dir, analyzeOpts)
+		opts := analyzeOpts
+		opts.explicit = explicitFlags(cmd)
+		return runAnalyze(dir, opts)
 	},
 }
 
