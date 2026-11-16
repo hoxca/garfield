@@ -188,6 +188,7 @@ Flags:
       --conv-workers int           inner convolution workers (0 = auto) [config: garfield.yaml]
       --copy-rejected              copy rejected frames into <output>/rejected/<category>/
   -d, --dir string                 directory containing the FITS files [config: garfield.yaml] (default "images")
+      --display                    show the stored suggestion for --filter, or every stored filter of a --target; reads no frames (requires --output)
       --filter string              only analyse frames of this filter (one of LRGBSHO)
       --format string              output format: console, csv or both (default "console")
   -h, --help                       help for analyze
@@ -228,6 +229,7 @@ Global Flags:
 | `--format` | `console`, `csv`, or `both`. `csv`/`both` need `-o`. |
 | `-o`, `--output` | **a directory**, not a file. The report is written inside it as `analyse_report.csv`, or `analyse_report_<FILTER>.csv` when `--filter` is set or the run is scoped by `--target`. Without it, `--format csv` writes to stdout. |
 | `--copy-rejected` | copy every rejected frame into `<output>/rejected/<category>/`, one folder per rejection reason. Requires `-o`. |
+| `--display` | print the suggestion stored under `<output>/…/cache/suggestions.jsonl` instead of analysing: one filter with `--filter`, every stored one with `--target`. Reads no frames and needs only `-o`. |
 | `-t, --target` | analyse `<input>/Lights/<target>`, the same tree `prepare` reads, and write into `<output>/<target>/metrics/`. Implies `-r`. Cannot be combined with `--dir`. Not a config key. |
 | `-i, --input` | acquisition root used with `--target`. Config key `analyze.input`. |
 | `--cache` | reuse the measurements stored in `<output>/cache/measurements.jsonl` (`<output>/<target>/metrics/cache/` for a target run), and record this run's. Requires `-o`: the store lives in the output directory, never in the acquisition tree. See [Reusing measurements](#reusing-measurements-between-runs). |
@@ -504,6 +506,33 @@ first gate that rejected it in pipeline order, so the column sums to the total a
 matches the `decision` column. A frame failing FWHM and score together is counted
 under `max-fwhm`, which is also what the report says. Both FWHM rules share that
 row because the report gives them one token.
+
+**`--display` replays the stored suggestion.** Once `--suggest` has run, the
+suggestion lives in `<output>/…/cache/suggestions.jsonl`, and `--display` prints
+its table without measuring a frame or touching the acquisition volume:
+
+```
+garfield analyze -t SH2-142 -o /Volumes/T7/Workspace --filter O --display
+
+suggested thresholds for filter O (75 frame(s), 5 night(s), 2026-08-12..2026-08-18)
+  reference excludes 1 night(s): 2026-08-13 (trailed,sparse)
+  band 4.0 sigma around the good stack: keeps 72/75 of the filter overall (96%)
+
+  gate                current  suggested  rejects
+  min-stars               380        100        0
+  max-ecc                0.64       0.61        1
+  ...
+  min-transparency        0.8        0.8        2
+  no metrics                -          -        0
+  total                     -          -        3     (72/75 under the suggestion)
+```
+
+Without `--filter` it prints every filter the store holds, in wheel order. The
+table is the derivation's snapshot: `current` is the configuration in force when
+the suggestion was made, and `rejects` is what it would have rejected then — both
+travel in the record, because a later run cannot recompute them without the
+frames. A record written before `--display` existed has no counts; the command
+says so and asks for one more `--suggest`.
 
 The run's own verdicts are still the configured ones. Frames the suggestion would
 judge differently carry a marker, so the what-if is per frame and not only a

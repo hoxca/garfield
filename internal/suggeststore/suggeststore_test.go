@@ -67,6 +67,69 @@ func TestPutAndReopen(t *testing.T) {
 	}
 }
 
+// The display snapshot is additive: a record written before it existed still
+// loads (and simply has no table), and one carrying it round-trips intact.
+func TestDisplaySnapshotRoundTrip(t *testing.T) {
+	path := storePath(t)
+
+	old := rec("H", 2.9)
+	withTable := rec("O", 1.8)
+	withTable.Display = &Display{
+		Current:   Thresholds{MaxFWHM: 3.2, MinStars: 380, MinTransparency: 0.8},
+		Rejected:  map[string]int{"max-ecc": 1, "min-transparency": 2},
+		NoMetrics: 1,
+		Total:     20,
+		Approved:  17,
+		Pinned:    []string{"min-snr"},
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := s.Put(old); err != nil {
+		t.Fatalf("Put old: %v", err)
+	}
+	if err := s.Put(withTable); err != nil {
+		t.Fatalf("Put with table: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer s2.Close()
+
+	gotOld, _ := s2.Lookup("H")
+	if gotOld.Display != nil {
+		t.Errorf("record without a snapshot gained one: %+v", gotOld.Display)
+	}
+
+	got, ok := s2.Lookup("O")
+	if !ok {
+		t.Fatal("O not found after reopen")
+	}
+	if got.Display == nil {
+		t.Fatal("display snapshot did not survive the round trip")
+	}
+	if got.Display.Current.MaxFWHM != 3.2 || got.Display.Current.MinStars != 380 {
+		t.Errorf("current thresholds = %+v, want max-fwhm 3.2 and min-stars 380", got.Display.Current)
+	}
+	if got.Display.Total != 20 || got.Display.Approved != 17 || got.Display.NoMetrics != 1 {
+		t.Errorf("counts = %d/%d/%d, want 17 approved of 20 with 1 unmeasured",
+			got.Display.Approved, got.Display.Total, got.Display.NoMetrics)
+	}
+	if got.Display.Rejected["max-ecc"] != 1 || got.Display.Rejected["min-transparency"] != 2 {
+		t.Errorf("rejections = %v, want max-ecc 1 and min-transparency 2", got.Display.Rejected)
+	}
+	if len(got.Display.Pinned) != 1 || got.Display.Pinned[0] != "min-snr" {
+		t.Errorf("pinned = %v, want [min-snr]", got.Display.Pinned)
+	}
+}
+
 func TestLastWriteWins(t *testing.T) {
 	path := storePath(t)
 	s, _ := Open(path)

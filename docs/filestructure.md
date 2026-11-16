@@ -927,6 +927,7 @@ Much looser. Any directory of FITS frames works.
 | `--format` | `console` (or `csv`, `both`) |
 | `--output`, `-o` | *(directory; the report is `analyse_report.csv` inside it)* |
 | `--cache` | `false` (requires `-o`) |
+| `--display` | `false` (requires `-o`; reads the store, not the frames) |
 | `--input`, `-i` | `$HOME` acquisition root, used with `--target` |
 | `--target`, `-t` | *(no target: `--dir` is scanned)* |
 | `--stack-gate` | `false` |
@@ -1410,6 +1411,23 @@ a similar airmass, so its denominator is always taken from the frames in hand.
 The counts in the suggestion table and the "keeps N/M" headline are produced by
 the same simulation, so `--keep` spends its budget on the verdicts you actually
 get, not on the absolute gates alone.
+
+**`--display` prints that table again, later.** The record also keeps the
+thresholds that were current when it was derived and the verdicts the suggestion
+would produce, counted per gate, so `analyze --display` can replay the table
+without the frames or the acquisition volume:
+
+```
+garfield analyze -t SH2-142 -o /Volumes/T7/Workspace --filter O --display
+garfield analyze -t SH2-142 -o /Volumes/T7/Workspace --display   # every stored filter, wheel order
+```
+
+The table is a snapshot by construction: "current" is the configuration in force
+at derivation, and the rejects are what the suggestion would have rejected then.
+Recomputing either from today's config or today's frames would describe a run that
+never happened. Records written before the snapshot existed carry no counts;
+`--display` names them and asks for one more `--suggest` rather than printing
+zeros.
 
 The suggestion table counts the rejections each gate accounts for, attributed by
 the first gate that rejected the frame in pipeline order, so the rows sum to the

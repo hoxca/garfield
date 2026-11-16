@@ -59,6 +59,24 @@ type SessionNote struct {
 	Flags []string `json:"flags,omitempty"`
 }
 
+// Display is the snapshot `analyze --display` prints: the thresholds that were
+// in force when the suggestion was derived, and the verdicts the suggestion would
+// produce, counted per gate.
+//
+// It is absent from records written before --display existed, which is how a
+// record too old to display is recognised without a schema bump: every field the
+// record already had still means what it meant.
+type Display struct {
+	Current   Thresholds     `json:"current"`
+	Rejected  map[string]int `json:"rejected"`
+	NoMetrics int            `json:"noMetrics"`
+	Total     int            `json:"total"`
+	Approved  int            `json:"approved"`
+	// Pinned lists the gates fixed on the command line, so the table can mark
+	// values that were given rather than derived.
+	Pinned []string `json:"pinned,omitempty"`
+}
+
 // Suggestion is one filter's suggested thresholds and the context behind them.
 type Suggestion struct {
 	SuggestVersion int    `json:"suggestVersion"`
@@ -78,6 +96,7 @@ type Suggestion struct {
 	TransparencyBase float64       `json:"transparencyBase,omitempty"`
 	Thresholds       Thresholds    `json:"thresholds"`
 	Sessions         []SessionNote `json:"sessions,omitempty"`
+	Display          *Display      `json:"display,omitempty"`
 	Created          time.Time     `json:"created"`
 }
 

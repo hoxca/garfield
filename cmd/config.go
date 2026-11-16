@@ -51,7 +51,7 @@ var configPath string
 // split.
 var configExcluded = map[string]map[string]bool{
 	sectionAnalyze: {"output": true, "filter": true, "cache": true, "stack-gate": true,
-		"suggest": true, "keep": true, "suggested": true, "target": true},
+		"suggest": true, "display": true, "keep": true, "suggested": true, "target": true},
 	sectionPrepare: {"cache": true, "stack-gate": true, "suggested": true},
 }
 

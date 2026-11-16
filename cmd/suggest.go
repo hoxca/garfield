@@ -503,70 +503,123 @@ func simulateSuggestion(results []ImageResult, s suggestedThresholds, opts analy
 	return simulateThresholds(results, s.Filter, s.Thresholds, s.Reference, opts, prof)
 }
 
+// gateValue is one threshold row of the suggestion table.
+type gateValue struct {
+	key   string
+	value float64
+}
+
+// gateValues lists the gates in table order for whichever threshold set is being
+// shown, so the stored suggestion and the table --suggest prints cannot disagree
+// about order or formatting.
+func gateValues(t suggeststore.Thresholds) []gateValue {
+	return []gateValue{
+		{"min-stars", float64(t.MinStars)},
+		{"max-ecc", t.MaxEcc},
+		{"max-fwhm", t.MaxFWHM},
+		{"min-snr", t.MinSNR},
+		{"min-score", t.MinScore},
+		{"max-halo-ratio", t.MaxHaloRatio},
+		{"max-structure", t.MaxStructure},
+		{"min-transparency", t.MinTransparency},
+	}
+}
+
+// thresholdsFromQuality maps the run's thresholds into the form the suggestion
+// store records, so the "current" column of a stored suggestion survives the run
+// that derived it.
+func thresholdsFromQuality(q qualityThresholds) suggeststore.Thresholds {
+	return suggeststore.Thresholds{
+		MinSNR:          q.minSNR,
+		MaxFWHM:         q.maxFWHM,
+		MaxEcc:          q.maxEcc,
+		MinScore:        q.minScore,
+		MinStars:        q.minStars,
+		MaxFWHMSigma:    q.maxFWHMSigma,
+		MaxHaloRatio:    q.maxHaloRatio,
+		MaxStructure:    q.maxStructure,
+		MinTransparency: q.minTransparency,
+	}
+}
+
+// gateLabel marks a gate the operator fixed rather than one derived from the
+// stack: a suggestion that merely echoes the operator must not look measured.
+func gateLabel(key string, pinned map[string]bool) string {
+	if pinned[key] {
+		return key + " *"
+	}
+	return key
+}
+
+// gateNameWidth is as wide as the longest label or footer, so a new gate cannot
+// push the columns out of line the way a hardcoded width did.
+func gateNameWidth(rows []gateValue, pinned map[string]bool) int {
+	w := len("gate")
+	for _, l := range []string{"no metrics", "total"} {
+		if len(l) > w {
+			w = len(l)
+		}
+	}
+	for _, row := range rows {
+		if l := gateLabel(row.key, pinned); len(l) > w {
+			w = len(l)
+		}
+	}
+	return w
+}
+
+// excludedNotes keeps the session notes that carry a flag, the nights the
+// suggestion left out of its reference.
+func excludedNotes(notes []suggeststore.SessionNote) []suggeststore.SessionNote {
+	var out []suggeststore.SessionNote
+	for _, n := range notes {
+		if len(n.Flags) > 0 {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// suggestionHeading prints the two lines both tables open with: the population
+// the suggestion describes, and the nights the reference left out.
+func suggestionHeading(filter string, pop suggeststore.Population, notes []suggeststore.SessionNote) {
+	fmt.Printf("\nsuggested thresholds for filter %s (%d frame(s), %d night(s), %s..%s)\n",
+		filter, pop.N, pop.Sessions, pop.From, pop.To)
+	excluded := excludedNotes(notes)
+	if len(excluded) == 0 {
+		return
+	}
+	parts := make([]string, 0, len(excluded))
+	for _, n := range excluded {
+		parts = append(parts, fmt.Sprintf("%s (%s)", n.Date, strings.Join(n.Flags, ",")))
+	}
+	fmt.Printf("  reference excludes %d night(s): %s\n", len(excluded), strings.Join(parts, "; "))
+}
+
 // printSuggestion reports the suggestion as a table: the values, and what each
 // gate costs now and would cost under the suggestion.
 //
 // The count column is aligned on the arrow so the eye can run down the deltas,
 // and the header uses the same field widths as the rows.
 func printSuggestion(s suggestedThresholds, current qualityThresholds, now, then rejectionCounts) {
-	fmt.Printf("\nsuggested thresholds for filter %s (%d frame(s), %d night(s), %s..%s)\n",
-		s.Filter, s.Population.N, s.Population.Sessions, s.Population.From, s.Population.To)
-	if len(s.Excluded) > 0 {
-		var parts []string
-		for _, p := range s.Excluded {
-			parts = append(parts, fmt.Sprintf("%s (%s)", p.Date, strings.Join(p.Flags, ",")))
-		}
-		fmt.Printf("  reference excludes %d night(s): %s\n", len(s.Excluded), strings.Join(parts, "; "))
-	}
+	suggestionHeading(s.Filter, s.Population, s.Sessions)
 	fmt.Printf("  band %.1f sigma around the good stack: keeps %d/%d good frames; %d/%d of the filter overall (%.0f%%)\n\n",
 		s.Band, s.KeptGood, s.GoodCount, s.KeptCount, s.Total, 100*s.Kept)
 
 	const arrowWidth = 12
-	rows := []struct {
-		key            string
-		cur, suggested float64
-	}{
-		{"min-stars", float64(current.minStars), float64(s.Thresholds.MinStars)},
-		{"max-ecc", current.maxEcc, s.Thresholds.MaxEcc},
-		{"max-fwhm", current.maxFWHM, s.Thresholds.MaxFWHM},
-		{"min-snr", current.minSNR, s.Thresholds.MinSNR},
-		{"min-score", current.minScore, s.Thresholds.MinScore},
-		{"max-halo-ratio", current.maxHaloRatio, s.Thresholds.MaxHaloRatio},
-		{"max-structure", current.maxStructure, s.Thresholds.MaxStructure},
-		{"min-transparency", current.minTransparency, s.Thresholds.MinTransparency},
-	}
+	cur := gateValues(thresholdsFromQuality(current))
+	sug := gateValues(s.Thresholds)
 
 	pinned := map[string]bool{}
 	for _, key := range s.Pinned {
 		pinned[key] = true
 	}
-	// A gate fixed on the command line was not derived, and the table must say so
-	// or a suggestion that merely echoes the operator looks like a measurement.
-	label := func(key string) string {
-		if pinned[key] {
-			return key + " *"
-		}
-		return key
-	}
-
-	// The name column is as wide as the longest label, so a new gate cannot push
-	// the columns out of line the way a hardcoded width did.
-	nameWidth := len("gate")
-	for _, l := range []string{"no metrics", "total"} {
-		if len(l) > nameWidth {
-			nameWidth = len(l)
-		}
-	}
-	for _, row := range rows {
-		if len(label(row.key)) > nameWidth {
-			nameWidth = len(label(row.key))
-		}
-	}
+	nameWidth := gateNameWidth(sug, pinned)
 
 	fmt.Printf("  %-*s %10s %10s %*s → %s\n", nameWidth, "gate", "current", "suggested", arrowWidth, "rejects now", "then")
-	for _, row := range rows {
-		fmt.Printf("  %-*s %10s %10s %*d → %d\n", nameWidth, label(row.key),
-			formatSuggestion(row.cur), formatSuggestion(row.suggested),
+	for i, row := range sug {
+		fmt.Printf("  %-*s %10s %10s %*d → %d\n", nameWidth, gateLabel(row.key, pinned),
+			formatSuggestion(cur[i].value), formatSuggestion(row.value),
 			arrowWidth, now.byGate[row.key], then.byGate[row.key])
 	}
 	fmt.Printf("  %-*s %10s %10s %*d → %d\n", nameWidth, "no metrics", "-", "-",
@@ -581,6 +634,44 @@ func printSuggestion(s suggestedThresholds, current qualityThresholds, now, then
 		fmt.Printf("  --keep ignored: --max-fwhm-sigma fixes the band\n")
 	}
 
+	fmt.Println()
+}
+
+// printStoredSuggestion replays the table a completed suggestion produced,
+// reading only what its record stored. The counts are the ones the derivation
+// measured, and so are the "current" values: recomputing either from today's
+// config would describe a run that never happened.
+//
+// The record must carry Display; the caller checks, because a record without it
+// predates this command.
+func printStoredSuggestion(rec suggeststore.Suggestion) {
+	d := rec.Display
+	suggestionHeading(rec.Filter, rec.Population, rec.Sessions)
+	kept := int(math.Round(rec.Kept * float64(rec.Population.N)))
+	fmt.Printf("  band %.1f sigma around the good stack: keeps %d/%d of the filter overall (%.0f%%)\n\n",
+		rec.Band, kept, rec.Population.N, 100*rec.Kept)
+
+	const rejectWidth = 8
+	cur := gateValues(d.Current)
+	sug := gateValues(rec.Thresholds)
+	pinned := map[string]bool{}
+	for _, key := range d.Pinned {
+		pinned[key] = true
+	}
+	nameWidth := gateNameWidth(sug, pinned)
+
+	fmt.Printf("  %-*s %10s %10s %*s\n", nameWidth, "gate", "current", "suggested", rejectWidth, "rejects")
+	for i, row := range sug {
+		fmt.Printf("  %-*s %10s %10s %*d\n", nameWidth, gateLabel(row.key, pinned),
+			formatSuggestion(cur[i].value), formatSuggestion(row.value),
+			rejectWidth, d.Rejected[row.key])
+	}
+	fmt.Printf("  %-*s %10s %10s %*d\n", nameWidth, "no metrics", "-", "-", rejectWidth, d.NoMetrics)
+	fmt.Printf("  %-*s %10s %10s %*d     (%d/%d under the suggestion)\n",
+		nameWidth, "total", "-", "-", rejectWidth, d.Total-d.Approved, d.Approved, d.Total)
+	if len(d.Pinned) > 0 {
+		fmt.Printf("\n  * fixed on the command line, not derived from the stack\n")
+	}
 	fmt.Println()
 }
 
@@ -657,8 +748,11 @@ func suggestionFileName(filter string) string {
 	return "suggested_" + filter + ".yaml"
 }
 
-// writeSuggestion stores the suggestion and writes the YAML artifact.
-func writeSuggestion(output string, s suggestedThresholds) error {
+// writeSuggestion stores the suggestion, the table it printed, and the YAML
+// artifact. The "current" thresholds and the verdict counts are recorded with it:
+// `--display` has no frames to recompute them from, and a snapshot is what makes
+// that table describe the run that produced it rather than today's config.
+func writeSuggestion(output string, s suggestedThresholds, current qualityThresholds, then rejectionCounts) error {
 	rec := suggeststore.Suggestion{
 		SuggestVersion: suggeststore.SuggestVersion,
 		MeasureVersion: measureVersion,
@@ -671,6 +765,14 @@ func writeSuggestion(output string, s suggestedThresholds) error {
 		Thresholds:     s.Thresholds,
 		Sessions:       s.Sessions,
 		Created:        time.Now().UTC(),
+		Display: &suggeststore.Display{
+			Current:   thresholdsFromQuality(current),
+			Rejected:  then.byGate,
+			NoMetrics: then.noMetrics,
+			Total:     then.total,
+			Approved:  then.approved,
+			Pinned:    s.Pinned,
+		},
 	}
 
 	store, err := suggeststore.Open(suggestionPath(output))

@@ -62,6 +62,10 @@ type analyzeOptions struct {
 	// measurements and writes it beside the report. It is advisory: the verdicts
 	// of this run are not changed by it.
 	suggest bool
+	// display prints the suggestion stored in the output's cache instead of
+	// analysing anything: the thresholds and the counts behind them come from the
+	// record, never from frames.
+	display bool
 	// keep is the fraction of the filter's frames a suggestion aims to keep.
 	keep float64
 	// explicit records the flags the operator typed, so `--suggest` derives the
@@ -123,6 +127,8 @@ func init() {
 		"reject frames from a night that is systematically worse than its filter's stack")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.suggest, "suggest", false,
 		"suggest thresholds from the measured stack: one filter with --filter, or every filter of a --target (requires --output)")
+	analyzeCmd.Flags().BoolVar(&analyzeOpts.display, "display", false,
+		"show the stored suggestion for --filter, or every stored filter of a --target; reads no frames (requires --output)")
 	analyzeCmd.Flags().Float64Var(&analyzeOpts.keep, "keep", defaultKeepBudget,
 		"fraction of the good stack a --suggest run aims to keep; 0 = the default band")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.quiet, "quiet", false, "suppress console output")
@@ -802,6 +808,21 @@ func warnDuplicateBasenames(fitsFiles []string) []string {
 // a report mixing them would judge O frames against L's noise. Anything else runs
 // once, over whatever directory it was given.
 func runAnalyze(dir string, opts analyzeOptions) error {
+	// --display is a read of the suggestion store, not an analysis: it must work
+	// with the acquisition volume unmounted, so nothing below this point (the
+	// target's existence, the walk, the measurements) is needed.
+	if opts.display {
+		if opts.suggest {
+			return fmt.Errorf("--display shows the stored suggestion; --suggest derives a new one")
+		}
+		filter, err := normaliseFilter(opts.filter)
+		if err != nil {
+			return err
+		}
+		opts.filter = filter
+		return runDisplay(opts)
+	}
+
 	// A target names the tree prepare reads, so the reports land where prepare's do.
 	// --dir is the ad-hoc way to analyse a directory and cannot be combined with it.
 	if opts.target != "" {
@@ -1125,7 +1146,7 @@ func runAnalyzeOnce(dir string, opts analyzeOptions) error {
 		}
 		nowCounts = countRejections(results, nil)
 		thenCounts = countRejections(results, simulated)
-		if err := writeSuggestion(reportDir, s); err != nil {
+		if err := writeSuggestion(reportDir, s, opts.qualityThresholds, thenCounts); err != nil {
 			return err
 		}
 	}

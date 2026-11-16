@@ -158,7 +158,8 @@ func TestWriteSuggestionPersistsAndWritesTheArtifact(t *testing.T) {
 	s := suggestionFor(t, results, "H", 0)
 	dir := t.TempDir()
 
-	if err := writeSuggestion(dir, s); err != nil {
+	then := rejectionCounts{byGate: map[string]int{"max-ecc": 1}, total: len(results), approved: len(results) - 1}
+	if err := writeSuggestion(dir, s, defaultThresholds, then); err != nil {
 		t.Fatalf("writeSuggestion: %v", err)
 	}
 
@@ -190,6 +191,22 @@ func TestWriteSuggestionPersistsAndWritesTheArtifact(t *testing.T) {
 	}
 	if rec.Population.N != len(results) {
 		t.Errorf("population n = %d, want %d", rec.Population.N, len(results))
+	}
+	// The table --display replays travels with the record: without the current
+	// thresholds and the verdict counts, a later run would have to invent them.
+	if rec.Display == nil {
+		t.Fatal("stored record has no display snapshot")
+	}
+	if rec.Display.Current.MaxFWHM != defaultThresholds.maxFWHM {
+		t.Errorf("stored current max-fwhm = %v, want %v",
+			rec.Display.Current.MaxFWHM, defaultThresholds.maxFWHM)
+	}
+	if rec.Display.Approved != len(results)-1 || rec.Display.Total != len(results) {
+		t.Errorf("stored counts = %d/%d, want %d/%d",
+			rec.Display.Approved, rec.Display.Total, len(results)-1, len(results))
+	}
+	if rec.Display.Rejected["max-ecc"] != 1 {
+		t.Errorf("stored rejections = %v, want max-ecc: 1", rec.Display.Rejected)
 	}
 }
 
