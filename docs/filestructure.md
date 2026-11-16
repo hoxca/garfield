@@ -1321,17 +1321,22 @@ reference    = p90(SNR of the frames within a similar airmass)
                fallback: the frames within an hour either side, when AIRMASS is
                not in the header
 transparency = SNR / reference
-untransparent = transparency < --min-transparency        (default 0.90)
+untransparent = transparency < --min-transparency        (default 0.80)
 ```
 
 Airmass is the grouping variable because it is the part of the drift that geometry
 predicts: a frame at 1.4 is dimmed by where the telescope pointed, not by the
 weather, so judging it against a frame at 1.05 blames the sky position. Grouping
 by airmass also lets the reference span the whole night, which is a larger sample
-and does not let a cloudy hour become its own benchmark. On one target it caught
-12 of the 15 frames the observer identified as cloudy, flagged none of the 20
-confirmed-clear ones, and rejected 19% of the night against 26% for the hourly
-window it replaced.
+and does not let a cloudy hour become its own benchmark.
+
+The default is set for the obvious cases only. On the target it was calibrated
+against, 0.80 rejected the whole of the cloud passage the observer had marked and
+none of the 20 confirmed-clear frames -- 9% of the night -- while leaving the
+milder dips in place; 0.90 caught 12 of the 15 marked frames but rejected 19% of
+the night, and 0.95 rejected half of it. The threshold is a tolerance, not a
+measurement, so it is the one value in this section expected to be retuned per
+observer.
 
 The sky level is deliberately *not* part of the model: cloud raises the sky while
 it dims the stars, so predicting the contrast from the sky would absorb the very

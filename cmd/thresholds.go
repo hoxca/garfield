@@ -30,10 +30,15 @@ type qualityThresholds struct {
 	maxHaloRatio float64
 	maxStructure float64
 	// minTransparency bounds a frame's contrast-to-noise against the best of the
-	// hour around it: 0.90 means a frame more than 10% flatter than its
-	// neighbourhood is rejected as untransparent. It is a relative test like the
+	// frames taken through a similar airmass: 0.80 means a frame a fifth flatter
+	// than those is rejected as untransparent. It is a relative test like the
 	// cloud and structure rules, because a night can be uniformly hazy and every
 	// frame then looks normal against an absolute cut.
+	//
+	// 0.80 is deliberately conservative: on the target it was calibrated against it
+	// rejects only an unmistakable loss of contrast -- the whole of a cloud passage
+	// and none of the clear frames -- and leaves milder dips to the operator. Set
+	// 0.90 to catch those too, at roughly twice the rejected frames.
 	minTransparency float64
 	// moffat selects the PSF profile used to measure width and shape. It is not
 	// a threshold: it decides how the metrics are obtained, not whether a frame
@@ -66,7 +71,7 @@ var defaultThresholds = qualityThresholds{
 	maxStructure: 1.12,
 	// Transparency is a bystander gate: it should catch a cloud that visibly
 	// dims the field, not the ordinary frame-to-frame scatter.
-	minTransparency: 0.90,
+	minTransparency: 0.80,
 	// moffat is true, matching conf/garfield.yaml: a Gaussian reads the width of
 	// a real PSF about 0.3 px wide on undersampled frames, which makes the FWHM
 	// gate compare numbers that are not the half-maximum contour.

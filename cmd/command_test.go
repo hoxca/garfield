@@ -165,7 +165,7 @@ func TestAnalyzeFlagDefaults(t *testing.T) {
 		"min-stars":            "380",
 		"max-fwhm-sigma":       "4",
 		"moffat":               "true",
-		"min-transparency":     "0.9",
+		"min-transparency":     "0.8",
 		"limit-computed-stars": "500",
 		"format":               "console",
 		"output":               "",

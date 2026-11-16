@@ -27,11 +27,14 @@ thresholds:
   # Applies to analyze AND prepare. Metrics from the two modes are not
   # comparable: scores rise when FWHM reads smaller.
   # Transparency. A frame whose image contrast-to-noise is below this fraction of
-  # the best of the hour around it is rejected: 0.90 means "more than 10%
+  # the best of the frames at a similar airmass is rejected: 0.80 means "a fifth
   # flatter than its neighbours". Relative and local, because airmass and
   # moonlight drift over a night and a uniformly hazy hour is not cloud.
-  # 0 disables the rule.
-  min-transparency: 0.90
+  #
+  # Conservative by default: it rejects an unmistakable cloud passage and leaves
+  # milder dips to the operator. 0.90 catches those too, at about twice the
+  # rejected frames. 0 disables the rule.
+  min-transparency: 0.80
 
   moffat: true
 
