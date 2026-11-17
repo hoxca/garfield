@@ -1167,6 +1167,11 @@ filename's date field, since it is never rewritten (§10).
 session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass;sunBelow
 ```
 
+Rows are ordered oldest first within each session and filter, by the acquisition
+stamp in the filename. Sessions are chronological, so a given filter's rows run in
+the order the frames were taken across the whole file; `analyze`'s report uses the
+same ordering.
+
 `decision` holds one of **eight** values, which are **data, not messages** —
 anything parsing this file must match on them, and the strings are part of the
 contract:

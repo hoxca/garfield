@@ -1273,6 +1273,10 @@ func planSession(sessionDir string, flats *flatCache, number int, date string, t
 		if len(files) == 0 {
 			continue
 		}
+		// listFITS returns names alphabetically, which puts a frame's index before
+		// its timestamp. The report lists a session's frames oldest first, so sort
+		// on the acquisition stamp; the name is the tiebreak.
+		sortFramesByTime(files)
 		s.filters[filter] = files
 		s.lightCount += len(files)
 

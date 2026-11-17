@@ -291,6 +291,12 @@ Every metric column is padded to the widest value in the run, so a four-digit
 star count widens the column for every line instead of pushing the fields to its
 right out of line.
 
+Frames are ordered by their acquisition stamp, oldest first — the
+`_YYYYMMDD_HHMMSS_` part of the name — so a night that crosses midnight reads in
+the order it happened and a frame index never overrides the clock. The rows of
+`analyse_report_<FILTER>.csv` follow the same order. Names with no stamp (flats,
+hand-renamed files) come last, in path order.
+
 `478/2594` is `starCount/detectedStars`: measured over found.
 
 The header carries the session-relative thresholds in force, so the log says
@@ -988,7 +994,10 @@ came from that night. `filters` and `missingFlats` list letters in wheel order,
 
 `metrics/frames.csv` — one row per analysed frame, approved or not, with the
 same six `decision` values as `analyze`. Metric columns come from the same row
-type `analyze` writes, so the two commands' CSVs cannot disagree.
+type `analyze` writes, so the two commands' CSVs cannot disagree. Rows run oldest
+first within each session/filter block, by the filename's acquisition stamp; the
+sessions themselves are chronological, so each filter reads in the order it was
+shot across the whole file.
 
 Both reports record the **bare** session name, never a path, so consumers join on
 the `session` column.

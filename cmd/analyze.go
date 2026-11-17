@@ -1123,11 +1123,11 @@ func runAnalyzeOnce(dir string, opts analyzeOptions) error {
 	fitsFiles = framesForFilter(fitsFiles, filter)
 
 	// WalkDir visits each directory in lexical order, but that is per directory,
-	// so a/z.FIT is still reached before b/a.FIT. Sorting the full paths is what
-	// makes CSV rows come out alphabetically rather than in completion order,
-	// which is otherwise nondeterministic across runs. The flat scan reads a
-	// single directory, so this only restores that ordering for it.
-	sort.Strings(fitsFiles)
+	// so a/z.FIT is still reached before b/a.FIT. Ordering by the acquisition
+	// stamp is what makes the console and the CSV read oldest first, including a
+	// night that crosses midnight and a directory holding several frame indices;
+	// the path is the tiebreak, so the order is deterministic across runs.
+	sortFramesByTime(fitsFiles)
 
 	if len(fitsFiles) == 0 {
 		if filter != "" {
@@ -1515,6 +1515,42 @@ func frameTimestamp(name string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return ts, true
+}
+
+// frameKey is one path's position in a chronological run, computed once so the
+// sort does not re-parse a name on every comparison.
+type frameKey struct {
+	path  string
+	at    time.Time
+	timed bool
+}
+
+// sortFramesByTime orders frames oldest first by the acquisition stamp in the
+// name, which is the clock the console label and the session clustering already
+// use. The path breaks ties, so same-second frames stay deterministic.
+//
+// Names without a stamp -- a flat, a hand-renamed frame -- keep their path order
+// after the timed ones, so a run over such a directory behaves as it did before
+// ordering existed.
+func sortFramesByTime(paths []string) {
+	keys := make([]frameKey, len(paths))
+	for i, path := range paths {
+		at, ok := frameTimestamp(filepath.Base(path))
+		keys[i] = frameKey{path: path, at: at, timed: ok}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		if a.timed != b.timed {
+			return a.timed
+		}
+		if a.timed && !a.at.Equal(b.at) {
+			return a.at.Before(b.at)
+		}
+		return a.path < b.path
+	})
+	for i := range keys {
+		paths[i] = keys[i].path
+	}
 }
 
 // sessionKeys assigns each result a grouping key of "<session>|<filter>".
