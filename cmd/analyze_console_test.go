@@ -5,6 +5,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/astrogo/fitsio"
+
+	"garfield/internal/sun"
 )
 
 // consoleHaloFrame writes a frame large enough for the halo rule's pedestal
@@ -17,6 +22,117 @@ func consoleHaloFrame(t *testing.T, dir, name string, haloAmp float64) {
 		brightAmp: 5000, brightHalo: haloAmp,
 		seed: 7,
 	})
+}
+
+// A frame's star count can be two digits or four, and a field may be missing on
+// some frames of a run. Neither may move the columns to its right.
+func TestConsoleColumnsAlign(t *testing.T) {
+	results := []ImageResult{
+		{Filename: "a.FIT", StarCount: 90, DetectedStars: 850,
+			AvgFWHM: 1.17, AvgEccentricity: 0.481, SNR: 14.42, Score: 6.383,
+			FWHMRatio: 0.90, StructRatio: 0.997, SunBelow: 31.18, Decision: decisionApproved},
+		{Filename: "b.FIT", StarCount: 1020, DetectedStars: 2672,
+			AvgFWHM: 1.39, AvgEccentricity: 0.421, SNR: 14.13, Score: 5.885,
+			FWHMRatio: 1.06, SunBelow: 27.66, Decision: decisionTransparency},
+		{Filename: "c.FIT", StarCount: 442, DetectedStars: 2116,
+			AvgFWHM: 1.39, AvgEccentricity: 0.444, SNR: 14.64, Score: 5.852,
+			FWHMRatio: 1.07, StructRatio: 1.020, SunBelow: 29.10,
+			Decision: decisionClouds, SuggestedDecision: decisionFWHM},
+	}
+	layout := newConsoleLayout(results)
+	rows := make([]string, len(results))
+	for i, r := range results {
+		rows[i] = layout.row(i+1, len(results), r.Filename, r)
+	}
+
+	for _, label := range []string{"stars", "FWHM=", "Ecc=", "SNR=", "Score=", "fwhmRatio=", "struct=", "sunBelow="} {
+		want := strings.Index(rows[0], label)
+		for i, row := range rows {
+			if got := strings.Index(row, label); got != want {
+				t.Errorf("row %d: %q at column %d, want %d\n%s\n%s", i+1, label, got, want, rows[0], row)
+			}
+		}
+	}
+
+	// A frame that did not measure struct keeps the column, with a dash.
+	if !strings.Contains(rows[1], "struct=") || !strings.Contains(rows[1], "-") {
+		t.Errorf("a frame without struct did not print a dash:\n%s", rows[1])
+	}
+	if strings.Index(rows[1], "sunBelow=") <= strings.Index(rows[1], "struct=") {
+		t.Errorf("sunBelow is not after struct:\n%s", rows[1])
+	}
+
+	// The suggestion marker follows a padded decision, so it starts at the same
+	// column as the parentheses of the other lines' verdicts.
+	if !strings.Contains(rows[2], "[sugg: "+decisionFWHM+"]") {
+		t.Errorf("the suggestion marker is missing:\n%s", rows[2])
+	}
+	if strings.Index(rows[2], ") [sugg:") < 0 {
+		t.Errorf("the suggestion marker does not follow the decision:\n%s", rows[2])
+	}
+}
+
+// A field no frame measured is absent from every line, not a column of dashes:
+// halo=0.00 would read as a clear sky rather than as an untested rule.
+func TestConsoleOmitsFieldsNoFrameMeasured(t *testing.T) {
+	results := []ImageResult{
+		{Filename: "a.FIT", StarCount: 90, DetectedStars: 850,
+			AvgFWHM: 1.17, AvgEccentricity: 0.481, SNR: 14.42, Score: 6.383,
+			Decision: decisionApproved},
+	}
+	row := newConsoleLayout(results).row(1, 1, "a.FIT", results[0])
+	for _, label := range []string{"fwhmRatio=", "halo=", "struct=", "sunBelow="} {
+		if strings.Contains(row, label) {
+			t.Errorf("unmeasured field %q was printed:\n%s", label, row)
+		}
+	}
+}
+
+// TestAnalyzeConsoleShowsSunBelow is the end-to-end check: the line reads the
+// same rounded value the report carries, and a frame with no site gets the dash.
+func TestAnalyzeConsoleShowsSunBelow(t *testing.T) {
+	dir := t.TempDir()
+	writeFrame(t, dir, "with_site.FIT", synthOpts{
+		width: 300, height: 300, level: 1000, noise: 5,
+		amp: 3000, sigma: 1.3, spacing: 25, seed: 1,
+		cards: []fitsio.Card{
+			{Name: "SITELAT", Value: "+44 20 14"},
+			{Name: "SITELONG", Value: "+01 01 30"},
+			{Name: "DATE-OBS", Value: "2026-08-11T22:14:30"},
+		},
+	})
+
+	o := defaultOpts()
+	o.minStars, o.minSNR, o.minScore = 0, 0, 0
+	out := captureStdout(t, func() {
+		if err := runAnalyze(dir, o); err != nil {
+			t.Errorf("runAnalyze: %v", err)
+		}
+	})
+	if !strings.Contains(out, ", sunBelow=") {
+		t.Errorf("console has no sunBelow column:\n%s", out)
+	}
+
+	want := roundTo(sun.BelowHorizon(time.Date(2026, 8, 11, 22, 14, 30, 0, time.UTC),
+		44+20.0/60+14.0/3600, 1+1.0/60+30.0/3600), sunBelowDecimals)
+	if !strings.Contains(out, fmt.Sprintf("%.2f", want)) {
+		t.Errorf("console does not show sunBelow %.2f:\n%s", want, out)
+	}
+
+	// A run whose frames carry no site has no column at all.
+	plain := t.TempDir()
+	writeFrame(t, plain, "no_site.FIT", synthOpts{
+		width: 300, height: 300, level: 1000, noise: 5,
+		amp: 3000, sigma: 1.3, spacing: 25, seed: 2,
+	})
+	out = captureStdout(t, func() {
+		if err := runAnalyze(plain, o); err != nil {
+			t.Errorf("runAnalyze: %v", err)
+		}
+	})
+	if strings.Contains(out, "sunBelow=") {
+		t.Errorf("a run without site cards printed sunBelow:\n%s", out)
+	}
 }
 
 // TestAnalyzeConsoleShowsHaloThresholds pins the header pair. The console is

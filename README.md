@@ -287,22 +287,30 @@ the C3 writes its gain (`GA0`) where the G4 and the ASI2600 write a frame index
 (a flat, a hand-renamed file) prints in full. Only the console is shortened: the
 CSVs always carry the full filename.
 
+Every metric column is padded to the widest value in the run, so a four-digit
+star count widens the column for every line instead of pushing the fields to its
+right out of line.
+
 `478/2594` is `starCount/detectedStars`: measured over found.
 
 The header carries the session-relative thresholds in force, so the log says
 which values produced the decisions. A threshold of `0` prints as `disabled`.
 
 When the session had at least four frames to establish a baseline, each frame
-line also carries the two ratios those thresholds are compared against:
+line also carries the ratios those thresholds are compared against, and the Sun's
+depth for the frame:
 
 ```
-  [3/9] VDB149_..._035_....FIT ... OK (455/2710 stars, FWHM=1.69, Ecc=0.412, SNR=22.38, Score=5.1, fwhmRatio=1.05, halo=3.33, struct=1.02, REJECTED CLOUDS)
+  [3/9] VDB149_..._035_....FIT ... OK (455/2710 stars, FWHM=1.69, Ecc=0.412, SNR=22.38, Score=5.100, fwhmRatio=1.05, halo=3.33, struct=1.020, sunBelow=22.40, REJECTED CLOUDS)
 ```
 
-A ratio above the threshold is why the frame was rejected. Both fields are
-omitted when the ratio was not measured — either the rule is disabled or the
-frame had too few measurable stars — rather than printed as `0.00`, which would
-read as a clean frame.
+A ratio above the threshold is why the frame was rejected. `sunBelow` is how many
+degrees the Sun sat below the horizon at `DATE-OBS` (`18` is astronomical night),
+from the header's site; it is a dash when that frame's header has no site or
+time. Each optional field is a column when at least one frame of the run measured
+it, and a frame without a value prints a dash, so the fields after it stay
+aligned. A field no frame measured is absent from every line — printing
+`halo=0.00` would read as a clean frame rather than as an untested rule.
 
 CSV, `;`-separated to match the reference PixInsight tool's export format, written
 to `<output>/analyse_report.csv` when `-o` is given and to stdout otherwise. A

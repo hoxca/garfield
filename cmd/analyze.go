@@ -331,6 +331,130 @@ func padMillis(v string) string {
 	return v
 }
 
+// consoleLayout is the column geometry of one run's per-frame lines.
+//
+// The widths are measured from the results rather than fixed: a star count can
+// be two digits or four, so a four-digit value in one frame must widen the
+// column for every line instead of shifting the fields to its right. A field
+// becomes a column only if some frame of the run measured it; frames that did
+// not then print a dash, so the columns after it stay put.
+type consoleLayout struct {
+	counterWidth int
+	measured     int // width of the measured star count
+	detected     int // width of the detected star count
+	fwhm         int
+	ecc          int
+	snr          int
+	score        int
+	fwhmRatio    int
+	halo         int
+	structRatio  int
+	sun          int
+	decision     int
+
+	hasFWHMRatio bool
+	hasHalo      bool
+	hasStruct    bool
+	hasSun       bool
+}
+
+// newConsoleLayout measures the widths and the optional fields of a run.
+func newConsoleLayout(results []ImageResult) consoleLayout {
+	l := consoleLayout{
+		counterWidth: max(3, len(strconv.Itoa(len(results)))),
+		measured:     1,
+		detected:     1,
+		fwhm:         1,
+		ecc:          1,
+		snr:          1,
+		score:        1,
+		fwhmRatio:    1,
+		halo:         1,
+		structRatio:  1,
+		sun:          1,
+	}
+	for _, r := range results {
+		if r.Error != nil {
+			continue
+		}
+		l.measured = max(l.measured, len(strconv.Itoa(r.StarCount)))
+		l.detected = max(l.detected, len(strconv.Itoa(r.DetectedStars)))
+		l.fwhm = max(l.fwhm, len(strconv.FormatFloat(r.AvgFWHM, 'f', 2, 64)))
+		l.ecc = max(l.ecc, len(strconv.FormatFloat(r.AvgEccentricity, 'f', 3, 64)))
+		l.snr = max(l.snr, len(strconv.FormatFloat(r.SNR, 'f', 2, 64)))
+		l.score = max(l.score, len(strconv.FormatFloat(r.Score, 'f', 3, 64)))
+		l.decision = max(l.decision, len(r.Decision))
+		if r.FWHMRatio > 0 {
+			l.hasFWHMRatio = true
+			l.fwhmRatio = max(l.fwhmRatio, len(strconv.FormatFloat(r.FWHMRatio, 'f', 2, 64)))
+		}
+		if r.HaloRatio > 0 {
+			l.hasHalo = true
+			l.halo = max(l.halo, len(strconv.FormatFloat(r.HaloRatio, 'f', 2, 64)))
+		}
+		if r.StructRatio > 0 {
+			l.hasStruct = true
+			l.structRatio = max(l.structRatio, len(strconv.FormatFloat(r.StructRatio, 'f', 3, 64)))
+		}
+		if r.SunBelow != 0 {
+			l.hasSun = true
+			l.sun = max(l.sun, len(strconv.FormatFloat(r.SunBelow, 'f', 2, 64)))
+		}
+	}
+	return l
+}
+
+// row renders one measured frame. label is the name the caller chose to show.
+//
+// Optional fields are printed as a dash when this frame did not measure one, so
+// every column to their right stays in place; the field itself is absent from
+// the whole run when no frame measured it, because a column of dashes would say
+// the rule ran and found nothing.
+func (l consoleLayout) row(n, total int, label string, r ImageResult) string {
+	dash := func(width int) string { return fmt.Sprintf("%*s", width, "-") }
+	stars := fmt.Sprintf("%*d/%*d", l.measured, r.StarCount, l.detected, r.DetectedStars)
+	line := fmt.Sprintf("  [%0*d/%d] %s ... OK (%s stars, FWHM=%*.2f, Ecc=%*.3f, SNR=%*.2f, Score=%*.3f",
+		l.counterWidth, n, total, label, stars,
+		l.fwhm, r.AvgFWHM, l.ecc, r.AvgEccentricity, l.snr, r.SNR, l.score, r.Score)
+	if l.hasFWHMRatio {
+		if r.FWHMRatio > 0 {
+			line += fmt.Sprintf(", fwhmRatio=%*.2f", l.fwhmRatio, r.FWHMRatio)
+		} else {
+			line += ", fwhmRatio=" + dash(l.fwhmRatio)
+		}
+	}
+	if l.hasHalo {
+		if r.HaloRatio > 0 {
+			line += fmt.Sprintf(", halo=%*.2f", l.halo, r.HaloRatio)
+		} else {
+			line += ", halo=" + dash(l.halo)
+		}
+	}
+	if l.hasStruct {
+		if r.StructRatio > 0 {
+			line += fmt.Sprintf(", struct=%*.3f", l.structRatio, r.StructRatio)
+		} else {
+			line += ", struct=" + dash(l.structRatio)
+		}
+	}
+	if l.hasSun {
+		if r.SunBelow != 0 {
+			line += fmt.Sprintf(", sunBelow=%*.2f", l.sun, r.SunBelow)
+		} else {
+			line += ", sunBelow=" + dash(l.sun)
+		}
+	}
+	// Inline rather than a second list: the question is always about this frame,
+	// and a marker on it cannot drift out of step with the line. The decision is
+	// padded only when a marker follows, which is where alignment is visible.
+	if r.SuggestedDecision != "" && r.SuggestedDecision != r.Decision {
+		line += fmt.Sprintf(", %-*s) [sugg: %s]", l.decision, r.Decision, r.SuggestedDecision)
+	} else {
+		line += fmt.Sprintf(", %s)", r.Decision)
+	}
+	return line
+}
+
 // fitBoxScale sets the half-width of the box the star profile is fitted in, as
 // a multiple of the detected width.
 //
@@ -1177,12 +1301,7 @@ func runAnalyzeOnce(dir string, opts analyzeOptions) error {
 	}
 
 	if !opts.quiet && showConsole {
-		// The counter is padded to the width the run needs, so a run past 99
-		// frames does not shift every line one column to the right.
-		counterWidth := len(strconv.Itoa(len(results)))
-		if counterWidth < 3 {
-			counterWidth = 3
-		}
+		layout := newConsoleLayout(results)
 		for i, r := range results {
 			label, known := frameLabel(r.Filename)
 			if !known {
@@ -1190,36 +1309,10 @@ func runAnalyzeOnce(dir string, opts analyzeOptions) error {
 			}
 			if r.Error != nil {
 				fmt.Printf("  [%0*d/%d] %s ... ERROR: %v\n",
-					counterWidth, i+1, len(results), label, r.Error)
+					layout.counterWidth, i+1, len(results), label, r.Error)
 				continue
 			}
-			// Score is printed to three decimals, like Ecc, because the score
-			// gate is the finest of the seven: a frame sitting just above
-			// --min-score would render as exactly on it at two.
-			line := fmt.Sprintf("  [%0*d/%d] %s ... OK (%d/%d stars, FWHM=%.2f, Ecc=%.3f, SNR=%.2f, Score=%.3f",
-				counterWidth, i+1, len(results), label, r.StarCount, r.DetectedStars,
-				r.AvgFWHM, r.AvgEccentricity, r.SNR, r.Score)
-			// The cloud numbers are printed only when they were measured. The
-			// session pass leaves both at zero when the rule is disabled or
-			// when the session has too few frames to supply a baseline, and a
-			// console "cloud=0.000" would then read as "perfectly clear"
-			// instead of "no baseline, not tested".
-			if r.FWHMRatio > 0 {
-				line += fmt.Sprintf(", fwhmRatio=%.2f", r.FWHMRatio)
-			}
-			if r.HaloRatio > 0 {
-				line += fmt.Sprintf(", halo=%.2f", r.HaloRatio)
-			}
-			if r.StructRatio > 0 {
-				line += fmt.Sprintf(", struct=%.3f", r.StructRatio)
-			}
-			line += fmt.Sprintf(", %s)", r.Decision)
-			// Inline rather than a second list: the question is always about this
-			// frame, and a marker on it cannot drift out of step with the line.
-			if r.SuggestedDecision != "" && r.SuggestedDecision != r.Decision {
-				line += fmt.Sprintf(" [sugg: %s]", r.SuggestedDecision)
-			}
-			fmt.Println(line)
+			fmt.Println(layout.row(i+1, len(results), label, r))
 		}
 	}
 
