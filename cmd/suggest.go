@@ -56,12 +56,6 @@ const (
 	// suggestion inside the population while still naming the star-poorest
 	// frames; the floor still catches a filter whose median is genuinely low.
 	minStarsSigma = 1.85
-	// minSNRSigma is the equivalent offset for --min-snr. SNR is a tight
-	// measurement, so the shared four-sigma band sits below every frame of a
-	// clean filter and never rejects anything; 2.5 sigmas reaches into the low
-	// tail the gate exists for while leaving ordinary frame-to-frame scatter
-	// alone.
-	minSNRSigma = 2.5
 )
 
 // errNoSuggestionPopulation marks a filter whose stack is too thin to suggest
@@ -243,7 +237,7 @@ func thresholdsFromRefs(refs map[string]stackRef, band float64) suggeststore.Thr
 	t := suggeststore.Thresholds{
 		MaxFWHM:      roundTo(fwhm.Median+band*fwhm.Sigma, 2),
 		MaxEcc:       roundTo(math.Min(ecc.Median+band*ecc.Sigma, maxEccCeiling), 3),
-		MinSNR:       roundTo(math.Max(snr.Median-minSNRSigma*snr.Sigma, minSNRFloor), 2),
+		MinSNR:       roundTo(math.Max(snr.Median-band*snr.Sigma, minSNRFloor), 2),
 		MinScore:     roundTo(math.Max(score.Median-band*score.Sigma, minScoreFloor), 2),
 		MinStars:     int(math.Max(minStarsFloor, stars.Median-minStarsSigma*stars.Sigma)),
 		MaxFWHMSigma: band,

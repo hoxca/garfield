@@ -106,29 +106,6 @@ func TestSuggestMinStarsIsAnOffMedianOffset(t *testing.T) {
 	}
 }
 
-// --min-snr is a fixed offset too: SNR is a tight measurement, so the shared
-// four-sigma band would sit below every frame of a clean filter.
-func TestSuggestMinSNRUsesA2Point5SigmaOffset(t *testing.T) {
-	results := buildStack(t, "H", uniformNights(3, 3)...)
-	for i := range results {
-		switch {
-		case i < 3:
-			results[i].SNR = 14
-		case i < 6:
-			results[i].SNR = 15
-		default:
-			results[i].SNR = 16
-		}
-	}
-
-	s := suggestionFor(t, results, "H", 0)
-
-	// median 15, MAD 1, sigma 1.4826: 15 - 2.5*1.4826 = 11.2935, rounded to 11.29.
-	if math.Abs(s.Thresholds.MinSNR-11.29) > 1e-9 {
-		t.Errorf("min-snr = %v, want 11.29 (median 15 minus 2.5 robust sigma)", s.Thresholds.MinSNR)
-	}
-}
-
 func TestSuggestMinStarsStaysAboveTheUsabilityFloor(t *testing.T) {
 	results := buildStack(t, "H", uniformNights(3, 3)...)
 	for i := range results {
