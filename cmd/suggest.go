@@ -201,6 +201,7 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 			band = k
 			th := thresholdsFromRefs(refs, k)
 			th.MinTransparency = opts.minTransparency
+			th.SunBelow = opts.sunBelow
 			if goodApproved, _ := approved(th); float64(goodApproved)/float64(out.GoodCount) >= opts.keep {
 				break
 			}
@@ -209,9 +210,11 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 
 	out.Band = band
 	// The transparency policy is not derived from the stack: the threshold is the
-	// operator's tolerance, so it is copied rather than suggested.
+	// operator's tolerance, so it is copied rather than suggested. The Sun's depth
+	// is the same kind of policy: it describes the acquisition, not the frame.
 	derived := thresholdsFromRefs(refs, band)
 	derived.MinTransparency = opts.minTransparency
+	derived.SunBelow = opts.sunBelow
 	out.Thresholds = overrideThresholds(derived, opts.qualityThresholds, opts.explicit)
 	out.Pinned = pinnedGates(opts.explicit)
 	out.KeptGood, out.KeptCount = approved(out.Thresholds)
@@ -314,6 +317,7 @@ func insideStack(r ImageResult, refs map[string]stackRef) bool {
 
 // gateFlags is the flag of every threshold the suggestion writes, in table order.
 var gateFlags = []struct{ flag, key string }{
+	{"sun-below", "sun-below"},
 	{"min-stars", "min-stars"},
 	{"max-ecc", "max-ecc"},
 	{"max-fwhm", "max-fwhm"},
@@ -328,6 +332,9 @@ var gateFlags = []struct{ flag, key string }{
 // on the command line: `--suggest --min-snr 15` means "suggest everything except
 // what I already decided".
 func overrideThresholds(t suggeststore.Thresholds, q qualityThresholds, explicit map[string]bool) suggeststore.Thresholds {
+	if explicit["sun-below"] {
+		t.SunBelow = q.sunBelow
+	}
 	if explicit["min-stars"] {
 		t.MinStars = q.minStars
 	}
@@ -401,6 +408,7 @@ func roundTo(v float64, decimals int) float64 {
 // the two session rules. Both FWHM rules share one row because the report gives
 // them one token, and attributing a rejection to the wrong one would be a guess.
 var gateRows = []struct{ key, decision string }{
+	{"sun-below", decisionTwilight},
 	{"min-stars", decisionNoStars},
 	{"max-ecc", decisionEcc},
 	{"max-fwhm", decisionFWHM},
@@ -466,6 +474,7 @@ func simulateThresholds(results []ImageResult, filter string, t suggeststore.Thr
 	}
 	gates.byFilter[filter] = qualityThresholds{
 		minTransparency: t.MinTransparency,
+		sunBelow:        t.SunBelow,
 		minSNR:          t.MinSNR,
 		maxFWHM:         t.MaxFWHM,
 		maxEcc:          t.MaxEcc,
@@ -520,6 +529,7 @@ type gateValue struct {
 // about order or formatting.
 func gateValues(t suggeststore.Thresholds) []gateValue {
 	return []gateValue{
+		{"sun-below", t.SunBelow},
 		{"min-stars", float64(t.MinStars)},
 		{"max-ecc", t.MaxEcc},
 		{"max-fwhm", t.MaxFWHM},
@@ -545,6 +555,7 @@ func thresholdsFromQuality(q qualityThresholds) suggeststore.Thresholds {
 		MaxHaloRatio:    q.maxHaloRatio,
 		MaxStructure:    q.maxStructure,
 		MinTransparency: q.minTransparency,
+		SunBelow:        q.sunBelow,
 	}
 }
 
@@ -743,6 +754,7 @@ func renderSuggestionYAML(s suggestedThresholds) string {
 	fmt.Fprintf(&b, "  max-halo-ratio: %s\n", formatSuggestion(s.Thresholds.MaxHaloRatio))
 	fmt.Fprintf(&b, "  max-structure: %s\n", formatSuggestion(s.Thresholds.MaxStructure))
 	fmt.Fprintf(&b, "  min-transparency: %s\n", formatSuggestion(s.Thresholds.MinTransparency))
+	fmt.Fprintf(&b, "  sun-below: %s\n", formatSuggestion(s.Thresholds.SunBelow))
 	return b.String()
 }
 

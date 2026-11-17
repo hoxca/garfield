@@ -31,6 +31,7 @@ func TestCompiledDefaultsMatchShippedConfig(t *testing.T) {
 		{"thresholds.max-fwhm-sigma", defaultThresholds.maxFWHMSigma},
 		{"thresholds.max-halo-ratio", defaultThresholds.maxHaloRatio},
 		{"thresholds.max-structure", defaultThresholds.maxStructure},
+		{"thresholds.sun-below", defaultThresholds.sunBelow},
 	} {
 		if !v.IsSet(tc.key) {
 			t.Errorf("conf/garfield.yaml does not set %s", tc.key)

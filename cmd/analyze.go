@@ -226,6 +226,7 @@ const (
 	decisionClouds       = "REJECTED CLOUDS"
 	decisionTransparency = "REJECTED TRANSPARENCY"
 	decisionStructure    = "REJECTED STRUCTURE"
+	decisionTwilight     = "REJECTED TWILIGHT"
 )
 
 // Reasons recorded for frames that were rejected without a quality verdict.
@@ -678,6 +679,12 @@ func applyBaseDecision(results []ImageResult, q qualityThresholds) {
 // divide by zero and yield +Inf, which passes every gate below.
 func baseDecision(r ImageResult, q qualityThresholds) string {
 	switch {
+	// The Sun's depth is a property of when the frame was taken, so it is the
+	// first thing that can make it unusable: a frame from twilight cannot be
+	// rescued by good seeing or a clean sky. Zero means the depth was not
+	// recorded (or the rule is disabled), and such a frame is not judged on it.
+	case q.sunBelow > 0 && r.SunBelow != 0 && r.SunBelow < q.sunBelow:
+		return decisionTwilight
 	case r.StarCount == 0:
 		return decisionNoStars
 	case r.DetectedStars < q.minStars:
@@ -1196,10 +1203,10 @@ func runAnalyzeOnce(dir string, opts analyzeOptions) error {
 		if filter != "" {
 			scope += " for filter " + filter
 		}
-		fmt.Printf("\nProcessing %d FITS file(s)%s in %q (%d workers, conv=%d, max-fwhm-sigma=%s, max-halo=%s, max-structure=%s)...\n\n",
+		fmt.Printf("\nProcessing %d FITS file(s)%s in %q (%d workers, conv=%d, max-fwhm-sigma=%s, max-halo=%s, max-structure=%s, sun-below=%s)...\n\n",
 			len(fitsFiles), scope, dir, outerWorkers, convWorkers,
 			formatThreshold(opts.maxFWHMSigma), formatThreshold(opts.maxHaloRatio),
-			formatThreshold(opts.maxStructure))
+			formatThreshold(opts.maxStructure), formatThreshold(opts.sunBelow))
 	}
 
 	results := make([]ImageResult, len(fitsFiles))
@@ -1943,6 +1950,7 @@ const rejectedOutDir = "rejected"
 // invent a folder the first time a value is added. Anything not listed is
 // placed under "other" so a new decision cannot drop frames on the floor.
 var rejectCategories = map[string]string{
+	decisionTwilight:     "twilight",
 	decisionNoStars:      "no-stars",
 	decisionEcc:          "eccentricity",
 	decisionFWHM:         "fwhm",

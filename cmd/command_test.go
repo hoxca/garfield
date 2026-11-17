@@ -58,7 +58,7 @@ func TestTestHelperFlagsMatchProduction(t *testing.T) {
 	production := analyzeCmd.Flags()
 
 	shared := []string{
-		"min-snr", "max-fwhm", "max-ecc", "min-score", "min-stars",
+		"min-snr", "max-fwhm", "max-ecc", "min-score", "min-stars", "sun-below",
 		"moffat", "workers", "conv-workers",
 	}
 
@@ -90,7 +90,7 @@ func TestTestHelperFlagsMatchProduction(t *testing.T) {
 func TestSharedFlagSetIsIdenticalAcrossCommands(t *testing.T) {
 	shared := map[string]bool{
 		"min-snr": true, "max-fwhm": true, "max-ecc": true,
-		"min-score": true, "min-stars": true, "moffat": true,
+		"min-score": true, "min-stars": true, "sun-below": true, "moffat": true,
 		"workers": true, "conv-workers": true,
 	}
 
@@ -167,6 +167,7 @@ func TestAnalyzeFlagDefaults(t *testing.T) {
 		"max-fwhm-sigma":       "4",
 		"moffat":               "true",
 		"min-transparency":     "0.8",
+		"sun-below":            "15",
 		"limit-computed-stars": "500",
 		"format":               "console",
 		"output":               "",
@@ -259,6 +260,7 @@ func TestAnalyzeFlagParsing(t *testing.T) {
 					maxHaloRatio:    defaultThresholds.maxHaloRatio,
 					maxStructure:    defaultThresholds.maxStructure,
 					minTransparency: defaultThresholds.minTransparency,
+					sunBelow:        defaultThresholds.sunBelow,
 					moffat:          defaultThresholds.moffat,
 				},
 				limitComputedStars: 500,
@@ -299,6 +301,7 @@ func TestAnalyzeFlagParsing(t *testing.T) {
 					maxHaloRatio:    defaultThresholds.maxHaloRatio,
 					maxStructure:    defaultThresholds.maxStructure,
 					minTransparency: defaultThresholds.minTransparency,
+					sunBelow:        defaultThresholds.sunBelow,
 					moffat:          defaultThresholds.moffat,
 				},
 				limitComputedStars: 500,

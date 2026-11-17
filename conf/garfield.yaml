@@ -36,6 +36,14 @@ thresholds:
   # rejected frames. 0 disables the rule.
   min-transparency: 0.80
 
+  # Twilight. A frame taken while the Sun's centre was less than this many
+  # degrees below the horizon is rejected, before any other gate: the sky is
+  # still bright enough to lift the background even when the frame's own metrics
+  # look clean. 15 sits between nautical (12) and astronomical (18) twilight.
+  # The depth is read from SITELAT, SITELONG and DATE-OBS; a frame whose header
+  # carries no site or time is not judged on it. 0 disables the gate.
+  sun-below: 15.0
+
   moffat: true
 
   # Outlier rejection: FWHM, cloud and bad seeing.

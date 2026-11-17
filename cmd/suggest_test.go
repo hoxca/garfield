@@ -181,7 +181,7 @@ func TestRenderSuggestionYAMLIsAPasteableThresholdBlock(t *testing.T) {
 
 	for _, want := range []string{
 		"thresholds:", "min-snr:", "max-fwhm:", "max-ecc:", "min-score:",
-		"min-stars:", "max-fwhm-sigma:", "max-halo-ratio:", "max-structure:",
+		"min-stars:", "max-fwhm-sigma:", "max-halo-ratio:", "max-structure:", "sun-below:",
 		"# garfield thresholds suggested for filter H",
 	} {
 		if !strings.Contains(text, want) {

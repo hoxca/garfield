@@ -933,6 +933,7 @@ Much looser. Any directory of FITS frames works.
 | `--stack-gate` | `false` |
 | `--suggest` | `false` (requires `-o`; with `--target`, every filter) |
 | `--keep` | `0` (the band `--max-fwhm-sigma` sets, 4 by default) |
+| `--sun-below` | `15` degrees (reject frames taken while the Sun was shallower; `0` disables) |
 
 **`--filter` narrows the run.** It accepts one of `L R G B S H O`,
 case-insensitively, and keeps only frames whose parsed filter matches. With
@@ -1172,13 +1173,14 @@ stamp in the filename. Sessions are chronological, so a given filter's rows run 
 the order the frames were taken across the whole file; `analyze`'s report uses the
 same ordering.
 
-`decision` holds one of **eight** values, which are **data, not messages** —
+`decision` holds one of **ten** values, which are **data, not messages** —
 anything parsing this file must match on them, and the strings are part of the
 contract:
 
 | Value | Meaning |
 |---|---|
 | `APPROVED` | passed every threshold |
+| `REJECTED TWILIGHT` | the Sun was less than `--sun-below` below the horizon at `DATE-OBS` |
 | `REJECTED NO STARS` | no star met the detection floor |
 | `REJECTED ECCENTRICITY` | failed `--max-ecc` |
 | `REJECTED FWHM` | failed `--max-fwhm` |
@@ -1223,8 +1225,12 @@ empty when one of the three is missing: zero would read as the Sun exactly on th
 horizon rather than as "not recorded". `DATE-OBS` is the exposure start, so the
 value is not corrected for the exposure's length. The model is the NOAA solar
 calculator's (`internal/sun`), accurate to about a hundredth of a degree, and the
-statistic is kept to that precision; `18` is the astronomical twilight angle. The
-statistic is informational and changes no verdict.
+statistic is kept to that precision; `18` is the astronomical twilight angle.
+
+It also drives the first gate: a frame whose depth is below `--sun-below`
+(default 15, i.e. between nautical and astronomical twilight) is
+`REJECTED TWILIGHT` before any other rule is considered. A frame with no
+recorded depth is not judged on it, and `0` disables the gate.
 
 ### 10.1.1 The FWHM, cloud and structure rules
 
@@ -1417,10 +1423,12 @@ flagged the night. Flagging a night therefore never condemns it wholesale.
 `--suggest` writes `suggested_<FILTER>.yaml` and `cache/suggestions.jsonl`. The
 record carries the thresholds **and** the population reference statistics they
 were derived from, plus the population (`n`, nights, date range) they describe.
-Every gate but `min-stars` is the band's robust sigmas around the good stack's
-median; `min-stars` is a fixed 1.85 sigmas below the median, because detected star
-counts have a long right tail that would push a four-sigma band under the floor
-where no metric exists at all.
+Every gate but `min-stars` and `sun-below` is the band's robust sigmas around the
+good stack's median; `min-stars` is a fixed 1.85 sigmas below the median, because
+detected star counts have a long right tail that would push a four-sigma band
+under the floor where no metric exists at all. `sun-below` is copied from the
+run, like `min-transparency`: it is a policy about when to shoot, not a property
+of the stack.
 That is what `prepare --suggested` applies: judging with a recomputed reference
 would make a frame's verdict depend on which other frames happened to be in the
 run. The transparency ratio is the one exception -- it is relative to the frames at

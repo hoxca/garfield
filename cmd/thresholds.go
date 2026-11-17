@@ -40,6 +40,15 @@ type qualityThresholds struct {
 	// and none of the clear frames -- and leaves milder dips to the operator. Set
 	// 0.90 to catch those too, at roughly twice the rejected frames.
 	minTransparency float64
+	// sunBelow bounds how high the Sun may have been when the frame was taken:
+	// the Sun's centre must sit at least this many degrees below the horizon.
+	// It is not a measurement of the frame -- the depth is read from the
+	// header's site and time -- but it belongs with the other acceptance
+	// criteria because it decides what is approved. 15 sits between nautical
+	// (12) and astronomical (18) twilight: the sky is still bright enough to
+	// spoil photometry, but the frame may otherwise look clean. 0 disables the
+	// gate, and a frame whose depth was not recorded is left alone.
+	sunBelow float64
 	// moffat selects the PSF profile used to measure width and shape. It is not
 	// a threshold: it decides how the metrics are obtained, not whether a frame
 	// passes. It lives here because this struct is the one thing analyze and
@@ -72,6 +81,10 @@ var defaultThresholds = qualityThresholds{
 	// Transparency is a bystander gate: it should catch a cloud that visibly
 	// dims the field, not the ordinary frame-to-frame scatter.
 	minTransparency: 0.80,
+	// Twilight is an acquisition condition, not a frame measurement: 15 degrees
+	// below the horizon is late nautical twilight, where the sky is still bright
+	// enough to lift the background but the frame's own metrics can look fine.
+	sunBelow: 15.0,
 	// moffat is true, matching conf/garfield.yaml: a Gaussian reads the width of
 	// a real PSF about 0.3 px wide on undersampled frames, which makes the FWHM
 	// gate compare numbers that are not the half-maximum contour.
@@ -95,6 +108,8 @@ func registerQualityFlags(fs *pflag.FlagSet, dst *qualityThresholds) {
 		"reject a frame that is both softer than its session and unusually structured above this multiple; 0 disables")
 	fs.Float64Var(&dst.minTransparency, "min-transparency", defaultThresholds.minTransparency,
 		"reject a frame whose contrast is below this fraction of the best of the hour around it; 0 disables")
+	fs.Float64Var(&dst.sunBelow, "sun-below", defaultThresholds.sunBelow,
+		"reject a frame taken when the Sun was less than this many degrees below the horizon; 0 disables")
 	fs.BoolVar(&dst.moffat, "moffat", defaultThresholds.moffat,
 		"fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight)")
 }

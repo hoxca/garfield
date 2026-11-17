@@ -98,6 +98,7 @@ thresholds:
   max-halo-ratio: 2.0  # session-relative bright-star halo; 0 disables
   max-structure: 1.12  # session-relative sky structure (bad seeing); 0 disables
   min-transparency: 0.80  # contrast against frames at a similar airmass; 0 disables
+  sun-below: 15.0      # reject frames taken with the Sun less than this far below the horizon; 0 disables
   moffat: true         # Moffat PSF fit (slower, FWHM matches PixInsight); false = Gaussian
 
 concurrency:
@@ -209,6 +210,7 @@ Flags:
   -r, --recursive                  also walk the subdirectories of --dir, 2 levels deep [config: garfield.yaml]
       --stack-gate                 reject frames from a night that is systematically worse than its filter's stack
       --suggest                    suggest thresholds from the measured stack: one filter with --filter, or every filter of a --target (requires --output)
+      --sun-below float            reject a frame taken when the Sun was less than this many degrees below the horizon; 0 disables [config: garfield.yaml] (default 15)
   -t, --target string              analyse <input>/Lights/<target>, the same tree prepare reads; implies --recursive
   -w, --workers int                processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
 
@@ -235,6 +237,7 @@ Global Flags:
 | `--cache` | reuse the measurements stored in `<output>/cache/measurements.jsonl` (`<output>/<target>/metrics/cache/` for a target run), and record this run's. Requires `-o`: the store lives in the output directory, never in the acquisition tree. See [Reusing measurements](#reusing-measurements-between-runs). |
 | `--stack-gate` | reject a frame from a night the stack condemns **when the frame itself sits outside the stack band**. Off by default. See [Session quality](#session-quality-and-suggested-thresholds). |
 | `--suggest` | derive thresholds from the measured stack and write them to `<output>/suggested_<FILTER>.yaml` plus the store `prepare --suggested` reads. Needs `-o`; with `--filter` it suggests that filter, with `--target` every filter the target holds. Advisory: it never changes this run's verdicts. |
+| `--sun-below` | reject a frame taken while the Sun's centre was less than this many degrees below the horizon, before any other gate. Default 15 (between nautical and astronomical twilight); `0` disables. Read from the frame's `SITELAT`/`SITELONG`/`DATE-OBS`, so a header without them is not judged on it. |
 | `--keep` | the fraction of the good stack a `--suggest` run aims to keep; `0` uses the band the FWHM rule applies (4 robust sigmas by default). |
 | `--quiet` | suppress console output. |
 | `-w`, `--conv-workers` | both default to 0 = automatic. |
@@ -330,10 +333,10 @@ filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;s
 `cached` is `true` on a row whose numbers were read from the measurement cache
 instead of measured in this run. It is the only column a `--cache` run changes.
 
-`decision` holds one of **nine** values, which are **data, not messages** —
-`APPROVED`, `REJECTED NO STARS`, `REJECTED ECCENTRICITY`, `REJECTED FWHM`,
-`REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`, `REJECTED STRUCTURE`,
-`REJECTED TRANSPARENCY`. Match on them exactly.
+`decision` holds one of **ten** values, which are **data, not messages** —
+`APPROVED`, `REJECTED TWILIGHT`, `REJECTED NO STARS`, `REJECTED ECCENTRICITY`,
+`REJECTED FWHM`, `REJECTED SNR`, `REJECTED SCORING`, `REJECTED CLOUDS`,
+`REJECTED STRUCTURE`, `REJECTED TRANSPARENCY`. Match on them exactly.
 
 `background`, `noise` and `bgStructure` are measurements, not decisions:
 
@@ -365,7 +368,16 @@ Sun on the horizon. The column is
 **empty** when the header does not carry all three, because zero would read as a
 measured horizon rather than a missing one. `DATE-OBS` is the start of the
 exposure, so the depth is not corrected for its length. It is a property of where
-and when the frame was taken, not of the pixels, and it changes no decision.
+and when the frame was taken, not of the pixels; it drives the twilight gate
+below but otherwise changes no measurement.
+
+A frame is `REJECTED TWILIGHT` when the Sun was less than `--sun-below`
+degrees below the horizon at `DATE-OBS` (default 15°, between nautical and
+astronomical twilight). It is the first gate, because no amount of good seeing
+rescues a frame taken while the sky is still bright; it wins even when the frame
+also fails a later threshold. The depth comes from the header's `SITELAT`,
+`SITELONG` and `DATE-OBS`, and a frame whose header carries no site or time is
+left alone rather than rejected on a guess. `0` disables the gate.
 
 A frame is `REJECTED FWHM` when its `avgFWHM` lies more than
 `--max-fwhm-sigma` robust sigmas above the median of its filter's whole
@@ -509,21 +521,22 @@ garfield analyze -t SH2-142 -i /Volumes/Bolino/Lubhe_2026 -o out --filter H --su
 
 ```
 suggested thresholds for filter H (80 frame(s), 7 night(s), 2026-08-12..2026-08-18)
-  band 4.0 sigma around the good stack: keeps 75/80 good frames; 75/80 of the filter overall (94%)
+  band 4.0 sigma around the good stack: keeps 72/80 good frames; 72/80 of the filter overall (90%)
 
   gate                current  suggested  rejects now → then
+  sun-below                15         15            4 → 4
   min-stars               380        732            0 → 0
   max-ecc                0.64        0.7            0 → 0
   max-fwhm                3.2       1.88            0 → 1
-  min-snr                  11       9.16           35 → 4
+  min-snr                  11       9.16           31 → 3
   min-score                 2          0            0 → 0
   max-halo-ratio            2       1.95            0 → 0
   max-structure          1.12       1.25            0 → 0
   min-transparency        0.8        0.8            0 → 0
   no metrics                -          -            0 → 0
-  total                     -          -           35 → 5     (45/80 approved now, 75/80 under the suggestion)
+  total                     -          -           35 → 8     (45/80 approved now, 72/80 under the suggestion)
 
-  the suggestion would change 31 frame(s): 1 newly rejected, 30 newly approved
+  the suggestion would change 28 frame(s): 1 newly rejected, 27 newly approved
 ```
 
 `min-stars` is the exception: it sits **1.85 robust sigmas below** the good
@@ -531,6 +544,10 @@ stack's median detected-star count, not the band. Detected star counts have a
 long right tail, so a four-sigma band falls under the usability floor and
 switches the gate off; a fixed 1.85 keeps the suggestion inside the population
 while still naming the star-poorest frames.
+
+`sun-below` is copied, like `min-transparency`: it is a policy about when to
+shoot, not something the stack can suggest. The table shows the same value in
+both columns, and the rejects are the frames that policy costs.
 
 The counts are **attributed**: each rejected frame is counted once, under the
 first gate that rejected it in pipeline order, so the column sums to the total and
@@ -550,10 +567,11 @@ suggested thresholds for filter O (75 frame(s), 5 night(s), 2026-08-12..2026-08-
   band 4.0 sigma around the good stack: keeps 72/75 of the filter overall (96%)
 
   gate                current  suggested  rejects
+  sun-below                15         15        1
   min-stars               380        293        0
   max-ecc                0.64       0.61        1
   ...
-  min-transparency        0.8        0.8        2
+  min-transparency        0.8        0.8        1
   no metrics                -          -        0
   total                     -          -        3     (72/75 under the suggestion)
 ```
@@ -748,6 +766,7 @@ Flags:
       --skip-existing          do not overwrite existing files
       --stack-gate             reject frames from a night that is systematically worse than its filter's stack
       --suggested              judge frames with the thresholds stored by analyze --suggest
+      --sun-below float        reject a frame taken when the Sun was less than this many degrees below the horizon; 0 disables [config: garfield.yaml] (default 15)
   -t, --target string          astronomical target (directory under Lights/)
   -w, --workers int            processing workers (0 = auto: NumCPU/2) [config: garfield.yaml]
 
@@ -993,7 +1012,7 @@ came from that night. `filters` and `missingFlats` list letters in wheel order,
 `L R G B S H O`.
 
 `metrics/frames.csv` — one row per analysed frame, approved or not, with the
-same six `decision` values as `analyze`. Metric columns come from the same row
+same `decision` values as `analyze`. Metric columns come from the same row
 type `analyze` writes, so the two commands' CSVs cannot disagree. Rows run oldest
 first within each session/filter block, by the filename's acquisition stamp; the
 sessions themselves are chronological, so each filter reads in the order it was

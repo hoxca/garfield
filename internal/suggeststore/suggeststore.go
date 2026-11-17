@@ -23,7 +23,11 @@ import (
 // 2: --min-stars moved from the shared band to a fixed 1.85-sigma offset, so a
 // record written under schema 1 suggests a star gate that was derived by a rule
 // this build no longer follows.
-const SuggestVersion = 2
+//
+// 3: --sun-below joined the suggested thresholds. An older record has no value,
+// and applying its zero would silently disable the twilight gate; prepare falls
+// back to its configured value for those records.
+const SuggestVersion = 3
 
 // Reference is the stack statistic one metric was judged against.
 type Reference struct {
@@ -45,6 +49,7 @@ type Thresholds struct {
 	MaxHaloRatio    float64 `json:"max-halo-ratio"`
 	MaxStructure    float64 `json:"max-structure"`
 	MinTransparency float64 `json:"min-transparency"`
+	SunBelow        float64 `json:"sun-below"`
 }
 
 // Population describes the frames the suggestion was derived from, so a later

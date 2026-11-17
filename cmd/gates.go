@@ -111,6 +111,13 @@ func gatesFromSuggestions(store *suggeststore.Store, filters []string, sessions 
 		// suggestion, by the same rule analyze applies to a derived one: the store
 		// supplies what was measured, the flag supplies what was decided.
 		t := overrideThresholds(rec.Thresholds, opts.qualityThresholds, opts.explicit)
+		sunBelow := t.SunBelow
+		if rec.SuggestVersion < 3 && !opts.explicit["sun-below"] {
+			// Schema 3 added sun-below. An older record has no value for it, and
+			// reading that zero as "gate disabled" would silently drop a policy
+			// the operator never turned off.
+			sunBelow = opts.qualityThresholds.sunBelow
+		}
 		gates.byFilter[filter] = qualityThresholds{
 			minSNR:          t.MinSNR,
 			maxFWHM:         t.MaxFWHM,
@@ -121,6 +128,7 @@ func gatesFromSuggestions(store *suggeststore.Store, filters []string, sessions 
 			maxHaloRatio:    t.MaxHaloRatio,
 			maxStructure:    t.MaxStructure,
 			minTransparency: t.MinTransparency,
+			sunBelow:        sunBelow,
 			// The profile is a measurement choice, not a threshold: it comes from
 			// the run's own flags, never from a suggestion.
 			moffat: gates.base.moffat,

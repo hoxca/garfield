@@ -1453,6 +1453,7 @@ func TestPrepareRoutingFlagDefaults(t *testing.T) {
 		"max-ecc":   "0.64",
 		"min-score": "2",
 		"min-stars": "380",
+		"sun-below": "15",
 		"workers":   "0",
 	}
 	for name, def := range want {
@@ -1547,6 +1548,7 @@ func TestPrepareRoutingThresholdsMatchAnalyze(t *testing.T) {
 		{"max-ecc", "max-ecc"},
 		{"min-score", "min-score"},
 		{"min-stars", "min-stars"},
+		{"sun-below", "sun-below"},
 		{"workers", "workers"},
 	}
 	for _, p := range pairs {
@@ -1581,6 +1583,7 @@ func TestPrepareRoutingDefaultThresholdsRegistered(t *testing.T) {
 		{flag: "max-ecc", want: strconv.FormatFloat(defaultThresholds.maxEcc, 'g', -1, 64)},
 		{flag: "min-score", want: strconv.FormatFloat(defaultThresholds.minScore, 'g', -1, 64)},
 		{flag: "min-stars", want: strconv.Itoa(defaultThresholds.minStars), isInt: true},
+		{flag: "sun-below", want: strconv.FormatFloat(defaultThresholds.sunBelow, 'g', -1, 64)},
 	}
 
 	for _, tc := range tests {

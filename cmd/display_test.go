@@ -15,7 +15,7 @@ import (
 func displayableSuggestion(filter string) suggeststore.Suggestion {
 	rec := suggestionForFilter(filter, suggeststore.Thresholds{
 		MinStars: 100, MaxEcc: 0.61, MaxFWHM: 1.8, MinSNR: 10.48,
-		MinScore: 0, MaxHaloRatio: 0, MaxStructure: 1.41, MinTransparency: 0.8,
+		MinScore: 0, MaxHaloRatio: 0, MaxStructure: 1.41, MinTransparency: 0.8, SunBelow: 15,
 	})
 	rec.Population = suggeststore.Population{N: 75, Sessions: 5, From: "2026-08-12", To: "2026-08-18"}
 	rec.Band = 4.0
@@ -26,10 +26,10 @@ func displayableSuggestion(filter string) suggeststore.Suggestion {
 	}
 	rec.Display = &suggeststore.Display{
 		Current:   thresholdsFromQuality(defaultThresholds),
-		Rejected:  map[string]int{"max-ecc": 1, "min-transparency": 2},
+		Rejected:  map[string]int{"sun-below": 2, "max-ecc": 1, "min-transparency": 2},
 		NoMetrics: 0,
 		Total:     75,
-		Approved:  72,
+		Approved:  70,
 	}
 	return rec
 }
@@ -66,10 +66,11 @@ func TestDisplayPrintsTheStoredTable(t *testing.T) {
 		"reference excludes 1 night(s): 2026-08-13 (trailed,sparse)",
 		"band 4.0 sigma around the good stack: keeps 72/75 of the filter overall (96%)",
 		"current  suggested  rejects",
+		"sun-below",
 		"min-stars",
 		"max-ecc",
 		"min-transparency",
-		"3     (72/75 under the suggestion)",
+		"5     (70/75 under the suggestion)",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("display does not contain %q:\n%s", want, stdout)
