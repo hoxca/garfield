@@ -477,29 +477,37 @@ with the rest of the filter, not with their own haze.
 
 **`--suggest` derives the thresholds.** The reference is the *good stack* —
 frames from nights the profile cleared, plus the flagged nights' frames that
-match the stack — and each gate sits a band of robust sigmas around its median:
+match the stack — and every gate but `min-stars` sits a band of robust sigmas
+around its median:
 
 ```
-garfield analyze -d Lights -r --filter H -o out --suggest
+garfield analyze -t SH2-142 -i /Volumes/Bolino/Lubhe_2026 -o out --filter H --suggest
 ```
 
 ```
-suggested thresholds for filter H (20 frame(s), 4 night(s), 2026-09-04..2026-09-16)
-  reference excludes 2 night(s): 2026-09-02 (cloudy); 2026-09-03 (thin)
-  band 4.0 sigma around the good stack: keeps 11/13 good frames; 12/20 of the filter overall (60%)
+suggested thresholds for filter H (80 frame(s), 7 night(s), 2026-08-12..2026-08-18)
+  band 4.0 sigma around the good stack: keeps 75/80 good frames; 75/80 of the filter overall (94%)
 
   gate                current  suggested  rejects now → then
-  min-stars               380        100            0 → 0
-  max-ecc                0.64       0.59            0 → 0
-  max-fwhm                3.2       4.94           11 → 0
-  min-snr                  11      11.73            0 → 8
-  ...
-  min-transparency        0.9        0.9            0 → 0
+  min-stars               380        732            0 → 0
+  max-ecc                0.64        0.7            0 → 0
+  max-fwhm                3.2       1.88            0 → 1
+  min-snr                  11       9.16           35 → 4
+  min-score                 2          0            0 → 0
+  max-halo-ratio            2       1.95            0 → 0
+  max-structure          1.12       1.25            0 → 0
+  min-transparency        0.8        0.8            0 → 0
   no metrics                -          -            0 → 0
-  total                     -          -           11 → 8     (9/20 approved now, 12/20 under the suggestion)
+  total                     -          -           35 → 5     (45/80 approved now, 75/80 under the suggestion)
 
-  the suggestion would change 11 frame(s): 8 newly rejected, 3 newly approved
+  the suggestion would change 31 frame(s): 1 newly rejected, 30 newly approved
 ```
+
+`min-stars` is the exception: it sits **1.85 robust sigmas below** the good
+stack's median detected-star count, not the band. Detected star counts have a
+long right tail, so a four-sigma band falls under the usability floor and
+switches the gate off; a fixed 1.85 keeps the suggestion inside the population
+while still naming the star-poorest frames.
 
 The counts are **attributed**: each rejected frame is counted once, under the
 first gate that rejected it in pipeline order, so the column sums to the total and
@@ -519,7 +527,7 @@ suggested thresholds for filter O (75 frame(s), 5 night(s), 2026-08-12..2026-08-
   band 4.0 sigma around the good stack: keeps 72/75 of the filter overall (96%)
 
   gate                current  suggested  rejects
-  min-stars               380        100        0
+  min-stars               380        293        0
   max-ecc                0.64       0.61        1
   ...
   min-transparency        0.8        0.8        2
@@ -549,7 +557,9 @@ was applied).
 `--keep` moves the band: `--keep 0.95` loosens it until 95% of the good stack
 survives, `--keep 0.6` tightens it. It has nothing to search when
 `--max-fwhm-sigma` is given explicitly, because that flag *is* the band; the
-suggestion says so rather than silently ignoring one of the two.
+suggestion says so rather than silently ignoring one of the two. The band does not
+move `min-stars`: its 1.85-sigma offset is fixed, so a budget that needs 95% of
+the stack cannot buy back a frame below it.
 
 **A gate you set on the command line is not suggested.** `--suggest --min-snr 15`
 derives everything except `min-snr`, keeps your 15, and marks that row with `*` —
@@ -558,9 +568,9 @@ in the table, in the YAML provenance, and in the stored suggestion, so
 typed on the command line count; a value from `conf/garfield.yaml` is the baseline
 the suggestion improves on, and treating it as fixed would make `--suggest` echo
 the shipped config forever. The clamps are not negotiable — `min-snr`
-never below 3, `max-ecc` never above 0.8, `min-stars` never below 100 (the point
-below which no metric can be computed at all) and never above half the filter's
-median star count, `min-score` never negative. A gate that clamps to 0 is a gate
+never below 3, `max-ecc` never above 0.8, `min-stars` the good stack's median
+minus 1.85 robust sigmas but never below 100 (the point below which no metric can
+be computed at all), `min-score` never negative. A gate that clamps to 0 is a gate
 the data says to disable, and the suggestion writes it as 0.
 
 Two artifacts come out of `--suggest`: `suggested_<FILTER>.yaml` for pasting into

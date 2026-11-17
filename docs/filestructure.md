@@ -1403,6 +1403,10 @@ flagged the night. Flagging a night therefore never condemns it wholesale.
 `--suggest` writes `suggested_<FILTER>.yaml` and `cache/suggestions.jsonl`. The
 record carries the thresholds **and** the population reference statistics they
 were derived from, plus the population (`n`, nights, date range) they describe.
+Every gate but `min-stars` is the band's robust sigmas around the good stack's
+median; `min-stars` is a fixed 1.85 sigmas below the median, because detected star
+counts have a long right tail that would push a four-sigma band under the floor
+where no metric exists at all.
 That is what `prepare --suggested` applies: judging with a recomputed reference
 would make a frame's verdict depend on which other frames happened to be in the
 run. The transparency ratio is the one exception -- it is relative to the frames at

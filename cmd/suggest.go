@@ -49,7 +49,13 @@ const (
 	maxEccCeiling = 0.8 // beyond this the stars are trailed, not merely elongated
 	minScoreFloor = 0.0 // the score is a figure of merit, not a floor
 	minStarsFloor = 100 // brightSkip + minUsableStars: below it no metric exists
-	minStarsShare = 0.5 // never suggest keeping a filter's star-poor half
+	// minStarsSigma is how far below the good stack's median --min-stars sits.
+	// It is deliberately not the band the other gates use: detected star counts
+	// have a long right tail, so four robust sigmas below the median lands under
+	// the floor and silently switches the gate off. 1.85 sigmas keeps the
+	// suggestion inside the population while still naming the star-poorest
+	// frames; the floor still catches a filter whose median is genuinely low.
+	minStarsSigma = 1.85
 )
 
 // errNoSuggestionPopulation marks a filter whose stack is too thin to suggest
@@ -230,7 +236,7 @@ func thresholdsFromRefs(refs map[string]stackRef, band float64) suggeststore.Thr
 		MaxEcc:       roundTo(math.Min(ecc.Median+band*ecc.Sigma, maxEccCeiling), 3),
 		MinSNR:       roundTo(math.Max(snr.Median-band*snr.Sigma, minSNRFloor), 2),
 		MinScore:     roundTo(math.Max(score.Median-band*score.Sigma, minScoreFloor), 2),
-		MinStars:     int(math.Max(minStarsFloor, math.Min(stars.Median-band*stars.Sigma, minStarsShare*stars.Median))),
+		MinStars:     int(math.Max(minStarsFloor, stars.Median-minStarsSigma*stars.Sigma)),
 		MaxFWHMSigma: band,
 	}
 	if halo.P25 > 0 {

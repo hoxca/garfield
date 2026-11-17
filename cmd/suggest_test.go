@@ -81,6 +81,53 @@ func TestSuggestTightensTheBandToKeepTheBudget(t *testing.T) {
 	}
 }
 
+// --min-stars is deliberately not the band the other gates use: it sits a fixed
+// 1.85 robust sigmas below the good stack's median detected-star count, with the
+// usability floor on top.
+func TestSuggestMinStarsIsAnOffMedianOffset(t *testing.T) {
+	results := buildStack(t, "H", uniformNights(3, 3)...)
+	for i := range results {
+		switch {
+		case i < 3:
+			results[i].DetectedStars = 940
+		case i < 6:
+			results[i].DetectedStars = 970
+		default:
+			results[i].DetectedStars = 1000
+		}
+	}
+
+	s := suggestionFor(t, results, "H", 0)
+
+	// median 970, MAD 30, sigma 1.4826*30 = 44.478:
+	// 970 - 1.85*44.478 = 887.7, truncated to 887.
+	if s.Thresholds.MinStars != 887 {
+		t.Errorf("min-stars = %d, want 887 (median 970 minus 1.85 robust sigma)", s.Thresholds.MinStars)
+	}
+}
+
+func TestSuggestMinStarsStaysAboveTheUsabilityFloor(t *testing.T) {
+	results := buildStack(t, "H", uniformNights(3, 3)...)
+	for i := range results {
+		switch {
+		case i < 3:
+			results[i].DetectedStars = 100
+		case i < 6:
+			results[i].DetectedStars = 120
+		default:
+			results[i].DetectedStars = 140
+		}
+	}
+
+	s := suggestionFor(t, results, "H", 0)
+
+	// median 120, sigma 29.65: 120 - 1.85*29.65 = 65, under the point where a
+	// frame can be measured at all, so the floor wins.
+	if s.Thresholds.MinStars != minStarsFloor {
+		t.Errorf("min-stars = %d, want the floor %d", s.Thresholds.MinStars, minStarsFloor)
+	}
+}
+
 func TestSuggestClampsWhatTheDataWouldOtherwiseCertify(t *testing.T) {
 	results := buildStack(t, "H", uniformNights(3, 8)...)
 	for i := range results {

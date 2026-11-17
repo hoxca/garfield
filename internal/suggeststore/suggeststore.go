@@ -19,7 +19,11 @@ import (
 
 // SuggestVersion is the schema of a suggestion. Bump it when the derivation
 // changes in a way that makes an older record mean something else.
-const SuggestVersion = 1
+//
+// 2: --min-stars moved from the shared band to a fixed 1.85-sigma offset, so a
+// record written under schema 1 suggests a star gate that was derived by a rule
+// this build no longer follows.
+const SuggestVersion = 2
 
 // Reference is the stack statistic one metric was judged against.
 type Reference struct {
