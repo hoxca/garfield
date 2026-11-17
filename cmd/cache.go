@@ -172,7 +172,10 @@ func resultFromEntry(path string, e measurecache.Entry) ImageResult {
 		Cached:          true,
 	}
 	if e.SunBelow != nil {
-		r.SunBelow = *e.SunBelow
+		// Round on the way out as well as on the way in: entries written before
+		// the statistic was kept at sunBelowDecimals still carry full precision,
+		// and the in-memory value must not depend on which one it came from.
+		r.SunBelow = roundTo(*e.SunBelow, sunBelowDecimals)
 	}
 	if e.Status == measurecache.StatusNoStars {
 		r.Error = errNoStarFound

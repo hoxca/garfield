@@ -1217,9 +1217,9 @@ so an empty column means "not asked" rather than "same as now".
 empty when one of the three is missing: zero would read as the Sun exactly on the
 horizon rather than as "not recorded". `DATE-OBS` is the exposure start, so the
 value is not corrected for the exposure's length. The model is the NOAA solar
-calculator's (`internal/sun`), accurate to about a hundredth of a degree; `18` is
-the astronomical twilight angle. The statistic is informational and changes no
-verdict.
+calculator's (`internal/sun`), accurate to about a hundredth of a degree, and the
+statistic is kept to that precision; `18` is the astronomical twilight angle. The
+statistic is informational and changes no verdict.
 
 ### 10.1.1 The FWHM, cloud and structure rules
 

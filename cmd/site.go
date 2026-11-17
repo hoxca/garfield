@@ -15,6 +15,11 @@ import (
 // instant. The acquisition writes the site as a sexagesimal string -- "+44 20
 // 14" -- but the cards may also be plain numbers, so both are accepted.
 
+// sunBelowDecimals is the precision the statistic is kept at. A hundredth of a
+// degree is finer than the model's own accuracy and is what the report shows, so
+// rounding here keeps the value in the cache identical to the one in the CSV.
+const sunBelowDecimals = 2
+
 // sunBelowAt returns how many degrees the Sun sat below the horizon when the
 // frame was taken. Zero means the header did not record a usable site and time;
 // the report leaves the column empty rather than claiming the Sun was on the
@@ -46,7 +51,7 @@ func sunBelowFromCards(cards map[string]string) (below float64, ok bool) {
 	if err != nil {
 		return 0, false
 	}
-	return sun.BelowHorizon(at, lat, lon), true
+	return roundTo(sun.BelowHorizon(at, lat, lon), sunBelowDecimals), true
 }
 
 // parseSiteDegrees reads a latitude or longitude card.

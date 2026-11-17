@@ -88,10 +88,10 @@ type Entry struct {
 	HaloStars       int     `json:"haloStars"`
 	Airmass         float64 `json:"airmass,omitempty"`
 	// SunBelow is how far the Sun sat below the horizon at DATE-OBS, read from
-	// the header rather than from the pixels. A nil pointer marks an entry
-	// written before the field existed, so a later run reads the header once and
-	// fills it in; zero is a genuine answer (no site recorded, or the Sun on the
-	// horizon), which the report renders empty.
+	// the header rather than from the pixels and kept to a hundredth of a degree.
+	// A nil pointer marks an entry written before the field existed, so a later
+	// run reads the header once and fills it in; zero is a genuine answer (no
+	// site recorded, or the Sun on the horizon), which the report renders empty.
 	SunBelow *float64 `json:"sunBelow,omitempty"`
 }
 

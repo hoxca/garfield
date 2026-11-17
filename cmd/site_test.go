@@ -100,6 +100,23 @@ func TestParseObservationTime(t *testing.T) {
 	}
 }
 
+// The statistic is kept at a hundredth of a degree. That is finer than the
+// model and is exactly what the report prints, so the cached value and the CSV
+// cell cannot disagree in a digit the user never sees.
+func TestSunBelowIsRoundedToHundredths(t *testing.T) {
+	below, ok := sunBelowFromCards(map[string]string{
+		"SITELAT":  "+44 20 14",
+		"SITELONG": "+01 01 30",
+		"DATE-OBS": "2026-08-11T22:14:30",
+	})
+	if !ok {
+		t.Fatal("sunBelowFromCards: not computed")
+	}
+	if scaled := below * 100; math.Abs(scaled-math.Round(scaled)) > 1e-9 {
+		t.Errorf("sunBelow = %v, want at most %d decimal places", below, sunBelowDecimals)
+	}
+}
+
 // The statistic has to survive both paths: the fresh measurement and the cache
 // hit, which does not read the pixels but must still read the header's site.
 func TestAnalyzeReportsTheSunsDepth(t *testing.T) {
@@ -141,9 +158,9 @@ func TestAnalyzeReportsTheSunsDepth(t *testing.T) {
 	if !ok {
 		t.Fatal("sunBelow is empty on a measured frame")
 	}
-	want := sun.BelowHorizon(time.Date(2026, 8, 11, 22, 14, 30, 0, time.UTC),
-		44+20.0/60+14.0/3600, 1+1.0/60+30.0/3600)
-	if math.Abs(first-want) > 0.01 {
+	want := roundTo(sun.BelowHorizon(time.Date(2026, 8, 11, 22, 14, 30, 0, time.UTC),
+		44+20.0/60+14.0/3600, 1+1.0/60+30.0/3600), sunBelowDecimals)
+	if math.Abs(first-want) > 1e-9 {
 		t.Errorf("sunBelow = %.2f, want %.2f", first, want)
 	}
 	// Mid-August at 44°N, 22:14 UTC is hours after sunset: deep astronomical

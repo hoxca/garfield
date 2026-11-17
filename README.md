@@ -346,7 +346,8 @@ a frame whose aureole could not be measured is not mistaken for a calm one.
 
 `sunBelow` is how many degrees the Sun's centre sat below the horizon when the
 frame was taken, computed from the header's `SITELAT`, `SITELONG` and `DATE-OBS`
-(UTC). 18 is astronomical night; 0 is the Sun on the horizon. The column is
+(UTC), and kept to a hundredth of a degree. 18 is astronomical night; 0 is the
+Sun on the horizon. The column is
 **empty** when the header does not carry all three, because zero would read as a
 measured horizon rather than a missing one. `DATE-OBS` is the start of the
 exposure, so the depth is not corrected for its length. It is a property of where
