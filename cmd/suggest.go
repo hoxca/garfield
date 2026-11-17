@@ -62,6 +62,8 @@ const (
 	// tail the gate exists for while leaving ordinary frame-to-frame scatter
 	// alone.
 	minSNRSigma = 3.0
+	// maxEccSigma offsets --max-ecc above the good stack's median; a suggestion may tighten it, never beyond the operator's own max-ecc.
+	maxEccSigma = 3.0
 )
 
 // errNoSuggestionPopulation marks a filter whose stack is too thin to suggest
@@ -208,6 +210,7 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 			th := thresholdsFromRefs(refs, k)
 			th.MinTransparency = opts.minTransparency
 			th.SunBelow = opts.sunBelow
+			th.MaxEcc = capMaxEcc(th.MaxEcc, opts.maxEcc)
 			if goodApproved, _ := approved(th); float64(goodApproved)/float64(out.GoodCount) >= opts.keep {
 				break
 			}
@@ -221,6 +224,7 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 	derived := thresholdsFromRefs(refs, band)
 	derived.MinTransparency = opts.minTransparency
 	derived.SunBelow = opts.sunBelow
+	derived.MaxEcc = capMaxEcc(derived.MaxEcc, opts.maxEcc)
 	out.Thresholds = overrideThresholds(derived, opts.qualityThresholds, opts.explicit)
 	out.Pinned = pinnedGates(opts.explicit)
 	out.KeptGood, out.KeptCount = approved(out.Thresholds)
@@ -242,7 +246,7 @@ func thresholdsFromRefs(refs map[string]stackRef, band float64) suggeststore.Thr
 
 	t := suggeststore.Thresholds{
 		MaxFWHM:      roundTo(fwhm.Median+band*fwhm.Sigma, 2),
-		MaxEcc:       roundTo(math.Min(ecc.Median+band*ecc.Sigma, maxEccCeiling), 3),
+		MaxEcc:       roundTo(math.Min(ecc.Median+maxEccSigma*ecc.Sigma, maxEccCeiling), 3),
 		MinSNR:       roundTo(math.Max(snr.Median-minSNRSigma*snr.Sigma, minSNRFloor), 2),
 		MinScore:     roundTo(math.Max(score.Median-band*score.Sigma, minScoreFloor), 2),
 		MinStars:     int(math.Max(minStarsFloor, stars.Median-minStarsSigma*stars.Sigma)),
@@ -408,6 +412,14 @@ func referenceFromRefs(refs map[string]stackRef) map[string]suggeststore.Referen
 func roundTo(v float64, decimals int) float64 {
 	scale := math.Pow(10, float64(decimals))
 	return math.Round(v*scale) / scale
+}
+
+// capMaxEcc keeps a suggestion at or below the operator's own max-ecc.
+func capMaxEcc(suggested, configured float64) float64 {
+	if configured > 0 && suggested > configured {
+		return configured
+	}
+	return suggested
 }
 
 // gateRows is the order rejections are reported in: the base cascade first, then

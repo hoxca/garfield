@@ -129,6 +129,42 @@ func TestSuggestMinSNRUsesA3SigmaOffset(t *testing.T) {
 	}
 }
 
+// max-ecc is a fixed 3-sigma offset, and a suggestion may tighten eccentricity
+// but never exceed the operator's own max-ecc.
+func TestSuggestMaxEccUses3SigmaAndTheOperatorCap(t *testing.T) {
+	build := func(values [3]float64) []ImageResult {
+		results := buildStack(t, "H", uniformNights(3, 3)...)
+		for i := range results {
+			results[i].AvgEccentricity = values[i/3]
+		}
+		return results
+	}
+
+	// median 0.50, MAD 0.02, sigma 0.02965: 0.50 + 3*0.02965 = 0.589.
+	s := suggestionFor(t, build([3]float64{0.48, 0.50, 0.52}), "H", 0)
+	if math.Abs(s.Thresholds.MaxEcc-0.589) > 1e-9 {
+		t.Errorf("max-ecc = %v, want 0.589 (median 0.50 plus 3 robust sigma)", s.Thresholds.MaxEcc)
+	}
+
+	// median 0.60 plus 3 sigma is 0.689, and the operator's 0.64 wins.
+	s = suggestionFor(t, build([3]float64{0.58, 0.60, 0.62}), "H", 0)
+	if s.Thresholds.MaxEcc != defaultThresholds.maxEcc {
+		t.Errorf("max-ecc = %v, want the configured %v", s.Thresholds.MaxEcc, defaultThresholds.maxEcc)
+	}
+
+	// Raising max-ecc explicitly lets the suggestion follow it.
+	results := build([3]float64{0.58, 0.60, 0.62})
+	opts := defaultOpts()
+	opts.maxEcc = 0.7
+	s2, err := suggestForFilter(results, profileRun(results), "H", opts)
+	if err != nil {
+		t.Fatalf("suggestForFilter: %v", err)
+	}
+	if math.Abs(s2.Thresholds.MaxEcc-0.689) > 1e-9 {
+		t.Errorf("max-ecc = %v, want 0.689 under an operator cap of 0.7", s2.Thresholds.MaxEcc)
+	}
+}
+
 func TestSuggestMinStarsStaysAboveTheUsabilityFloor(t *testing.T) {
 	results := buildStack(t, "H", uniformNights(3, 3)...)
 	for i := range results {

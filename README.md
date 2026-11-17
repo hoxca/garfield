@@ -526,7 +526,7 @@ suggested thresholds for filter H (80 frame(s), 7 night(s), 2026-08-12..2026-08-
   gate                current  suggested  rejects now → then
   sun-below                15         15            4 → 4
   min-stars               380        732            0 → 0
-  max-ecc                0.64        0.7            0 → 0
+  max-ecc                0.64       0.64            0 → 0
   max-fwhm                3.2       1.88            0 → 1
   min-snr                  11       9.65           31 → 3
   min-score                 2          0            0 → 0
@@ -539,13 +539,15 @@ suggested thresholds for filter H (80 frame(s), 7 night(s), 2026-08-12..2026-08-
   the suggestion would change 28 frame(s): 1 newly rejected, 27 newly approved
 ```
 
-`min-stars` and `min-snr` are the exceptions, each with its own offset rather
-than the band: **1.85 robust sigmas below** the good stack's median detected-star
-count, and **3 below** its median SNR. Detected star counts have a long right
-tail, so a four-sigma band falls under the usability floor and switches the gate
-off; SNR is a tight measurement, so four sigmas sit below every frame of a clean
-filter and reject nothing. Their fixed offsets keep each suggestion inside the
-population the gate is meant to trim.
+`min-stars`, `min-snr` and `max-ecc` are the exceptions, each with its own offset
+rather than the band: **1.85 robust sigmas below** the good stack's median
+detected-star count, **3 below** its median SNR, and **3 above** its median
+eccentricity. Detected star counts have a long right tail, so a four-sigma band
+falls under the usability floor and switches the gate off; SNR is a tight
+measurement, so four sigmas sit below every frame of a clean filter and reject
+nothing. `max-ecc` is capped at the configured `max-ecc` (0.64 by default): a
+suggestion may tighten eccentricity, never license frames the operator already
+rejects.
 
 `sun-below` is copied, like `min-transparency`: it is a policy about when to
 shoot, not something the stack can suggest. The table shows the same value in
@@ -571,7 +573,7 @@ suggested thresholds for filter O (75 frame(s), 5 night(s), 2026-08-12..2026-08-
   gate                current  suggested  rejects
   sun-below                15         15        1
   min-stars               380        293        0
-  max-ecc                0.64       0.61        1
+  max-ecc                0.64       0.57        1
   ...
   min-transparency        0.8        0.8        1
   no metrics                -          -        0
@@ -601,8 +603,8 @@ was applied).
 survives, `--keep 0.6` tightens it. It has nothing to search when
 `--max-fwhm-sigma` is given explicitly, because that flag *is* the band; the
 suggestion says so rather than silently ignoring one of the two. The band does not
-move `min-stars` or `min-snr`: their 1.85- and 3-sigma offsets are fixed, so a
-budget that needs 95% of the stack cannot buy back a frame below either.
+move `min-stars`, `min-snr` or `max-ecc`: their 1.85-, 3- and 3-sigma offsets are
+fixed, and `max-ecc` additionally never exceeds the configured value.
 
 **A gate you set on the command line is not suggested.** `--suggest --min-snr 15`
 derives everything except `min-snr`, keeps your 15, and marks that row with `*` —
