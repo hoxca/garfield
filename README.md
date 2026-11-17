@@ -528,7 +528,7 @@ suggested thresholds for filter H (80 frame(s), 7 night(s), 2026-08-12..2026-08-
   min-stars               380        732            0 → 0
   max-ecc                0.64        0.7            0 → 0
   max-fwhm                3.2       1.88            0 → 1
-  min-snr                  11       9.16           31 → 3
+  min-snr                  11       9.65           31 → 3
   min-score                 2          0            0 → 0
   max-halo-ratio            2       1.95            0 → 0
   max-structure          1.12       1.25            0 → 0
@@ -539,11 +539,13 @@ suggested thresholds for filter H (80 frame(s), 7 night(s), 2026-08-12..2026-08-
   the suggestion would change 28 frame(s): 1 newly rejected, 27 newly approved
 ```
 
-`min-stars` is the exception: it sits **1.85 robust sigmas below** the good
-stack's median detected-star count, not the band. Detected star counts have a
-long right tail, so a four-sigma band falls under the usability floor and
-switches the gate off; a fixed 1.85 keeps the suggestion inside the population
-while still naming the star-poorest frames.
+`min-stars` and `min-snr` are the exceptions, each with its own offset rather
+than the band: **1.85 robust sigmas below** the good stack's median detected-star
+count, and **3 below** its median SNR. Detected star counts have a long right
+tail, so a four-sigma band falls under the usability floor and switches the gate
+off; SNR is a tight measurement, so four sigmas sit below every frame of a clean
+filter and reject nothing. Their fixed offsets keep each suggestion inside the
+population the gate is meant to trim.
 
 `sun-below` is copied, like `min-transparency`: it is a policy about when to
 shoot, not something the stack can suggest. The table shows the same value in
@@ -599,8 +601,8 @@ was applied).
 survives, `--keep 0.6` tightens it. It has nothing to search when
 `--max-fwhm-sigma` is given explicitly, because that flag *is* the band; the
 suggestion says so rather than silently ignoring one of the two. The band does not
-move `min-stars`: its 1.85-sigma offset is fixed, so a budget that needs 95% of
-the stack cannot buy back a frame below it.
+move `min-stars` or `min-snr`: their 1.85- and 3-sigma offsets are fixed, so a
+budget that needs 95% of the stack cannot buy back a frame below either.
 
 **A gate you set on the command line is not suggested.** `--suggest --min-snr 15`
 derives everything except `min-snr`, keeps your 15, and marks that row with `*` —
