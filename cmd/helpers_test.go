@@ -35,6 +35,10 @@ type synthOpts struct {
 	// enough stars to score and a halo the rule can measure at the same time.
 	brightAmp  float64
 	brightHalo float64
+	// cards are extra primary-header cards, appended before the HDU is written.
+	// They let a test give a frame the site and time the Sun statistic needs
+	// without building a FITS file by hand.
+	cards []fitsio.Card
 }
 
 // writeFrame builds a FITS frame containing a regular grid of Gaussian stars
@@ -126,6 +130,11 @@ func writeFrame(t *testing.T, dir, name string, o synthOpts) string {
 	defer tf.Close()
 
 	img := fitsio.NewImage(-32, []int{o.width, o.height})
+	for _, card := range o.cards {
+		if err := img.Header().Append(card); err != nil {
+			t.Fatalf("append card %s: %v", card.Name, err)
+		}
+	}
 	if err := img.Write(&pix); err != nil {
 		t.Fatalf("write pixels: %v", err)
 	}

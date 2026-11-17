@@ -310,7 +310,7 @@ filtered or target-scoped run writes `<output>/analyse_report_<FILTER>.csv`, so
 reports for different filters can share one output directory:
 
 ```
-filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass
+filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass;sunBelow
 ```
 
 `cached` is `true` on a row whose numbers were read from the measurement cache
@@ -343,6 +343,14 @@ Both ratios are 0 when the session has fewer than four measured frames, or when
 too few stars were bright enough to measure a halo. The halo itself is left
 **empty** in that case, with `haloStars` recording how many stars contributed, so
 a frame whose aureole could not be measured is not mistaken for a calm one.
+
+`sunBelow` is how many degrees the Sun's centre sat below the horizon when the
+frame was taken, computed from the header's `SITELAT`, `SITELONG` and `DATE-OBS`
+(UTC). 18 is astronomical night; 0 is the Sun on the horizon. The column is
+**empty** when the header does not carry all three, because zero would read as a
+measured horizon rather than a missing one. `DATE-OBS` is the start of the
+exposure, so the depth is not corrected for its length. It is a property of where
+and when the frame was taken, not of the pixels, and it changes no decision.
 
 A frame is `REJECTED FWHM` when its `avgFWHM` lies more than
 `--max-fwhm-sigma` robust sigmas above the median of its filter's whole

@@ -75,6 +75,14 @@ func measureWithCache(path string, opts analyzeOptions, c *measurecache.Cache) I
 		return measureFrame(path, opts)
 	}
 	if e, ok := c.Lookup(key); ok && cacheEntryUsable(e, opts) {
+		// An entry written before the Sun statistic existed has no depth. Read
+		// the header once and record it, so a cache hit is header-free after this
+		// run instead of opening every file again.
+		if e.SunBelow == nil {
+			below := sunBelowAt(path)
+			e.SunBelow = &below
+			_ = c.Put(e)
+		}
 		return resultFromEntry(path, e)
 	}
 
@@ -132,6 +140,7 @@ func entryFromResult(key measurecache.Key, r ImageResult, opts analyzeOptions, e
 		Halo:            r.Halo,
 		HaloStars:       r.HaloStars,
 		Airmass:         r.Airmass,
+		SunBelow:        &r.SunBelow,
 	}
 }
 
@@ -161,6 +170,9 @@ func resultFromEntry(path string, e measurecache.Entry) ImageResult {
 		HaloStars:       e.HaloStars,
 		Airmass:         e.Airmass,
 		Cached:          true,
+	}
+	if e.SunBelow != nil {
+		r.SunBelow = *e.SunBelow
 	}
 	if e.Status == measurecache.StatusNoStars {
 		r.Error = errNoStarFound

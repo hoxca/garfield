@@ -87,6 +87,12 @@ type Entry struct {
 	Halo            float64 `json:"halo"`
 	HaloStars       int     `json:"haloStars"`
 	Airmass         float64 `json:"airmass,omitempty"`
+	// SunBelow is how far the Sun sat below the horizon at DATE-OBS, read from
+	// the header rather than from the pixels. A nil pointer marks an entry
+	// written before the field existed, so a later run reads the header once and
+	// fills it in; zero is a genuine answer (no site recorded, or the Sun on the
+	// horizon), which the report renders empty.
+	SunBelow *float64 `json:"sunBelow,omitempty"`
 }
 
 // Cache is an open measurement store. It is safe for concurrent use: the

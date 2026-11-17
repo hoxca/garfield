@@ -177,6 +177,11 @@ type ImageResult struct {
 	// Zero means it was not recorded, and the transparency rule falls back to a
 	// time neighbourhood.
 	Airmass float64
+	// SunBelow is how many degrees the Sun's centre sat below the horizon at
+	// DATE-OBS, positive at night: 18 is astronomical night. It is derived from
+	// the header's site and time, not from the pixels, and zero means they were
+	// not recorded.
+	SunBelow float64
 	// Transparency is the frame's image contrast-to-noise divided by the best its
 	// own session reached: 1.0 means the clearest conditions of the night, 0.8 that
 	// the frame is a fifth dimmer. It is the observable behind thin cloud and any
@@ -373,8 +378,14 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 	}
 	// The header's airmass groups frames taken through the same slice of
 	// atmosphere, which is what lets the transparency rule compare like with like
-	// without a physical extinction model.
-	airmass, _, _ := readfits.ReadHeaderFloat(path, "AIRMASS")
+	// without a physical extinction model. The same header carries the observer's
+	// site and the observation time, which place the Sun for the report.
+	cards, _ := readfits.ReadHeaderValues(path, "AIRMASS", "SITELAT", "SITELONG", "DATE-OBS")
+	airmass := 0.0
+	if v, ok := cards["AIRMASS"]; ok {
+		airmass, _ = strconv.ParseFloat(v, 64)
+	}
+	sunBelow, _ := sunBelowFromCards(cards)
 
 	scales := 5
 	mrsResult := mrs.EstimateBackgroundAndNoiseBinned(pixels, scales)
@@ -398,7 +409,8 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 		return ImageResult{
 			Filename: name, Filter: filter, Date: date,
 			Background: bgLevel, Noise: skyNoise, BgStructure: bgStructure,
-			Error: errNoStarFound,
+			SunBelow: sunBelow,
+			Error:    errNoStarFound,
 		}
 	}
 
@@ -431,6 +443,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 			Halo:            halo,
 			HaloStars:       haloStars,
 			Airmass:         airmass,
+			SunBelow:        sunBelow,
 		}
 	}
 
@@ -483,6 +496,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 			Halo:          halo,
 			HaloStars:     haloStars,
 			Airmass:       airmass,
+			SunBelow:      sunBelow,
 		}
 	}
 
@@ -510,6 +524,7 @@ func measureFrame(path string, opts analyzeOptions) ImageResult {
 		Halo:            halo,
 		HaloStars:       haloStars,
 		Airmass:         airmass,
+		SunBelow:        sunBelow,
 	}
 }
 
@@ -582,7 +597,7 @@ func newCSVReader(r io.Reader) *csv.Reader {
 // every pre-existing column is unchanged for anything already reading this file.
 var imageResultHeader = []string{"filename", "filter", "date", "detectedStars", "starCount", "avgFWHM", "avgSignal", "avgEccentricity", "snr", "score", "decision", "error", "background", "noise", "bgStructure", "halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
-	"suggestedDecision", "haloStars", "transparency", "airmass"}
+	"suggestedDecision", "haloStars", "transparency", "airmass", "sunBelow"}
 
 // imageResultRow renders one result as imageResultHeader columns. Both
 // commands go through here so their metric columns and number formatting cannot
@@ -623,7 +638,17 @@ func imageResultRow(r ImageResult) []string {
 		strconv.Itoa(r.HaloStars),
 		formatRatio(r.Transparency),
 		formatAirmass(r.Airmass),
+		formatSunBelow(r.SunBelow),
 	}
+}
+
+// formatSunBelow renders how far below the horizon the Sun sat, empty when the
+// header did not record a site and a time.
+func formatSunBelow(v float64) string {
+	if v == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(v, 'f', 2, 64)
 }
 
 // formatAirmass renders the header's airmass, empty when it was not recorded.

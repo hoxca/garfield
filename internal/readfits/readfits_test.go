@@ -727,6 +727,35 @@ func TestReadHeaderString(t *testing.T) {
 	}
 }
 
+// ReadHeaderValues must accept both spellings of a site card: the string a
+// Voyager-written header holds and the number a FITS-conforming writer may use.
+func TestReadHeaderValuesReadsStringAndNumericCards(t *testing.T) {
+	dir := t.TempDir()
+	data := ramp16(4)
+	path := writeFITS(t, dir, "values.fits", 16, []int{2, 2}, &data,
+		fitsio.Card{Name: "SITELAT", Value: "+44 20 14"},
+		fitsio.Card{Name: "LONGITUD", Value: 1.025},
+		fitsio.Card{Name: "DATE-OBS", Value: "2026-08-11T22:14:30"})
+
+	values, err := ReadHeaderValues(path, "SITELAT", "LONGITUD", "DATE-OBS", "ABSENT")
+	if err != nil {
+		t.Fatalf("ReadHeaderValues: %v", err)
+	}
+	want := map[string]string{
+		"SITELAT":  "+44 20 14",
+		"LONGITUD": "1.025",
+		"DATE-OBS": "2026-08-11T22:14:30",
+	}
+	for key, value := range want {
+		if got := values[key]; got != value {
+			t.Errorf("%s = %q, want %q", key, got, value)
+		}
+	}
+	if _, ok := values["ABSENT"]; ok {
+		t.Error("an absent card was returned")
+	}
+}
+
 func TestReadHeaderFloat(t *testing.T) {
 	dir := t.TempDir()
 	data := ramp16(4)

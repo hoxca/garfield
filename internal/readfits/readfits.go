@@ -3,6 +3,7 @@ package readfits
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/astrogo/fitsio"
@@ -37,6 +38,49 @@ func ReadHeaderString(filename, keyword string) (value string, found bool, err e
 		return "", false, nil
 	}
 	return strings.TrimSpace(s), true, nil
+}
+
+// ReadHeaderValues reads several cards from the primary image header in one
+// pass, returning each card's textual value. A string card is trimmed; a numeric
+// card is formatted without a trailing zero. Absent cards, and cards whose value
+// is neither, are omitted.
+//
+// It exists because not every acquisition agrees on the type: SITELAT and
+// SITELONG are strings in some headers and numbers in others, and the callers
+// want whichever was written without opening the file once per spelling.
+func ReadHeaderValues(filename string, keywords ...string) (map[string]string, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("unable to open file: %w", err)
+	}
+	defer f.Close()
+
+	r, err := fitsio.Open(f)
+	if err != nil {
+		return nil, fmt.Errorf("unable to initialize FITS reader: %w", err)
+	}
+	defer r.Close()
+
+	hdu := r.HDU(0)
+	if _, ok := hdu.(fitsio.Image); !ok {
+		return nil, fmt.Errorf("primary HDU is not an image layer")
+	}
+
+	values := make(map[string]string, len(keywords))
+	for _, keyword := range keywords {
+		card := hdu.Header().Get(keyword)
+		if card == nil {
+			continue
+		}
+		if s, ok := card.Value.(string); ok {
+			values[keyword] = strings.TrimSpace(s)
+			continue
+		}
+		if v, ok := numericCard(card.Value); ok {
+			values[keyword] = strconv.FormatFloat(v, 'f', -1, 64)
+		}
+	}
+	return values, nil
 }
 
 // ReadHeaderFloat reads one numeric card from the primary image header. found is

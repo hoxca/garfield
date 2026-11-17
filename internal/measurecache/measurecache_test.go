@@ -142,6 +142,54 @@ func TestPutAndReopen(t *testing.T) {
 	}
 }
 
+// A nil SunBelow means the entry predates the field, and a non-nil zero means
+// the header was read and held no site: the difference is what lets a later run
+// backfill once instead of reopening the frame on every hit.
+func TestSunBelowNilIsNotZero(t *testing.T) {
+	path := storePath(t)
+	dir := t.TempDir()
+	old := frame(t, dir, "old.FIT", 8)
+	absent := frame(t, dir, "absent.FIT", 8)
+	known := frame(t, dir, "known.FIT", 8)
+
+	oldEntry := entryFor(old, 2.5) // SunBelow nil: written before the field existed
+	absentEntry := entryFor(absent, 2.5)
+	zero := 0.0
+	absentEntry.SunBelow = &zero
+	knownEntry := entryFor(known, 2.5)
+	below := 25.85
+	knownEntry.SunBelow = &below
+
+	c, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	for _, e := range []Entry{oldEntry, absentEntry, knownEntry} {
+		if err := c.Put(e); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	c2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer c2.Close()
+
+	if got, _ := c2.Lookup(old); got.SunBelow != nil {
+		t.Errorf("old entry gained a SunBelow: %v", *got.SunBelow)
+	}
+	if got, _ := c2.Lookup(absent); got.SunBelow == nil || *got.SunBelow != 0 {
+		t.Errorf("absent entry = %v, want a recorded zero", got.SunBelow)
+	}
+	if got, _ := c2.Lookup(known); got.SunBelow == nil || *got.SunBelow != below {
+		t.Errorf("known entry = %v, want %v", got.SunBelow, below)
+	}
+}
+
 func TestLastWriteWins(t *testing.T) {
 	path := storePath(t)
 	dir := t.TempDir()

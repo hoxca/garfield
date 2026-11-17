@@ -1164,7 +1164,7 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass;sunBelow
 ```
 
 `decision` holds one of **eight** values, which are **data, not messages** —
@@ -1211,6 +1211,15 @@ above the median: bad for width, shape, halo and structure, good for SNR.
 `suggestedDecision` is the verdict `analyze --suggest` says the frame would get
 under the suggested gates. It is empty on every other run, including `prepare`,
 so an empty column means "not asked" rather than "same as now".
+
+`sunBelow` is how many degrees the Sun's centre sat below the horizon at
+`DATE-OBS`, from the header's `SITELAT`, `SITELONG` and `DATE-OBS` (UTC). It is
+empty when one of the three is missing: zero would read as the Sun exactly on the
+horizon rather than as "not recorded". `DATE-OBS` is the exposure start, so the
+value is not corrected for the exposure's length. The model is the NOAA solar
+calculator's (`internal/sun`), accurate to about a hundredth of a degree; `18` is
+the astronomical twilight angle. The statistic is informational and changes no
+verdict.
 
 ### 10.1.1 The FWHM, cloud and structure rules
 

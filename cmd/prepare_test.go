@@ -1108,7 +1108,7 @@ func TestPrepareReportsWriteFramesCSV(t *testing.T) {
 		"decision", "error", "background", "noise", "bgStructure",
 		"halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 		"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
-		"suggestedDecision", "haloStars", "transparency", "airmass",
+		"suggestedDecision", "haloStars", "transparency", "airmass", "sunBelow",
 	}
 	if len(recs[0]) != len(wantHeader) {
 		t.Fatalf("header has %d columns, want %d: %v", len(recs[0]), len(wantHeader), recs[0])
