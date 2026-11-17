@@ -766,7 +766,7 @@ Flags:
       --moffat                 fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml] (default true)
   -o, --output string          destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
       --quiet                  suppress console output
-      --skip-existing          do not overwrite existing files
+      --skip-existing          do not overwrite existing flats or masters; light frames are always rewritten
       --stack-gate             reject frames from a night that is systematically worse than its filter's stack
       --suggested              judge frames with the thresholds stored by analyze --suggest
       --sun-below float        reject a frame taken when the Sun was less than this many degrees below the horizon; 0 disables [config: garfield.yaml] (default 15)
@@ -983,9 +983,17 @@ built for import.
 
 Four things to know about the shape:
 
-- **Filenames are never changed.** A copy is a byte-for-byte stream copy, so
-  the filename inside the output is the acquisition's filename. That is also how
-  you trace a borrowed flat back to its source date.
+- **Light frames are reindexed; flats and masters are not.** Every light of a
+  filter, approved or rejected, gets a new running index (`001…N`) in acquisition
+  order, placed in the slot after the sensor temperature: it replaces the G4 and
+  ASI2600 frame index and is inserted before the C3's `GA0` token. The sequence is
+  per filter across all sessions, and rejected frames take their place in it, so
+  the approved subset may have gaps. Flats, bias and darks keep their acquisition
+  names. The source tree is untouched. Light copies are always rewritten, whatever
+  `--skip-existing` says, because a new index may name a different frame than the
+  file already there; the flag now protects only flats and masters. A target
+  prepared before this scheme keeps its old-indexed files until it is regenerated.
+  Prepared trees are for WBPP; garfield does not analyse them.
 - **`bias/` and `darks/` are siblings of `Session_NN`, not inside it.** A master
   belongs to a sensor setting, not to a night; nesting one per session would
   duplicate hundreds of megabytes nightly (20 nights of two masters is 466 MB
@@ -1019,7 +1027,8 @@ same `decision` values as `analyze`. Metric columns come from the same row
 type `analyze` writes, so the two commands' CSVs cannot disagree. Rows run oldest
 first within each session/filter block, by the filename's acquisition stamp; the
 sessions themselves are chronological, so each filter reads in the order it was
-shot across the whole file.
+shot across the whole file. `filename` is the source name; `outputFilename` is the
+name the frame was copied under, index included.
 
 Both reports record the **bare** session name, never a path, so consumers join on
 the `session` column.

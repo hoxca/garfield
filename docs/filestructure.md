@@ -1114,7 +1114,19 @@ a master the run actually needs was found. A target with no darks on hand gets
 
 Five things worth knowing:
 
-- **Filenames are never changed.** `copyFITS` is a plain buffered stream copy.
+- **Light frames are reindexed; flats and masters are not.** Every planned light
+  of a filter, approved or rejected, is numbered `001…N` by acquisition time and
+  copied under that index. The number goes in the slot after the sensor
+  temperature: it replaces the G4/ASI2600 frame index and is inserted before the
+  C3's `GA0` token. The sequence is one per filter across all sessions of the
+  target, and rejected frames consume their place in it, so the approved subset
+  may have gaps. A light whose name has no index slot is copied unchanged with a
+  warning. Flats, bias and darks keep their acquisition names, and the source
+  tree is never modified. Light copies are always rewritten regardless of
+  `--skip-existing`, which now protects only flats and masters: the new name may
+  previously have held a different frame. An output tree prepared before this
+  scheme keeps its old-indexed files until it is regenerated. The prepared tree
+  is a WBPP delivery format, not an input garfield reads back.
 - **`bias/` and `darks/` are siblings of `Session_NN`, not inside it.** A master
   is a property of the sensor setting, not of a night — one file serves every
   session at that gain, and nesting it per session would duplicate
@@ -1165,13 +1177,14 @@ filename's date field, since it is never rewritten (§10).
 `metrics/frames.csv` — one row per analysed frame, approved or not:
 
 ```
-session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass;sunBelow
+session;sessionDate;pa;filter;filename;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass;sunBelow;outputFilename
 ```
 
 Rows are ordered oldest first within each session and filter, by the acquisition
 stamp in the filename. Sessions are chronological, so a given filter's rows run in
 the order the frames were taken across the whole file; `analyze`'s report uses the
-same ordering.
+same ordering. `filename` is the source name and `outputFilename` the name the
+frame was copied under, reindexed per filter.
 
 `decision` holds one of **ten** values, which are **data, not messages** —
 anything parsing this file must match on them, and the strings are part of the

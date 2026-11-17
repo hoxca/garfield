@@ -92,9 +92,15 @@ func TestPrepareSessionLiveUnderSessionsDir(t *testing.T) {
 	}
 
 	// ...and the rejected frame stays at the target root, not under Sessions/.
-	rej := filepath.Join(rootDir, rejectedDir, "Session_01", "H", rejected)
+	// It is the first frame of its filter by acquisition time, so the new index
+	// is 001.
+	rejectedCopy, ok := reindexedName(rejected, 1)
+	if !ok {
+		t.Fatalf("reindexedName(%q): no frame-index slot", rejected)
+	}
+	rej := filepath.Join(rootDir, rejectedDir, "Session_01", "H", rejectedCopy)
 	if _, err := os.Stat(rej); err != nil {
-		t.Errorf("%s missing: %v", filepath.Join(rejectedDir, "Session_01", "H", rejected), err)
+		t.Errorf("%s missing: %v", filepath.Join(rejectedDir, "Session_01", "H", rejectedCopy), err)
 	}
 	if _, err := os.Stat(filepath.Join(sessionsDir, rejectedDir)); err == nil {
 		t.Errorf("%s/%s exists, want the rejected tree at the target root only", sessionsDir, rejectedDir)
@@ -419,7 +425,7 @@ func TestPrepareDryRunStillAssesses(t *testing.T) {
 	}
 }
 
-func TestPrepareSkipExistingIsIdempotent(t *testing.T) {
+func TestPrepareSkipExistingKeepsFlatsAndRewritesLights(t *testing.T) {
 	const target = "M87-1"
 	root := t.TempDir()
 	simpleFixture(target).build(t, root)
@@ -444,29 +450,39 @@ func TestPrepareSkipExistingIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A flat is still protected by --skip-existing.
+	flatsDir := filepath.Join(sessionOutDir(filepath.Join(out, target), "Session_01"), sessionFlatsDir, "H")
+	flatEntries, err := os.ReadDir(flatsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flatEntries) == 0 {
+		t.Fatal("fixture produced no flats")
+	}
+	markedFlat := filepath.Join(flatsDir, flatEntries[0].Name())
+	if err := os.WriteFile(markedFlat, []byte("SENTINEL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	opts.skipExisting = true
 	if err := runPrepare(opts); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 
+	// Lights are rewritten: their names carry the new index, so an existing file
+	// may hold a different frame.
 	got, err := os.ReadFile(marked)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != "SENTINEL" {
-		t.Errorf("file was overwritten despite --skip-existing: %q", got)
-	}
-
-	// Without the flag the file is replaced.
-	if err := runPrepare(prepareOptionsForTest(target, root, out)); err != nil {
-		t.Fatalf("third run: %v", err)
-	}
-	got, err = os.ReadFile(marked)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if string(got) == "SENTINEL" {
-		t.Error("file was not overwritten without --skip-existing")
+		t.Error("light frame was not rewritten despite reindexing")
+	}
+	// Flats and masters keep --skip-existing.
+	if got, err := os.ReadFile(markedFlat); err != nil {
+		t.Fatal(err)
+	} else if string(got) != "SENTINEL" {
+		t.Errorf("flat was overwritten despite --skip-existing: %q", got)
 	}
 }
 
@@ -1109,6 +1125,7 @@ func TestPrepareReportsWriteFramesCSV(t *testing.T) {
 		"halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 		"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
 		"suggestedDecision", "haloStars", "transparency", "airmass", "sunBelow",
+		"outputFilename",
 	}
 	if len(recs[0]) != len(wantHeader) {
 		t.Fatalf("header has %d columns, want %d: %v", len(recs[0]), len(wantHeader), recs[0])

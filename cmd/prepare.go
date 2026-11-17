@@ -543,7 +543,8 @@ func init() {
 	prepareCmd.Flags().StringVarP(&prepareOpts.input, "input", "i", defaultPrepareInput, "root of the acquisition data")
 	prepareCmd.Flags().StringVarP(&prepareOpts.output, "output", "o", defaultPrepareOutput, "destination root")
 	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "show the plan without copying")
-	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false, "do not overwrite existing files")
+	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false,
+		"do not overwrite existing flats or masters; light frames are always rewritten")
 	prepareCmd.Flags().BoolVar(&prepareOpts.cache, "cache", false,
 		"reuse and record measurements in <output>/cache")
 	prepareCmd.Flags().BoolVar(&prepareOpts.stackGate, "stack-gate", false,
@@ -602,6 +603,10 @@ type sessionPlan struct {
 	rejectedCount int
 	// rejectReasons counts frames per decision, for the console summary.
 	rejectReasons map[string]int
+	// outputNames maps a source light to the name it is copied under. Filled
+	// once per target before the copy loop, because the index runs across every
+	// session of a filter and a session cannot compute it alone.
+	outputNames map[sourceFrame]string
 }
 
 // cameraMismatchWarning reports lights that contradict the chosen --camera.
@@ -795,6 +800,10 @@ func runPrepare(opts prepareOptions) error {
 	if err := assessSessions(sessions, opts, measures, gates); err != nil {
 		return err
 	}
+
+	// Number the lights once the whole target is assessed: the index runs across
+	// every session of a filter, and rejected frames take their place in it.
+	warnings = append(warnings, indexSessions(sessions)...)
 
 	// Reported before the per-session verdicts, because it explains why a second
 	// run over the same target finishes quickly.
@@ -1664,16 +1673,23 @@ func prepareSession(s sessionPlan, targetOut string, opts prepareOptions) (int, 
 		srcDir := filepath.Join(opts.input, lightsDir, opts.target, s.date, filter)
 
 		for _, name := range s.filters[filter] {
-			dst := filepath.Join(sessionOut, sessionLightsDir, filter, name)
+			dstName := name
+			if mapped, ok := s.outputNames[sourceFrame{filter: filter, name: name}]; ok {
+				dstName = mapped
+			}
+			dst := filepath.Join(sessionOut, sessionLightsDir, filter, dstName)
 			if !s.approved(name) {
-				dst = filepath.Join(targetOut, rejectedDir, s.sessionDir(), filter, name)
+				dst = filepath.Join(targetOut, rejectedDir, s.sessionDir(), filter, dstName)
 			}
 			if !opts.dryRun {
 				if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 					return lights, flats, fmt.Errorf("unable to create %q: %w", filepath.Dir(dst), err)
 				}
 			}
-			n, err := copyFITS(filepath.Join(srcDir, name), dst, opts)
+			// Lights always overwrite: the destination name carries the new index
+			// and may have held a different frame on an earlier run, so
+			// --skip-existing would keep the wrong bytes.
+			n, err := copyFITSAlways(filepath.Join(srcDir, name), dst, opts)
 			if err != nil {
 				return lights, flats, err
 			}
@@ -2199,6 +2215,20 @@ func copyFITS(src, dst string, opts prepareOptions) (bool, error) {
 	return true, nil
 }
 
+// copyFITSAlways copies a light frame regardless of --skip-existing. Its
+// destination name carries the newly assigned index, so a file already there may
+// be a different frame from an earlier run; skipping it would keep the wrong
+// bytes under the right name.
+func copyFITSAlways(src, dst string, opts prepareOptions) (bool, error) {
+	if opts.dryRun {
+		return true, nil
+	}
+	if err := copyFileAtomic(src, dst); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // framesCSVHeader describes one analysed light frame. It carries the session it
 // belongs to rather than only the date, because a session directory is named
 // for the evening it started while the frames themselves are usually stamped the
@@ -2211,6 +2241,7 @@ var framesCSVHeader = []string{
 	"halo", "haloRatio", "structRatio", "fwhmRatio", "cached", "sessionFlag",
 	"fwhmRatioStack", "eccRatioStack", "snrRatioStack", "haloRatioStack", "structRatioStack",
 	"suggestedDecision", "haloStars", "transparency", "airmass", "sunBelow",
+	"outputFilename",
 }
 
 // writeFramesCSV records the per-frame quality metrics that decided the split
@@ -2261,6 +2292,12 @@ func writeFramesCSV(targetOut string, sessions []sessionPlan) error {
 					base[colFilename],
 				)
 				row = append(row, base[colFirst:]...)
+
+				output := name
+				if mapped, ok := s.outputNames[sourceFrame{filter: filter, name: name}]; ok {
+					output = mapped
+				}
+				row = append(row, output)
 
 				if len(row) != len(framesCSVHeader) {
 					return fmt.Errorf("frames.csv: built %d columns, header has %d",
