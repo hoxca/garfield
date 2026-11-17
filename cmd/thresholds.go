@@ -30,15 +30,14 @@ type qualityThresholds struct {
 	maxHaloRatio float64
 	maxStructure float64
 	// minTransparency bounds a frame's contrast-to-noise against the best of the
-	// frames taken through a similar airmass: 0.80 means a frame a fifth flatter
+	// frames taken through a similar airmass: 0.75 means a frame a quarter flatter
 	// than those is rejected as untransparent. It is a relative test like the
 	// cloud and structure rules, because a night can be uniformly hazy and every
 	// frame then looks normal against an absolute cut.
 	//
-	// 0.80 is deliberately conservative: on the target it was calibrated against it
-	// rejects only an unmistakable loss of contrast -- the whole of a cloud passage
-	// and none of the clear frames -- and leaves milder dips to the operator. Set
-	// 0.90 to catch those too, at roughly twice the rejected frames.
+	// 0.75 is deliberately conservative: it rejects an unmistakable loss of
+	// contrast and leaves the milder dips to the operator. Set 0.90 to catch those
+	// too, at roughly twice the rejected frames.
 	minTransparency float64
 	// sunBelow bounds how high the Sun may have been when the frame was taken:
 	// the Sun's centre must sit at least this many degrees below the horizon.
@@ -80,7 +79,7 @@ var defaultThresholds = qualityThresholds{
 	maxStructure: 1.12,
 	// Transparency is a bystander gate: it should catch a cloud that visibly
 	// dims the field, not the ordinary frame-to-frame scatter.
-	minTransparency: 0.80,
+	minTransparency: 0.75,
 	// Twilight is an acquisition condition, not a frame measurement: 15 degrees
 	// below the horizon is late nautical twilight, where the sky is still bright
 	// enough to lift the background but the frame's own metrics can look fine.

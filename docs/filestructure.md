@@ -1370,7 +1370,7 @@ reference    = p90(SNR of the frames within a similar airmass)
                fallback: the frames within an hour either side, when AIRMASS is
                not in the header
 transparency = SNR / reference
-untransparent = transparency < --min-transparency        (default 0.80)
+untransparent = transparency < --min-transparency        (default 0.75)
 ```
 
 Airmass is the grouping variable because it is the part of the drift that geometry

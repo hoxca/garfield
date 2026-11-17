@@ -97,7 +97,7 @@ thresholds:
   max-fwhm-sigma: 4.0  # FWHM outliers above the filter's median; 0 disables
   max-halo-ratio: 2.0  # session-relative bright-star halo; 0 disables
   max-structure: 1.12  # session-relative sky structure (bad seeing); 0 disables
-  min-transparency: 0.80  # contrast against frames at a similar airmass; 0 disables
+  min-transparency: 0.75  # contrast against frames at a similar airmass; 0 disables
   sun-below: 15.0      # reject frames taken with the Sun less than this far below the horizon; 0 disables
   moffat: true         # Moffat PSF fit (slower, FWHM matches PixInsight); false = Gaussian
 
@@ -203,7 +203,7 @@ Flags:
       --min-score float            minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float              minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int              minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
-      --min-transparency float     reject a frame whose contrast is below this fraction of the best of the hour around it; 0 disables [config: garfield.yaml] (default 0.8)
+      --min-transparency float     reject a frame whose contrast is below this fraction of the best of the hour around it; 0 disables [config: garfield.yaml] (default 0.75)
       --moffat                     fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml] (default true)
   -o, --output string              output directory for the report and copied rejected frames
       --quiet                      suppress console output
@@ -399,11 +399,10 @@ different bounds.
 A frame is `REJECTED TRANSPARENCY` when its image contrast-to-noise is below
 `--min-transparency` of the best frames taken through a similar airmass. That is
 the thin-cloud signal: cloud dims the stars and flattens the contrast while the
-sky barely moves. The default is deliberately conservative: on the night it was
-calibrated against it rejected the whole of the obvious cloud passage and none of
-the confirmed-clear frames (9% of the night), and left the milder dips to the
-operator -- `--min-transparency 0.9` catches two thirds of those at about twice
-the rejected frames.
+sky barely moves. The default is deliberately conservative: it rejects an
+unmistakable loss of contrast and leaves the milder dips to the operator --
+`--min-transparency 0.9` catches more of those, at about twice the rejected
+frames.
 
 Airmass rather than clock time is the grouping variable because it is the part of
 the drift that is predictable from geometry: a frame at airmass 1.4 is dimmed by
@@ -532,7 +531,7 @@ suggested thresholds for filter H (80 frame(s), 7 night(s), 2026-08-12..2026-08-
   min-score                 2          0            0 → 0
   max-halo-ratio            2       1.95            0 → 0
   max-structure          1.12       1.25            0 → 0
-  min-transparency        0.8        0.8            0 → 0
+  min-transparency       0.75       0.75            0 → 0
   no metrics                -          -            0 → 0
   total                     -          -           35 → 8     (45/80 approved now, 72/80 under the suggestion)
 
@@ -575,7 +574,7 @@ suggested thresholds for filter O (75 frame(s), 5 night(s), 2026-08-12..2026-08-
   min-stars               380        293        0
   max-ecc                0.64       0.57        1
   ...
-  min-transparency        0.8        0.8        1
+  min-transparency       0.75       0.75        1
   no metrics                -          -        0
   total                     -          -        3     (72/75 under the suggestion)
 ```
@@ -763,7 +762,7 @@ Flags:
       --min-score float        minimum score for APPROVED [config: garfield.yaml] (default 2)
       --min-snr float          minimum SNR for APPROVED [config: garfield.yaml] (default 11)
       --min-stars int          minimum number of detected stars for APPROVED [config: garfield.yaml] (default 380)
-      --min-transparency float reject a frame whose contrast is below this fraction of the best of the hour around it; 0 disables [config: garfield.yaml] (default 0.8)
+      --min-transparency float reject a frame whose contrast is below this fraction of the best of the hour around it; 0 disables [config: garfield.yaml] (default 0.75)
       --moffat                 fit a Moffat PSF profile instead of a Gaussian (slower, FWHM agrees with PixInsight) [config: garfield.yaml] (default true)
   -o, --output string          destination root [config: garfield.yaml] (default "/Volumes/T7/Workspace")
       --quiet                  suppress console output
