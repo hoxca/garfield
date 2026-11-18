@@ -88,23 +88,30 @@ func gatesFromSuggestions(store *suggeststore.Store, filters []string, sessions 
 		}
 
 		// Coverage: a suggestion derived before a night was acquired does not speak
-		// for that night, and applying it silently would hide the gap.
+		// for that night, and applying it silently would hide the gap. A session
+		// is compared by its frame dates, not its directory date: the directory
+		// names the evening the session started, while the suggestion records the
+		// dates stamped inside the frames.
 		for _, s := range sessions {
 			if !hasFilter(s, filter) {
 				continue
 			}
-			if rec.Population.From != "" && s.date < rec.Population.From {
+			covered, anyGood, flags := sessionCoverage(s, rec)
+			switch {
+			case !covered:
 				warnings = append(warnings, fmt.Sprintf(
 					"suggestion for %s was derived from %s..%s and does not cover session %s",
 					filter, rec.Population.From, rec.Population.To, s.date))
-				break
-			}
-			if rec.Population.To != "" && s.date > rec.Population.To {
+			case !anyGood:
 				warnings = append(warnings, fmt.Sprintf(
-					"suggestion for %s was derived from %s..%s and does not cover session %s",
-					filter, rec.Population.From, rec.Population.To, s.date))
-				break
+					"suggestion for %s was derived from good nights %s..%s; session %s was excluded from the reference (%s)",
+					filter, rec.Population.From, rec.Population.To, s.date,
+					strings.Join(uniqueFlags(flags), ",")))
 			}
+			if covered && anyGood {
+				continue
+			}
+			break
 		}
 
 		// A gate the operator typed on this command line overrides the stored
@@ -305,4 +312,58 @@ func abs(v float64) float64 {
 		return -v
 	}
 	return v
+}
+
+// sessionCoverage compares one prepare session with a suggestion's recorded
+// sessions. A session matches when one of its frame dates falls on a recorded
+// session's date; anyGood reports that at least one matched night supplied the
+// reference, and flags are the tokens of the matched nights that did not.
+//
+// The comparison uses the frame dates, not the session directory date: the
+// directory names the evening the session started, while a night that crosses
+// midnight stamps the following date inside its frames.
+//
+// A record written before session notes existed falls back to its population
+// range, which is the best interval it carries.
+func sessionCoverage(s sessionPlan, rec suggeststore.Suggestion) (covered, anyGood bool, flags []string) {
+	from, to := s.frameDateMin, s.frameDateMax
+	if from == "" {
+		from = s.date
+	}
+	if to == "" {
+		to = s.date
+	}
+
+	if len(rec.Sessions) == 0 {
+		covered = (rec.Population.From == "" || to >= rec.Population.From) &&
+			(rec.Population.To == "" || from <= rec.Population.To)
+		return covered, covered, nil
+	}
+
+	for _, note := range rec.Sessions {
+		if note.Date == "" || note.Date < from || note.Date > to {
+			continue
+		}
+		covered = true
+		if len(note.Flags) == 0 {
+			anyGood = true
+			continue
+		}
+		flags = append(flags, note.Flags...)
+	}
+	return covered, anyGood, flags
+}
+
+// uniqueFlags removes repeated session tokens, keeping their first-seen order.
+func uniqueFlags(flags []string) []string {
+	seen := make(map[string]bool, len(flags))
+	out := make([]string, 0, len(flags))
+	for _, f := range flags {
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
 }

@@ -479,6 +479,68 @@ func TestGatesFromSuggestionsWarnsAndFallsBack(t *testing.T) {
 	}
 }
 
+func TestGatesFromSuggestionsCoverageUsesFrameDatesAndFlags(t *testing.T) {
+	dir := t.TempDir()
+	store, err := suggeststore.Open(suggestionPath(dir))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+
+	// G's reference comes from the good 16th; the 17th was flagged soft but is
+	// still part of the population.
+	g := suggestionForFilter("G", suggeststore.Thresholds{MaxFWHM: 3})
+	g.Population = suggeststore.Population{N: 169, Sessions: 2, From: "2026-08-16", To: "2026-08-16"}
+	g.Sessions = []suggeststore.SessionNote{
+		{Date: "2026-08-16", N: 133},
+		{Date: "2026-08-17", N: 36, Flags: []string{"soft"}},
+	}
+	if err := store.Put(g); err != nil {
+		t.Fatal(err)
+	}
+
+	// H's first session starts on the evening of the 11th; its frames are
+	// stamped the 12th, which is inside the population.
+	h := suggestionForFilter("H", suggeststore.Thresholds{MaxFWHM: 3})
+	h.Population = suggeststore.Population{N: 80, Sessions: 1, From: "2026-08-12", To: "2026-08-18"}
+	h.Sessions = []suggeststore.SessionNote{{Date: "2026-08-12", N: 80}}
+	if err := store.Put(h); err != nil {
+		t.Fatal(err)
+	}
+
+	warningsFor := func(filter string, s sessionPlan) []string {
+		t.Helper()
+		_, warnings := gatesFromSuggestions(store, []string{filter}, []sessionPlan{s},
+			prepareOptionsForTest("", "", t.TempDir()))
+		return warnings
+	}
+
+	// A flagged night is named as excluded, not as missing.
+	warnings := warningsFor("G", sessionPlan{
+		date: "2026-08-17", frameDateMin: "2026-08-17", frameDateMax: "2026-08-18",
+		filters: map[string][]string{"G": {"a.FIT"}},
+	})
+	if got := strings.Join(warnings, " "); !strings.Contains(got, "excluded from the reference (soft)") {
+		t.Errorf("warnings = %v, want the soft night named as excluded", warnings)
+	}
+
+	// The directory starts the evening before its frames; no warning.
+	if warnings := warningsFor("H", sessionPlan{
+		date: "2026-08-11", frameDateMin: "2026-08-12", frameDateMax: "2026-08-12",
+		filters: map[string][]string{"H": {"a.FIT"}},
+	}); len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none for a session whose frames are covered", warnings)
+	}
+
+	// A session after the population really is not covered.
+	warnings = warningsFor("G", sessionPlan{
+		date: "2026-08-20", frameDateMin: "2026-08-20", frameDateMax: "2026-08-20",
+		filters: map[string][]string{"G": {"a.FIT"}},
+	})
+	if got := strings.Join(warnings, " "); !strings.Contains(got, "does not cover session 2026-08-20") {
+		t.Errorf("warnings = %v, want the uncovered session named", warnings)
+	}
+}
+
 func TestSuggestStoredRefusesWhenEmpty(t *testing.T) {
 	const target = "LBN527"
 	root := t.TempDir()
