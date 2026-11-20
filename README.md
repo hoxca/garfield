@@ -60,24 +60,7 @@ otherwise.
 (`scripts/test-cmd-domains.sh`): prepare alone is two thirds of the suite, so one
 binary is slow however many tests it holds. The domains are the name prefixes in
 that script's table, and the last shard takes whatever they did not match, so a new
-test always runs exactly once. Two guards make that safe: a test matching two
-prefixes is refused (it would run twice), and a shard that runs fewer tests than it
-owns fails the run (a malformed invocation otherwise reports success with zero
-tests). Wall time is ~14 s against ~36 s single-threaded, and `make test-race` drops
-from 6 minutes to 1.5.
-
-The report **streams**: each domain is formatted on its own and printed the moment
-it finishes, so a failure appears as it happens rather than at the end. Shards are
-printed as contiguous lines, with the per-shard summary and its blank line stripped. The domain
-is in the package label — `✓ cmd (cloud) (1.2s)` first, `✓ cmd (core) (13.5s)` last
-— which is the order the shards actually completed in, and the internal packages
-usually lead because they are the quickest.
-
-`GOTEST_MERGE=1 make test` waits and prints one consolidated report instead, with
-the internal packages first and the command domains in completion order; that is
-the shape to prefer in a CI log, where one summary block greps better than
-interleaved arrivals. `make test-verbose` streams `testdox`, grouping each domain's
-tests under its own header.
+test always runs exactly once.
 
 ---
 
@@ -108,8 +91,8 @@ concurrency:
 prepare:
   input: /Volumes/Dyno/Kosmodrom
   output: /Volumes/T7/Workspace
-  camera: auto      # auto (INSTRUME), c3 (rotator + gain), g4 (fixed angle, no gain) or asi2600
-  flat-count: 0     # 0 = the session's own date only
+  camera: auto      # auto (fits header reading), c3 (rotator + gain), g4 (fixed angle, no gain) or asi2600 (rotator + gain)
+  flat-count: 0     # target number of flats by session. 0 = the session's own date only
 
 analyze:
   dir: images
@@ -117,12 +100,9 @@ analyze:
 ```
 
 The `thresholds` block is not a preference. It is the decision about which
-frames get destroyed, and it applies to both commands at once. `--max-ecc` was
-raised to 0.64 during development because frames just above the previous bound
-were being discarded — treat any change here as a decision, not a tweak.
+frames get discarded, and it applies to both commands at once.
 
-Point at a different file with `--config path/to/garfield.yaml`. A `--config`
-path that does not exist is an error rather than a silent fallback.
+Point at a different file with `--config path/to/garfield.yaml`.
 
 ---
 
