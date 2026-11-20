@@ -150,7 +150,19 @@ func applyConfig(cmd *cobra.Command) error {
 	}
 	warnUnknownKeys(v, path)
 
-	return applySections(cmd, v, path)
+	if err := applySections(cmd, v, path); err != nil {
+		return err
+	}
+	// The suggestion factors are not flags: they only influence --suggest, and
+	// have no per-run command-line form. Read the section directly.
+	if cmd == analyzeCmd {
+		factors, err := suggestionFactorsFromConfig(v)
+		if err != nil {
+			return fmt.Errorf("config %s: %w", path, err)
+		}
+		analyzeOpts.suggestion = factors
+	}
+	return nil
 }
 
 // applySections pushes each configured value into its flag. A flag the user
@@ -256,6 +268,9 @@ func knownConfigKeys() map[string]bool {
 				known[section+"."+f.Name] = true
 			})
 		}
+	}
+	for _, key := range suggestionConfigNames() {
+		known[key] = true
 	}
 	return known
 }

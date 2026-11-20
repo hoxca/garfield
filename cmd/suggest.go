@@ -168,20 +168,6 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 	// the budget would demand gates wide enough to re-admit them.
 	out.GoodCount = len(good)
 
-	// The band is the one the FWHM outlier rule already applies, so a suggestion
-	// never disagrees with the gate it replaces: tightening --max-fwhm-sigma
-	// tightens both. Zero means that rule is disabled, and the default applies.
-	//
-	// A larger band keeps more, so with a budget the tightest band that still
-	// meets it is the most useful one.
-	band := opts.maxFWHMSigma
-	if band <= 0 {
-		band = defaultThresholds.maxFWHMSigma
-	}
-	// The band and --max-fwhm-sigma are the same number, so an explicit flag pins
-	// it and leaves --keep nothing to search.
-	out.PinnedBand = opts.explicit["max-fwhm-sigma"]
-	out.KeepIgnored = out.PinnedBand && opts.keep > 0
 	// Approved counts come from the same simulation the table uses, so the
 	// headline and the total row cannot describe different rule sets. The band
 	// search needs the same thing: a budget spent on the absolute gates alone
@@ -201,13 +187,35 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 		return goodApproved, allApproved
 	}
 
-	if opts.keep > 0 && !out.PinnedBand {
+	// Each gate has its own sigma offset in the suggestion section. The FWHM pair
+	// inherits the analysis band when unset, so a config that only tunes
+	// max-fwhm-sigma keeps the old coupling.
+	factors := opts.resolveSuggestionFactors()
+	band := factors.MaxFWHMSigma
+
+	// An explicit --max-fwhm-sigma pins the whole band group, as it always has;
+	// --keep then has nothing to search.
+	out.PinnedBand = opts.explicit["max-fwhm-sigma"]
+	out.KeepIgnored = out.PinnedBand && opts.keep > 0
+
+	overrideBand := false
+	switch {
+	case out.PinnedBand:
+		overrideBand = true
+		band = opts.maxFWHMSigma
+		if band <= 0 {
+			band = defaultThresholds.maxFWHMSigma
+		}
+	case opts.keep > 0:
+		// The budget searches the shared band of the five band-driven gates; the
+		// fixed offsets (ecc, SNR, stars) stay as configured.
+		overrideBand = true
 		steps := int(math.Round((keepBandMax - keepBandMin) / keepBandStep))
 		band = keepBandMax
 		for i := 0; i <= steps; i++ {
 			k := roundTo(keepBandMin+float64(i)*keepBandStep, 2)
 			band = k
-			th := thresholdsFromRefs(refs, k)
+			th := thresholdsFromRefs(refs, factors, k, true)
 			th.MinTransparency = opts.minTransparency
 			th.SunBelow = opts.sunBelow
 			th.MaxEcc = capMaxEcc(th.MaxEcc, opts.maxEcc)
@@ -221,7 +229,7 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 	// The transparency policy is not derived from the stack: the threshold is the
 	// operator's tolerance, so it is copied rather than suggested. The Sun's depth
 	// is the same kind of policy: it describes the acquisition, not the frame.
-	derived := thresholdsFromRefs(refs, band)
+	derived := thresholdsFromRefs(refs, factors, band, overrideBand)
 	derived.MinTransparency = opts.minTransparency
 	derived.SunBelow = opts.sunBelow
 	derived.MaxEcc = capMaxEcc(derived.MaxEcc, opts.maxEcc)
@@ -232,10 +240,12 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 	return out, nil
 }
 
-// thresholdsFromRefs turns a band width in robust sigmas into the threshold
-// values the commands take, applying the clamps that keep a band from certifying
-// what it should not.
-func thresholdsFromRefs(refs map[string]stackRef, band float64) suggeststore.Thresholds {
+// thresholdsFromRefs turns the per-gate sigma offsets into the threshold values
+// the commands take, applying the clamps that keep a suggestion from certifying
+// what it should not. When overrideBand is set (--keep or an explicit
+// --max-fwhm-sigma), the five band-driven gates share that band; eccentricity,
+// SNR and stars keep their configured offsets.
+func thresholdsFromRefs(refs map[string]stackRef, factors suggestionFactors, band float64, overrideBand bool) suggeststore.Thresholds {
 	fwhm := refs["fwhm"]
 	ecc := refs["ecc"]
 	snr := refs["snr"]
@@ -244,19 +254,28 @@ func thresholdsFromRefs(refs map[string]stackRef, band float64) suggeststore.Thr
 	halo := refs["halo"]
 	structure := refs["struct"]
 
+	fwhmOffset := factors.MaxFWHM
+	scoreOffset := factors.MinScore
+	haloOffset := factors.MaxHaloRatio
+	structOffset := factors.MaxStructure
+	sigma := factors.MaxFWHMSigma
+	if overrideBand {
+		fwhmOffset, scoreOffset, haloOffset, structOffset, sigma = band, band, band, band, band
+	}
+
 	t := suggeststore.Thresholds{
-		MaxFWHM:      roundTo(fwhm.Median+band*fwhm.Sigma, 2),
-		MaxEcc:       roundTo(math.Min(ecc.Median+maxEccSigma*ecc.Sigma, maxEccCeiling), 3),
-		MinSNR:       roundTo(math.Max(snr.Median-minSNRSigma*snr.Sigma, minSNRFloor), 2),
-		MinScore:     roundTo(math.Max(score.Median-band*score.Sigma, minScoreFloor), 2),
-		MinStars:     int(math.Max(minStarsFloor, stars.Median-minStarsSigma*stars.Sigma)),
-		MaxFWHMSigma: band,
+		MaxFWHM:      roundTo(fwhm.Median+fwhmOffset*fwhm.Sigma, 2),
+		MaxEcc:       roundTo(math.Min(ecc.Median+factors.MaxEcc*ecc.Sigma, maxEccCeiling), 3),
+		MinSNR:       roundTo(math.Max(snr.Median-factors.MinSNR*snr.Sigma, minSNRFloor), 2),
+		MinScore:     roundTo(math.Max(score.Median-scoreOffset*score.Sigma, minScoreFloor), 2),
+		MinStars:     int(math.Max(minStarsFloor, stars.Median-factors.MinStars*stars.Sigma)),
+		MaxFWHMSigma: sigma,
 	}
 	if halo.P25 > 0 {
-		t.MaxHaloRatio = roundTo((halo.Median+band*halo.Sigma)/halo.P25, 2)
+		t.MaxHaloRatio = roundTo((halo.Median+haloOffset*halo.Sigma)/halo.P25, 2)
 	}
 	if structure.P25 > 0 {
-		t.MaxStructure = roundTo((structure.Median+band*structure.Sigma)/structure.P25, 2)
+		t.MaxStructure = roundTo((structure.Median+structOffset*structure.Sigma)/structure.P25, 2)
 	}
 	return t
 }

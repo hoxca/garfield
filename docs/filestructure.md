@@ -1437,16 +1437,16 @@ flagged the night. Flagging a night therefore never condemns it wholesale.
 `--suggest` writes `suggested_<FILTER>.yaml` and `cache/suggestions.jsonl`. The
 record carries the thresholds **and** the population reference statistics they
 were derived from, plus the population (`n`, nights, date range) they describe.
-Every gate but `min-stars`, `min-snr`, `max-ecc` and `sun-below` is the band's
-robust sigmas around the good stack's median; `min-stars` is a fixed 1.85 sigmas
-below the median, because detected star counts have a long right tail that would
-push a four-sigma band under the floor where no metric exists at all, `min-snr`
-is 3 sigmas below, because SNR is tight enough that four sigmas never reject a
-frame of a clean filter, and `max-ecc` is 3 sigmas above, capped at the
-configured `max-ecc` so a suggestion can tighten eccentricity but never exceed
-the operator's own bound. `sun-below` is copied from the run, like
-`min-transparency`: it is a policy about when to shoot, not a property of the
-stack.
+Each sigma-derived gate takes its offset from the `suggestion:` block of the
+config: `max-fwhm` 4σ, `max-fwhm-sigma` 4σ, `max-ecc` 3σ above, `min-snr` 3σ
+below, `min-score` 4σ below, `min-stars` 1.85σ below, `max-halo-ratio` 4σ and
+`max-structure` 4σ (the last two then divided by the session p25). The FWHM pair
+inherits `thresholds.max-fwhm-sigma` when omitted; `--keep` searches the shared
+band of the five band-driven gates and leaves the fixed offsets alone. The
+clamps still apply: `max-ecc` is capped at the configured value, `min-snr` and
+`min-stars` have floors, and `min-score` is never negative. `sun-below` is copied
+from the run, like `min-transparency`: it is a policy about when to shoot, not a
+property of the stack.
 That is what `prepare --suggested` applies: judging with a recomputed reference
 would make a frame's verdict depend on which other frames happened to be in the
 run. The transparency ratio is the one exception -- it is relative to the frames at

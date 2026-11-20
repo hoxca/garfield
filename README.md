@@ -92,6 +92,18 @@ thresholds:
   sun-below: 15.0      # reject frames taken with the Sun less than this far below the horizon; 0 disables
   moffat: true         # Moffat PSF fit (slower, FWHM matches PixInsight); false = Gaussian
 
+# Sigma offsets analyze --suggest uses, per gate. FWHM pair inherits
+# thresholds.max-fwhm-sigma when omitted or 0.
+suggestion:
+  max-fwhm: 4.0
+  max-fwhm-sigma: 4.0
+  max-ecc: 3.0
+  min-snr: 3.0
+  min-score: 4.0
+  min-stars: 1.85
+  max-halo-ratio: 4.0
+  max-structure: 4.0
+
 concurrency:
   workers: 0        # 0 = NumCPU/2
   conv-workers: 0   # 0 = core count
@@ -559,8 +571,8 @@ with the rest of the filter, not with their own haze.
 
 **`--suggest` derives the thresholds.** The reference is the *good stack* —
 frames from nights the profile cleared, plus the flagged nights' frames that
-match the stack — and every gate but `min-stars` sits a band of robust sigmas
-around its median:
+match the stack — and each gate sits its own robust-sigma offset from the
+median, configured in the `suggestion:` block:
 
 ```
 garfield analyze -t SH2-142 -i /Volumes/Bolino/Lubhe_2026 -o out --filter H --suggest
@@ -646,12 +658,21 @@ and `suggestedDecision` in the CSV carries the same thing for a whole report
 (empty when `--suggest` was not used, so the column never implies the suggestion
 was applied).
 
-`--keep` moves the band: `--keep 0.95` loosens it until 95% of the good stack
-survives, `--keep 0.6` tightens it. It has nothing to search when
-`--max-fwhm-sigma` is given explicitly, because that flag *is* the band; the
-suggestion says so rather than silently ignoring one of the two. The band does not
-move `min-stars`, `min-snr` or `max-ecc`: their 1.85-, 3- and 3-sigma offsets are
-fixed, and `max-ecc` additionally never exceeds the configured value.
+The offsets default to the table above: `max-fwhm`, `max-fwhm-sigma`, `min-score`,
+`max-halo-ratio` and `max-structure` use the band-driven gates; `max-ecc` 3σ above
+the median (capped by the configured `max-ecc`), `min-snr` 3σ below, and
+`min-stars` 1.85σ below, with the usability floors. `min-transparency` and
+`sun-below` have no sigma factor: they are copied from the `thresholds` block,
+because they describe when to shoot, not a property of the stack. The FWHM pair
+inherits `thresholds.max-fwhm-sigma` when omitted, so tuning that band still moves
+the suggestion.
+
+`--keep` searches the shared band of those five band-driven gates: `--keep 0.95`
+loosens it until 95% of the good stack survives, `--keep 0.6` tightens it. The
+fixed offsets (`max-ecc`, `min-snr`, `min-stars`) do not move. `--keep` has
+nothing to search when `--max-fwhm-sigma` is given explicitly, because that flag
+pins the band group; the suggestion says so rather than silently ignoring one of
+the two.
 
 **A gate you set on the command line is not suggested.** `--suggest --min-snr 15`
 derives everything except `min-snr`, keeps your 15, and marks that row with `*` —
@@ -659,11 +680,11 @@ in the table, in the YAML provenance, and in the stored suggestion, so
 `prepare --suggested` applies your value without being told again. Only flags
 typed on the command line count; a value from `conf/garfield.yaml` is the baseline
 the suggestion improves on, and treating it as fixed would make `--suggest` echo
-the shipped config forever. The clamps are not negotiable — `min-snr`
-never below 3, `max-ecc` never above 0.8, `min-stars` the good stack's median
-minus 1.85 robust sigmas but never below 100 (the point below which no metric can
-be computed at all), `min-score` never negative. A gate that clamps to 0 is a gate
-the data says to disable, and the suggestion writes it as 0.
+the shipped config forever. The clamps are not negotiable — `min-snr` never below
+3, `max-ecc` never above 0.8 and never above the configured `max-ecc`, `min-stars`
+never below 100 (the point below which no metric can be computed at all), and
+`min-score` never negative. A gate that clamps to 0 is a gate the data says to
+disable, and the suggestion writes it as 0.
 
 Two artifacts come out of `--suggest`: `suggested_<FILTER>.yaml` for pasting into
 `conf/garfield.yaml`, and `cache/suggestions.jsonl` for `prepare --suggested`.

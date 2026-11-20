@@ -43,6 +43,10 @@ type analyzeOptions struct {
 	convWorkers        int
 	limitComputedStars int
 	format             string
+	// suggestion holds the per-gate sigma offsets --suggest uses. It is loaded
+	// from the suggestion section of the config; an unset struct resolves to the
+	// compiled defaults, with the FWHM pair inheriting the analysis band.
+	suggestion suggestionFactors
 	// output is a directory: the report is written inside it as
 	// analyseReportName, and rejected frames are copied beneath it when
 	// copyRejected is set. It is not a CSV path any more.

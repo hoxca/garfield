@@ -33,6 +33,14 @@ func TestCompiledDefaultsMatchShippedConfig(t *testing.T) {
 		{"thresholds.max-structure", defaultThresholds.maxStructure},
 		{"thresholds.min-transparency", defaultThresholds.minTransparency},
 		{"thresholds.sun-below", defaultThresholds.sunBelow},
+		{"suggestion.max-fwhm", defaultThresholds.maxFWHMSigma},
+		{"suggestion.max-fwhm-sigma", defaultThresholds.maxFWHMSigma},
+		{"suggestion.max-ecc", defaultSuggestionFactors.MaxEcc},
+		{"suggestion.min-snr", defaultSuggestionFactors.MinSNR},
+		{"suggestion.min-score", defaultSuggestionFactors.MinScore},
+		{"suggestion.min-stars", defaultSuggestionFactors.MinStars},
+		{"suggestion.max-halo-ratio", defaultSuggestionFactors.MaxHaloRatio},
+		{"suggestion.max-structure", defaultSuggestionFactors.MaxStructure},
 	} {
 		if !v.IsSet(tc.key) {
 			t.Errorf("conf/garfield.yaml does not set %s", tc.key)
