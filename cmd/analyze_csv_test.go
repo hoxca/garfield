@@ -1107,7 +1107,7 @@ func TestRunAnalyzeWorkerInvariance(t *testing.T) {
 
 	var reference string
 	for _, workers := range []int{1, 2, 4, 8} {
-		out := filepath.Join(dir, "out")
+		out := filepath.Join(dir, fmt.Sprintf("out-%d", workers))
 		o := defaultOpts()
 		o.format = "csv"
 		o.output = out

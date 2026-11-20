@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"garfield/internal/measurecache"
@@ -49,10 +48,6 @@ type analyzeOptions struct {
 	// copyRejected is set. It is not a CSV path any more.
 	output       string
 	copyRejected bool
-	// cache reuses measurements stored under output and stores the ones this run
-	// computes. Off by default: it writes to the output directory, and a run
-	// that only wants a report should not leave a store behind.
-	cache bool
 	// stackGate rejects a frame whose night the stack says is systematically
 	// worse, when the frame itself also sits outside the stack band. Off by
 	// default: it is a second opinion on the session rules, and turning it on
@@ -121,8 +116,6 @@ func init() {
 		"output directory for the report and copied rejected frames")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.copyRejected, "copy-rejected", false,
 		"copy rejected frames into <output>/rejected/<category>/")
-	analyzeCmd.Flags().BoolVar(&analyzeOpts.cache, "cache", false,
-		"reuse and record measurements in <output>/cache (requires --output)")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.stackGate, "stack-gate", false,
 		"reject frames from a night that is systematically worse than its filter's stack")
 	analyzeCmd.Flags().BoolVar(&analyzeOpts.suggest, "suggest", false,
@@ -454,6 +447,24 @@ func (l consoleLayout) row(n, total int, label string, r ImageResult) string {
 		line += fmt.Sprintf(", %s)", r.Decision)
 	}
 	return line
+}
+
+// measureRow renders one frame from its measurements alone: raw metrics and the
+// Sun's depth, with no verdict and no session-relative ratios, which need the
+// whole run to exist.
+func (l consoleLayout) measureRow(n, total int, label string, r ImageResult) string {
+	stars := fmt.Sprintf("%*d/%*d", l.measured, r.StarCount, l.detected, r.DetectedStars)
+	line := fmt.Sprintf("  [%0*d/%d] %s ... OK (%s stars, FWHM=%*.2f, Ecc=%*.3f, SNR=%*.2f, Score=%*.3f",
+		l.counterWidth, n, total, label, stars,
+		l.fwhm, r.AvgFWHM, l.ecc, r.AvgEccentricity, l.snr, r.SNR, l.score, r.Score)
+	if l.hasSun {
+		if r.SunBelow != 0 {
+			line += fmt.Sprintf(", sunBelow=%*.2f", l.sun, r.SunBelow)
+		} else {
+			line += fmt.Sprintf(", sunBelow=%*s", l.sun, "-")
+		}
+	}
+	return line + ")"
 }
 
 // fitBoxScale sets the half-width of the box the star profile is fitted in, as
@@ -989,6 +1000,9 @@ func runAnalyze(dir string, opts analyzeOptions) error {
 		if opts.input == "" {
 			return fmt.Errorf("--target requires --input: frames are looked for under <input>/%s/<target>", lightsDir)
 		}
+		if opts.output == "" {
+			return fmt.Errorf("--target requires --output: measurements and reports live under <output>/%s/%s", opts.target, metricsDir)
+		}
 		dir = filepath.Join(opts.input, lightsDir, opts.target)
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			return fmt.Errorf("no %s/%s under %q", lightsDir, opts.target, opts.input)
@@ -1090,12 +1104,11 @@ func runAnalyzeOnce(dir string, opts analyzeOptions) error {
 	if opts.copyRejected && opts.output == "" {
 		return fmt.Errorf("--copy-rejected requires --output")
 	}
-	if opts.cache && opts.output == "" {
-		return fmt.Errorf("--cache requires --output: measurements are stored under %s", cachePath(reportDirLabel(opts)))
-	}
-
+	// With an output, every run is store-backed: the metrics are read from the
+	// measurement cache and only gaps are measured. Without an output there is
+	// nowhere to keep the store, and a sample directory is measured in memory.
 	var measures *measurecache.Cache
-	if opts.cache {
+	if opts.output != "" {
 		c, err := openMeasureCache(reportDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
@@ -1209,37 +1222,11 @@ func runAnalyzeOnce(dir string, opts analyzeOptions) error {
 			formatThreshold(opts.maxStructure), formatThreshold(opts.sunBelow))
 	}
 
-	results := make([]ImageResult, len(fitsFiles))
-	jobs := make(chan int)
-	var wg sync.WaitGroup
-	var printMu sync.Mutex
-	done := 0
-
-	for w := 0; w < outerWorkers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range jobs {
-				r := measureWithCache(fitsFiles[idx], opts, measures)
-				// Distinct indices: no lock needed for the write.
-				results[idx] = r
-				// Progress only. The verdict cannot be printed here: the cloud
-				// rule needs every frame's measurement before it can compare a
-				// session, so decisions are final only after the pool drains.
-				printMu.Lock()
-				done++
-				if !opts.quiet && showConsole && (done%10 == 0 || done == len(fitsFiles)) {
-					fmt.Printf("\r  analyse : %d/%d image(s)", done, len(fitsFiles))
-				}
-				printMu.Unlock()
-			}
-		}()
-	}
-	for i := range fitsFiles {
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
+	results := measurePaths(fitsFiles, opts, measures, outerWorkers, func(done, total int) {
+		if !opts.quiet && showConsole && (done%10 == 0 || done == total) {
+			fmt.Printf("\r  analyse : %d/%d image(s)", done, total)
+		}
+	})
 
 	if !opts.quiet && showConsole {
 		if len(fitsFiles) > 0 {

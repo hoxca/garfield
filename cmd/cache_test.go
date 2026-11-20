@@ -26,7 +26,6 @@ func cacheOpts(out string) analyzeOptions {
 	o.format = "csv"
 	o.output = out
 	o.quiet = true
-	o.cache = true
 	o.minStars = 0
 	o.minSNR = 0
 	o.minScore = 0
@@ -45,16 +44,24 @@ func columnIndex(t *testing.T, header []string, name string) int {
 	return -1
 }
 
-func TestRunAnalyzeCacheRequiresOutput(t *testing.T) {
+// Without an output, analyze is the ephemeral sample path: it measures in
+// memory and leaves neither a report nor a store behind.
+func TestRunAnalyzeEphemeralWritesNothing(t *testing.T) {
+	dir := synthFrames(t, 1)
 	o := defaultOpts()
-	o.cache = true
+	o.quiet = true
 
-	err := runAnalyze(synthFrames(t, 1), o)
-	if err == nil {
-		t.Fatal("runAnalyze accepted --cache without an output directory")
+	if err := runAnalyze(dir, o); err != nil {
+		t.Fatalf("runAnalyze: %v", err)
 	}
-	if !strings.Contains(err.Error(), "--cache requires --output") {
-		t.Errorf("error = %v, want it to name the missing --output", err)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "cache") || strings.HasPrefix(e.Name(), "analyse_report") {
+			t.Errorf("ephemeral run wrote %q into the source directory", e.Name())
+		}
 	}
 }
 
@@ -209,7 +216,6 @@ func TestPrepareCacheReusesMeasurements(t *testing.T) {
 	out := t.TempDir()
 
 	opts := prepareOptionsForTest(target, root, out)
-	opts.cache = true
 
 	if err := runPrepare(opts); err != nil {
 		t.Fatalf("first run: %v", err)
@@ -257,7 +263,6 @@ func TestPrepareCacheDryRunWritesNothing(t *testing.T) {
 	out := t.TempDir()
 
 	opts := prepareOptionsForTest(target, root, out)
-	opts.cache = true
 	opts.dryRun = true
 
 	if err := runPrepare(opts); err != nil {

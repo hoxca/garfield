@@ -926,7 +926,6 @@ Much looser. Any directory of FITS frames works.
 | `--limit-computed-stars` | 500 |
 | `--format` | `console` (or `csv`, `both`) |
 | `--output`, `-o` | *(directory; the report is `analyse_report.csv` inside it)* |
-| `--cache` | `false` (requires `-o`) |
 | `--display` | `false` (requires `-o`; reads the store, not the frames) |
 | `--input`, `-i` | `$HOME` acquisition root, used with `--target` |
 | `--target`, `-t` | *(no target: `--dir` is scanned)* |
@@ -969,14 +968,15 @@ The measurement and suggestion stores follow the reports, so a target owns
 extra flag. A run without `--target` keeps the older shape: reports in `-o` and the
 store in `<output>/cache/`.
 
-**`--cache` trades disk for recomputation.** Measurement results are stored in
-`<output>/cache/measurements.jsonl` and reused on a later run over the same
-frames, keyed on absolute path, size and modification time. Only measurements
-are stored: the verdict and the session ratios are derived again every run, so
-changing a threshold costs nothing while changing `--moffat` or
-`--limit-computed-stars` costs a re-measurement. The frames themselves are never
-written — the store lives in the output directory, which is why the flag
-requires `-o`. `prepare` reads the same store (§10).
+**The measurement store is always the source of the metrics.** `measure` writes
+`<output>/cache/measurements.jsonl` (or `<output>/<target>/metrics/cache/` for a
+target) and `analyze`/`prepare` read it, measuring only frames whose entry is
+absent or was written with different `--moffat`/`--limit-computed-stars`
+options. Entries are keyed on absolute path, size and modification time. Only
+measurements are stored: the verdict and session ratios are derived every run,
+so changing a threshold costs nothing. The frames themselves are never written,
+and an ephemeral `analyze -d DIR` without `-o` measures in memory and writes
+nothing. `measure` rewrites the store at close, keeping one entry per live frame.
 
 **Flat by default.** Only files directly in `--dir`. Descending is opt-in so a
 stray frame below the chosen directory cannot quietly join the report.
@@ -1076,7 +1076,8 @@ Nothing is shared across targets any more. The stores, `suggested_<FILTER>.yaml`
 `analyze`'s `sessions_<FILTER>.csv` live in the target's `metrics/` directory,
 beside `frames.csv`, so one target owns everything written for it:
 
-- `metrics/cache/` holds `measurements.jsonl` (`--cache`) and
+- `metrics/cache/` holds `measurements.jsonl` (written by `measure`, read by
+  `analyze`/`prepare`) and
   `suggestions.jsonl` (`--suggest`). `prepare` and `analyze --target` read and write
   the same store, so a frame measured by either is reused by both. A frame is
   identified by its own path and timestamp, so moving a store to another target
@@ -1219,8 +1220,8 @@ every existing column is unchanged:
 `background`, `noise` and `bgStructure` are measurements. `halo`, `haloRatio`,
 `structRatio` and `fwhmRatio` are what the outlier rules act on, and are
 described in §10.1.1. `cached` is `true` when the row's numbers came from the
-measurement store instead of this run's analysis; it is the only column
-`--cache` changes.
+measurement store; a gap-measured frame, or any ephemeral run without `-o`,
+reports `false`.
 
 `sessionFlag` carries the tokens of the night the frame belongs to -- `soft`,
 `cloudy`, `hazy`, `thin`, `trailed`, `sparse`, `scattered` -- when that night is

@@ -134,7 +134,6 @@ func TestAnalyzeReportsTheSunsDepth(t *testing.T) {
 	out := t.TempDir()
 	o := defaultOpts()
 	o.format, o.output, o.quiet = "csv", out, true
-	o.cache = true
 	o.minStars, o.minSNR, o.minScore = 0, 0, 0
 
 	read := func() (float64, bool) {
@@ -206,7 +205,6 @@ func TestCachedRunBackfillsTheSunsDepth(t *testing.T) {
 	out := t.TempDir()
 	o := defaultOpts()
 	o.format, o.output, o.quiet = "csv", out, true
-	o.cache = true
 	o.minStars, o.minSNR, o.minScore = 0, 0, 0
 
 	if err := runAnalyze(dir, o); err != nil {

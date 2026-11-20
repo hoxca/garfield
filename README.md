@@ -14,25 +14,33 @@ PixInsight's **WBPP** imports in one step.
 
 ## What garfield does
 
-Two commands, one shared quality gate.
+Three commands, one measurement store.
 
-**`analyze`** takes any directory of FITS frames and reports, per frame: stars
-detected, FWHM, eccentricity, SNR and a score. Its job is measurement — you run
-it to see what your thresholds would do before committing a whole night's data
-to them.
+**`measure`** takes a directory or a target tree, computes each frame's metrics
+and writes them to the measurement store. Nothing is judged: no gate, no
+threshold, no verdict.
 
-**`prepare`** takes one target from an acquisition tree and builds a working
-tree from it. It runs the *same* analysis on every light frame, routes each one
-by verdict, attaches the flats and master calibration frames that belong to that
-session, and writes two CSV reports. The output is shaped for WBPP.
+**`analyze`** reads that store, applies the gates and writes the reports. Tuning
+a threshold re-reads the measurements; no frame is measured again. Run on a
+sample directory without `-o` and it measures in memory, so a quick look stays
+one command.
 
-The shared thresholds are what make the two agree. Both commands call the same
-code with the same `qualityThresholds`, so a frame `analyze` calls `APPROVED` is
+**`prepare`** reads the same store to route a target's lights, attaches the flats
+and master calibration frames, and builds the tree WBPP imports.
+
+The shared thresholds make the verdicts identical everywhere: `analyze` and
+`prepare` call the same decision code, so a frame `analyze` calls `APPROVED` is
 the frame `prepare` copies into `lights/`. That is enforced by construction, not
 by convention.
 
 ```
-analyze  →  tune thresholds against a sample  →  prepare  →  WBPP
+measure  →  analyze  →  tune thresholds against a sample  →  prepare  →  WBPP
+```
+
+A sample can also be assessed without a store at all:
+
+```
+analyze -d sample/ --format csv     # measures in memory, writes nothing
 ```
 
 `prepare` is the strict one. It imposes a directory and filename convention and
@@ -88,6 +96,10 @@ concurrency:
   workers: 0        # 0 = NumCPU/2
   conv-workers: 0   # 0 = core count
 
+measure:
+  input: /Volumes/Dyno/Kosmodrom
+  output: /Volumes/T7/Workspace
+
 prepare:
   input: /Volumes/Dyno/Kosmodrom
   output: /Volumes/T7/Workspace
@@ -106,10 +118,43 @@ Point at a different file with `--config path/to/garfield.yaml`.
 
 ---
 
+## `garfield measure`
+
+Walks a directory or a target tree, detects `.fit`/`.fits`/`.fts`, and writes
+each frame's metrics to the measurement store. It applies no gate and computes no
+threshold; that is `analyze`'s job. The store is what makes threshold tuning
+cheap, because the pixels are decoded once.
+
+```
+garfield measure -t LBN527 -i /Volumes/Dyno/Kosmodrom -o /Volumes/T7/Workspace
+garfield measure -d Lights/LBN527 -r -o /Volumes/T7/Workspace --filter H
+```
+
+- `-t/--target` names `<input>/Lights/<target>`, the tree `prepare` reads, and
+  implies `-r`. `-d/--dir` (or a positional directory) selects an arbitrary
+  directory.
+- `-o/--output` is required; the store lives under
+  `<output>/<target>/metrics/cache/` for a target or `<output>/cache/` otherwise.
+- Measurement options are `--moffat`, `--limit-computed-stars`, `-w/--workers`
+  and `--conv-workers`. There are no quality thresholds on this command.
+- The console prints one metric line per frame (stars, FWHM, eccentricity, SNR,
+  score, `sunBelow`) and a `cache: measured, reused, error(s)` summary. Errors are
+  reported and counted; `analyze` will try those frames again when it fills gaps.
+- At close the store is rewritten with one entry per live frame, so stale entries
+  are dropped rather than accumulating. Other filters' live entries are kept.
+
 ## `garfield analyze`
 
-Walks a directory, detects `.fit`/`.fits`/`.fts`, and computes FWHM,
-eccentricity, SNR and score for each frame.
+Reads the measurement store, applies the gates and writes the report. With `-o`
+the store is always used and only missing or option-mismatched frames are
+measured, so a second run over the same tree spends its time in the outlier rules
+rather than in pixels. Without `-o`, a `-d` run is ephemeral: it measures in
+memory, writes nothing, and prints the console or CSV to stdout.
+
+```
+garfield analyze -t LBN527 -i /Volumes/Dyno/Kosmodrom -o out --filter H --suggest
+garfield analyze -d sample/ --format csv      # ephemeral, no store
+```
 
 ```
 score = snr / fwhm × (1 − ecc)
@@ -165,7 +210,6 @@ Aliases:
   analyze, analyse
 
 Flags:
-      --cache                      reuse and record measurements in <output>/cache (requires --output)
       --conv-workers int           inner convolution workers (0 = auto) [config: garfield.yaml]
       --copy-rejected              copy rejected frames into <output>/rejected/<category>/
   -d, --dir string                 directory containing the FITS files [config: garfield.yaml] (default "images")
@@ -214,7 +258,6 @@ Global Flags:
 | `--display` | print the suggestion stored under `<output>/…/cache/suggestions.jsonl` instead of analysing: one filter with `--filter`, every stored one with `--target`. Reads no frames and needs only `-o`. |
 | `-t, --target` | analyse `<input>/Lights/<target>`, the same tree `prepare` reads, and write into `<output>/<target>/metrics/`. Implies `-r`. Cannot be combined with `--dir`. Not a config key. |
 | `-i, --input` | acquisition root used with `--target`. Config key `analyze.input`. |
-| `--cache` | reuse the measurements stored in `<output>/cache/measurements.jsonl` (`<output>/<target>/metrics/cache/` for a target run), and record this run's. Requires `-o`: the store lives in the output directory, never in the acquisition tree. See [Reusing measurements](#reusing-measurements-between-runs). |
 | `--stack-gate` | reject a frame from a night the stack condemns **when the frame itself sits outside the stack band**. Off by default. See [Session quality](#session-quality-and-suggested-thresholds). |
 | `--suggest` | derive thresholds from the measured stack and write them to `<output>/suggested_<FILTER>.yaml` plus the store `prepare --suggested` reads. Needs `-o`; with `--filter` it suggests that filter, with `--target` every filter the target holds. Advisory: it never changes this run's verdicts. |
 | `--sun-below` | reject a frame taken while the Sun's centre was less than this many degrees below the horizon, before any other gate. Default 15 (between nautical and astronomical twilight); `0` disables. Read from the frame's `SITELAT`/`SITELONG`/`DATE-OBS`, so a header without them is not judged on it. |
@@ -228,9 +271,10 @@ Global Flags:
 metrics directory per target:
 
 ```
+garfield measure -t LBN527 -i /Volumes/Dyno/Kosmodrom -o /Volumes/T7/Workspace
 garfield analyze -t LBN527 -i /Volumes/Dyno/Kosmodrom -o /Volumes/T7/Workspace \
-                 --filter H --cache --suggest
-garfield prepare -t LBN527 -o /Volumes/T7/Workspace --cache --suggested
+                 --filter H --suggest
+garfield prepare -t LBN527 -o /Volumes/T7/Workspace --suggested
 ```
 
 **A target run is per filter.** Without `--filter`, the filters are discovered from
@@ -310,8 +354,8 @@ reports for different filters can share one output directory:
 filename;filter;date;detectedStars;starCount;avgFWHM;avgSignal;avgEccentricity;snr;score;decision;error;background;noise;bgStructure;halo;haloRatio;structRatio;fwhmRatio;cached;sessionFlag;fwhmRatioStack;eccRatioStack;snrRatioStack;haloRatioStack;structRatioStack;suggestedDecision;haloStars;transparency;airmass;sunBelow
 ```
 
-`cached` is `true` on a row whose numbers were read from the measurement cache
-instead of measured in this run. It is the only column a `--cache` run changes.
+`cached` is `true` on a row whose numbers were read from the measurement store;
+a gap-measured frame (or any ephemeral run without `-o`) reports `false`.
 
 `decision` holds one of **ten** values, which are **data, not messages** —
 `APPROVED`, `REJECTED TWILIGHT`, `REJECTED NO STARS`, `REJECTED ECCENTRICITY`,
@@ -428,7 +472,7 @@ soft frame is reported as soft rather than clouded.
 ├── sessions_<FILTER>.csv        ← per-night profile, one file per filter
 ├── suggested_<FILTER>.yaml      ← only with --suggest
 ├── cache/
-│   ├── measurements.jsonl      ← only with --cache
+│   ├── measurements.jsonl      ← the measurement store
 │   └── suggestions.jsonl       ← only with --suggest
 └── rejected/
     ├── structure/
@@ -606,7 +650,7 @@ Two artifacts come out of `--suggest`: `suggested_<FILTER>.yaml` for pasting int
 reference**:
 
 ```
-garfield analyze -d Lights -r --filter H -o out --suggest --cache   # measures + suggests
+garfield analyze -d Lights -r --filter H -o out --suggest
 garfield prepare -t LBN527 -o out --suggested                       # judges with the suggestion
 ```
 
@@ -632,54 +676,61 @@ rather than a silent fallback. Stale suggestions are applied with a warning:
 a differing schema, a differing measurement version, or a session date outside
 the population the suggestion was derived from.
 
-### Reusing measurements between runs
+### The measurement store
 
-Measuring a frame is the expensive part of a run: decoding the pixels, estimating
-the background, finding the stars and fitting a profile to hundreds of them. Only
-the judging is cheap. `--cache` separates the two across runs:
+Measuring a frame is the expensive part of a run: decoding the pixels,
+estimating the background, finding the stars and fitting a profile to hundreds of
+them. Judging is cheap. The store separates the two, so one measurement serves
+every threshold you try.
 
 ```
-garfield analyze -d Lights/LBN527 -r -o out --cache --format both   # measures, stores
-garfield analyze -d Lights/LBN527 -r -o out --cache --format both   # reuses, re-judges
-garfield prepare -t LBN527 -o out --cache                           # reuses the same store
+garfield measure -d Lights/LBN527 -r -o out        # measures, writes the store
+garfield analyze -d Lights/LBN527 -r -o out         # decides from the store
+garfield analyze -d Lights/LBN527 -r -o out --suggest
+garfield prepare -t LBN527 -o out --suggested       # same store, same verdicts
 ```
 
-The store is `<output>/cache/measurements.jsonl` — or
-`<output>/<target>/metrics/cache/measurements.jsonl` when the run is target-scoped,
-where it sits beside the reports it describes and where `prepare` looks for it. It
-holds one JSON object per frame,
-plain enough to read with `jq`. **Nothing is ever written to a frame**: the
-cache lives in the output directory, so an acquisition tree stays read-only.
-That is also why `--cache` requires `-o`.
-
-What is stored is the measurement only — star counts, FWHM, eccentricity, signal,
-SNR, sky, noise, structure, halo — never the verdict, the score or the session
-ratios. The verdict depends on thresholds, and the ratios on the population the
-frame belongs to, so both are derived again on every run:
-
-- **Tuning a threshold does not invalidate anything.** Re-run with a different
-  `--max-ecc` and every measurement is reused; only the judging changes.
-- **`--moffat` and `--limit-computed-stars` do invalidate.** They change how the
-  measurements are made, not how they are judged.
-
-An entry is keyed on the frame's absolute path, size and modification time, so a
-frame that was rewritten is measured again rather than trusted. The safe failure
-mode is the price: a tree copied without preserving timestamps is measured once
-more. The `cached` column says which rows came from the store, and the console
-reports the split:
+`analyze` and `prepare` always read the store; they measure only frames whose
+entry is absent or was written with different `--moffat` /
+`--limit-computed-stars` options. The console reports the split, so a gap is
+visible rather than silent:
 
 ```
   cache: 12 measured, 96 reused from "out/cache/measurements.jsonl"
 ```
 
-Frames that could not be read are not stored — that is an environment problem,
-not a property of the pixels — but a frame with no usable star is, since
-discovering that is the expensive part. Bump the store's schema when the
-measurement code changes: a binary ignores entries it did not write, so the cost
-of a stale store is always time, never a wrong number.
+The store is `<output>/cache/measurements.jsonl` — or
+`<output>/<target>/metrics/cache/measurements.jsonl` when the run is target-scoped,
+where it sits beside the reports it describes. It holds one JSON object per
+frame, plain enough to read with `jq`. **Nothing is ever written to a frame**: the
+store lives in the output directory, so an acquisition tree stays read-only.
 
-`--cache` is off by default: a run that only wants a report should not leave a
-store behind. It is not a config key, for the same reason `--output` is not.
+What is stored is the measurement only — star counts, FWHM, eccentricity, signal,
+SNR, sky, noise, structure, halo, airmass and the Sun's depth — never the verdict,
+the score or the session ratios. The verdict depends on thresholds, and the ratios
+on the population the frame belongs to, so both are derived again on every run:
+
+- **Tuning a threshold does not invalidate anything.** Re-run with a different
+  `--max-ecc` and every measurement is reused; only the judging changes.
+- **`--moffat` and `--limit-computed-stars` do invalidate.** They change how the
+  measurements are made, not how they are judged; entries written with other
+  options are measured again on use.
+
+`measure` rewrites the store when it finishes, keeping one entry per frame whose
+file still matches its size and modification time. Entries for a rewritten or
+vanished frame are dropped, so the store stays proportional to the tree; entries
+for filters not selected by this run stay as long as their files are unchanged.
+
+An entry is keyed on the frame's absolute path, size and modification time, so a
+frame that was rewritten is measured again rather than trusted. Frames that could
+not be read are not stored — that is an environment problem, not a property of
+the pixels — but a frame with no usable star is, since discovering that is the
+expensive part. Bump the store's schema when the measurement code changes: a
+binary ignores entries it did not write, so the cost of a stale store is always
+time, never a wrong number.
+
+An ephemeral `analyze -d DIR` (no `-o`) opens no store: it measures in memory and
+writes nothing, which is the path for assessing an isolated sample.
 
 ### Known limitation
 
@@ -727,7 +778,6 @@ Usage:
   garfield prepare [flags]
 
 Flags:
-      --cache                  reuse and record measurements in <output>/cache
       --camera string          camera the filenames come from: auto (read INSTRUME from the first light), c3 (rotator and gain), g4 (fixed angle, no gain) or asi2600 (rotator and gain) [config: garfield.yaml] (default "auto")
       --conv-workers int       inner convolution workers (0 = auto) [config: garfield.yaml]
       --dry-run                show the plan without copying
@@ -765,11 +815,10 @@ Global Flags:
    chronological order.
 3. **Check the angle.** One target must be acquired at one position angle; more
    than one is a fatal error, before anything is written.
-4. **Analyse** every light frame and record a verdict. With `--cache` the
-   measurements come from `<output>/cache/measurements.jsonl` when they are
-   already there, which is what makes a second run over a prepared target fast.
-   With `--suggested` the gates and their reference come from
-   `<output>/cache/suggestions.jsonl`, written by `analyze --suggest`.
+4. **Analyse** every light frame and record a verdict. The measurements come from
+   the target's store, and only missing entries are measured. With `--suggested`
+   the gates and their reference come from the suggestion store, written by
+   `analyze --suggest`.
 5. **Route** each frame: `APPROVED` to `lights/<filter>/`, everything else to
    the target-level `rejected/` tree.
 6. **Match flats** by filter *and* angle, on the session's date.
@@ -1021,7 +1070,7 @@ Fatal — nothing is written, or the run stops:
 
 | Condition |
 |---|
-| `--target` missing or `Lights/<target>` absent |
+| `--target` missing, missing `--output`, or `Lights/<target>` absent |
 | `--flat-count` negative |
 | No `YYYY-MM-DD` directories under the target |
 | `--camera auto` (the default) and the first light has no usable `INSTRUME` |

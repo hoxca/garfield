@@ -36,7 +36,6 @@ func TestAnalyzeOrdersFramesByAcquisitionTime(t *testing.T) {
 
 	o := defaultOpts()
 	o.format, o.output, o.quiet = "csv", out, true
-	o.cache = true
 	o.minStars, o.minSNR, o.minScore = 0, 0, 0
 
 	if err := runAnalyze(dir, o); err != nil {

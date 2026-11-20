@@ -219,6 +219,19 @@ func (c *Cache) flushLocked() error {
 // or removed, which keeps the store proportional to the tree without needing a
 // pruning policy anywhere else.
 func (c *Cache) Close() error {
+	return c.close(false)
+}
+
+// ClosePruned flushes and always rewrites the store, keeping one record per live
+// frame. `measure` uses it so a run leaves the store proportional to the tree
+// even when nothing was superseded. Frames not selected by the run are kept as
+// long as their files still match their keys; pruning is about staleness, not
+// about the subset measured.
+func (c *Cache) ClosePruned() error {
+	return c.close(true)
+}
+
+func (c *Cache) close(prune bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -238,7 +251,7 @@ func (c *Cache) Close() error {
 	if c.lines == 0 {
 		return nil
 	}
-	if !c.torn && c.lines <= 2*len(c.entries) {
+	if !prune && !c.torn && c.lines <= 2*len(c.entries) {
 		return nil
 	}
 	return c.compactLocked()

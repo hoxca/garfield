@@ -478,10 +478,6 @@ type prepareOptions struct {
 	camera       string // "auto", "c3" or "g4"; see cameraProfile and resolveCamera
 	dryRun       bool
 	skipExisting bool
-	// cache reuses measurements stored under output and records the ones this
-	// run computes, so a later analyze or prepare over the same frames pays only
-	// for what it has not measured yet.
-	cache bool
 	// stackGate applies the stack-relative session rule, the same one analyze
 	// exposes, so prepare can act on a night the stack condemns.
 	stackGate bool
@@ -545,8 +541,6 @@ func init() {
 	prepareCmd.Flags().BoolVar(&prepareOpts.dryRun, "dry-run", false, "show the plan without copying")
 	prepareCmd.Flags().BoolVar(&prepareOpts.skipExisting, "skip-existing", false,
 		"do not overwrite existing flats or masters; light frames are always rewritten")
-	prepareCmd.Flags().BoolVar(&prepareOpts.cache, "cache", false,
-		"reuse and record measurements in <output>/cache")
 	prepareCmd.Flags().BoolVar(&prepareOpts.stackGate, "stack-gate", false,
 		"reject frames from a night that is systematically worse than its filter's stack")
 	prepareCmd.Flags().BoolVar(&prepareOpts.suggested, "suggested", false,
@@ -761,15 +755,15 @@ func runPrepare(opts prepareOptions) error {
 	// Assess every light frame before copying anything, so the destination
 	// tree reflects the final decision for each frame.
 	//
-	// A dry run measures nothing into the cache: its contract is to show the
-	// plan without touching disk, and the store is a write.
+	// The store is always the source of the metrics. A dry run reads it but
+	// writes nothing, so its contract of not touching disk still holds.
 	var measures *measurecache.Cache
-	if opts.cache && !opts.dryRun {
-		c, err := openMeasureCache(targetMetricsDir(opts.output, opts.target))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
-		} else {
-			measures = c
+	c, err := openMeasureCache(targetMetricsDir(opts.output, opts.target))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: %v\n", err)
+	} else {
+		measures = c
+		if !opts.dryRun {
 			defer closeMeasureCache(c)
 		}
 	}
@@ -993,8 +987,9 @@ func sortedReasons(m map[string]int) []string {
 // recording the verdict on each session. Frames are assessed across all sessions
 // in one pass so the worker pool stays busy.
 //
-// measures may be nil, in which case every frame is measured and nothing is
-// recorded; that is what a dry run and a run without --cache do.
+// measures may be nil when the store could not be opened, in which case every
+// frame is measured and nothing is recorded. A dry run opens the store for
+// reading but does not close it, so its gap measurements are not written.
 func assessSessions(sessions []sessionPlan, opts prepareOptions, measures *measurecache.Cache, gates gateSet) error {
 	type job struct {
 		session int

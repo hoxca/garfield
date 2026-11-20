@@ -38,8 +38,8 @@ func cachePath(output string) string {
 }
 
 // openMeasureCache opens the store under output. A store that cannot be read is
-// reported and skipped rather than fatal: the run then measures everything,
-// which is what it would do without --cache.
+// reported and skipped rather than fatal: the run then measures everything in
+// memory, as an ephemeral run does.
 func openMeasureCache(output string) (*measurecache.Cache, error) {
 	c, err := measurecache.Open(cachePath(output))
 	if err != nil {

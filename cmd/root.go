@@ -56,6 +56,7 @@ func init() {
 	})
 
 	rootCmd.AddCommand(analyzeCmd)
+	rootCmd.AddCommand(measureCmd)
 	rootCmd.AddCommand(prepareCmd)
 	rootCmd.AddCommand(versionCmd)
 
@@ -63,5 +64,6 @@ func init() {
 	// disagree about what a usable frame is or how much work to do. The path
 	// sections are per-command because --output means different things.
 	setConfigSections(analyzeCmd, sectionThresholds, sectionConcurrency, sectionAnalyze)
+	setConfigSections(measureCmd, sectionThresholds, sectionConcurrency, sectionMeasure)
 	setConfigSections(prepareCmd, sectionThresholds, sectionConcurrency, sectionPrepare)
 }

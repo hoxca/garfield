@@ -1417,7 +1417,7 @@ func TestPrepareReportsLiveInMetricsDir(t *testing.T) {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-	want := []string{framesCSVName, sessionsCSVName}
+	want := []string{cacheDir, framesCSVName, sessionsCSVName}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("%s contains %v, want %v", metricsDir, names, want)
 	}

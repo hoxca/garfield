@@ -27,6 +27,7 @@ const (
 	sectionConcurrency = "concurrency"
 	sectionPrepare     = "prepare"
 	sectionAnalyze     = "analyze"
+	sectionMeasure     = "measure"
 )
 
 // configRelPath is the working-directory-relative location, the one a checkout
@@ -53,6 +54,7 @@ var configExcluded = map[string]map[string]bool{
 	sectionAnalyze: {"output": true, "filter": true, "cache": true, "stack-gate": true,
 		"suggest": true, "display": true, "keep": true, "suggested": true, "target": true},
 	sectionPrepare: {"cache": true, "stack-gate": true, "suggested": true},
+	sectionMeasure: {"target": true, "filter": true},
 }
 
 // explicitFlags returns the flags the operator typed on the command line.

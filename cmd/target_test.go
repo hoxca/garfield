@@ -26,7 +26,6 @@ func TestAnalyzeTargetWritesBesidePrepare(t *testing.T) {
 	o.input = root
 	o.output = out
 	o.format = "csv"
-	o.cache = true
 	o.quiet = true
 	o.minStars, o.minSNR, o.minScore = 0, 0, 0
 
@@ -151,7 +150,6 @@ func TestPrepareReusesWhatAnalyzeTargetStored(t *testing.T) {
 	aopts.target = target
 	aopts.input = root
 	aopts.output = out
-	aopts.cache = true
 	aopts.format = "csv"
 	aopts.quiet = true
 	aopts.minStars, aopts.minSNR, aopts.minScore = 0, 0, 0
@@ -161,7 +159,6 @@ func TestPrepareReusesWhatAnalyzeTargetStored(t *testing.T) {
 	}
 
 	popts := prepareOptionsForTest(target, root, out)
-	popts.cache = true
 	popts.quiet = false
 	stdout := captureStdout(t, func() {
 		if err := runPrepare(popts); err != nil {
@@ -248,6 +245,7 @@ func TestAnalyzeTargetRunsFiltersInWheelOrder(t *testing.T) {
 	o := defaultOpts()
 	o.target = target
 	o.input = root
+	o.output = t.TempDir()
 	o.minStars, o.minSNR, o.minScore = 0, 0, 0
 
 	stdout := captureStdout(t, func() {
