@@ -598,19 +598,43 @@ suggested thresholds for filter H (80 frame(s), 7 night(s), 2026-08-12..2026-08-
   the suggestion would change 28 frame(s): 1 newly rejected, 27 newly approved
 ```
 
-`min-stars`, `min-snr` and `max-ecc` are the exceptions, each with its own offset
-rather than the band: **1.85 robust sigmas below** the good stack's median
-detected-star count, **3 below** its median SNR, and **3 above** its median
-eccentricity. Detected star counts have a long right tail, so a four-sigma band
-falls under the usability floor and switches the gate off; SNR is a tight
-measurement, so four sigmas sit below every frame of a clean filter and reject
-nothing. `max-ecc` is capped at the configured `max-ecc` (0.64 by default): a
-suggestion may tighten eccentricity, never license frames the operator already
-rejects.
+### Suggestion factors
 
-`sun-below` is copied, like `min-transparency`: it is a policy about when to
-shoot, not something the stack can suggest. The table shows the same value in
-both columns, and the rejects are the frames that policy costs.
+Each sigma-derived gate takes its offset from the `suggestion:` block of
+`conf/garfield.yaml`; the defaults are the shipped values:
+
+| Suggested gate | Config parameter | Default | Direction | Clamp |
+|---|---|---|---|---|
+| `max-fwhm` | `suggestion.max-fwhm` | **4.0** | median + offset·σ | none |
+| `max-fwhm-sigma` | `suggestion.max-fwhm-sigma` | **4.0** | written as the rule width | none |
+| `max-ecc` | `suggestion.max-ecc` | **3.0** | median + offset·σ | `thresholds.max-ecc` (0.64), physical 0.8 |
+| `min-snr` | `suggestion.min-snr` | **3.0** | median − offset·σ | floor 3 |
+| `min-score` | `suggestion.min-score` | **4.0** | median − offset·σ | floor 0 |
+| `min-stars` | `suggestion.min-stars` | **1.85** | median − offset·σ | floor 100 |
+| `max-halo-ratio` | `suggestion.max-halo-ratio` | **4.0** | (median + offset·σ) / session p25 | 0 if p25 is unavailable |
+| `max-structure` | `suggestion.max-structure` | **4.0** | (median + offset·σ) / session p25 | 0 if p25 is unavailable |
+| `min-transparency` | `thresholds.min-transparency` | **0.75** | copied, not derived | — |
+| `sun-below` | `thresholds.sun-below` | **15.0** | copied, not derived | — |
+
+`suggestion.max-fwhm` and `suggestion.max-fwhm-sigma` inherit
+`thresholds.max-fwhm-sigma` when omitted or set to `0`, so tuning that band still
+moves the suggestion. The factors are config-only: there are no `--suggest-*`
+flags.
+
+The three fixed offsets are not stylistic. Detected star counts have a long right
+tail, so a four-sigma band falls under the usability floor and switches the gate
+off; SNR is a tight measurement, so four sigmas sit below every frame of a clean
+filter and reject nothing. `max-ecc` is capped at the configured `max-ecc` (0.64
+by default): a suggestion may tighten eccentricity, never license frames the
+operator already rejects. `min-transparency` and `sun-below` are copied rather
+than derived — they are policy about when to shoot, not a property of the stack —
+so the output table shows the same value in both columns, and the rejects are the
+frames that policy costs.
+
+`--keep` searches **1.0–5.0σ** and overrides the five band-driven parameters
+(`max-fwhm`, `max-fwhm-sigma`, `min-score`, `max-halo-ratio`, `max-structure`)
+for that run; `max-ecc`, `min-snr` and `min-stars` keep their configured values.
+An explicit `--max-fwhm-sigma` pins the band group and disables `--keep`.
 
 The counts are **attributed**: each rejected frame is counted once, under the
 first gate that rejected it in pipeline order, so the column sums to the total and
@@ -657,15 +681,6 @@ total:
 and `suggestedDecision` in the CSV carries the same thing for a whole report
 (empty when `--suggest` was not used, so the column never implies the suggestion
 was applied).
-
-The offsets default to the table above: `max-fwhm`, `max-fwhm-sigma`, `min-score`,
-`max-halo-ratio` and `max-structure` use the band-driven gates; `max-ecc` 3σ above
-the median (capped by the configured `max-ecc`), `min-snr` 3σ below, and
-`min-stars` 1.85σ below, with the usability floors. `min-transparency` and
-`sun-below` have no sigma factor: they are copied from the `thresholds` block,
-because they describe when to shoot, not a property of the stack. The FWHM pair
-inherits `thresholds.max-fwhm-sigma` when omitted, so tuning that band still moves
-the suggestion.
 
 `--keep` searches the shared band of those five band-driven gates: `--keep 0.95`
 loosens it until 95% of the good stack survives, `--keep 0.6` tightens it. The
