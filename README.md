@@ -143,6 +143,30 @@ garfield measure -d Lights/LBN527 -r -o /Volumes/T7/Workspace --filter H
 - At close the store is rewritten with one entry per live frame, so stale entries
   are dropped rather than accumulating. Other filters' live entries are kept.
 
+### What is stored per frame
+
+| JSON key | Type | Meaning |
+|---|---|---|
+| `detectedStars` | int | every star found in the frame, before the bright-star skip and the measurement cap |
+| `starCount` | int | stars actually measured (the subset the metrics below are computed from; `0` means none usable) |
+| `avgFWHM` | float | fitted FWHM, pixels (Moffat or Gaussian, per `moffat`) |
+| `avgSignal` | float | mean peak signal of the measured stars, ADU |
+| `avgEccentricity` | float | fitted star elongation, `sqrt(1-(b/a)²)` |
+| `snr` | float | image SNR from the background/noise estimate |
+| `background` | float | median sky level, physical ADU (BSCALE/BZERO applied) |
+| `noise` | float | per-pixel noise sigma, ADU |
+| `bgStructure` | float | block-median structure divided by `noise` (dimensionless) |
+| `halo` | float | median bright-star wing brightness above the local sky, ADU; `0` means not measured |
+| `haloStars` | int | how many bright stars contributed to `halo`; `0` means it was not measured |
+| `airmass` | float | header `AIRMASS`; absent/0 when not recorded |
+| `sunBelow` | float or absent | degrees the Sun's centre was below the horizon at `DATE-OBS`, to 0.01°; absent on older entries |
+
+The entry also carries its identity and measurement options: `v` (schema),
+`key.path` / `key.size` / `key.mtime`, `limit`, `moffat`, `elapsedMs` and
+`status` (`0` measured, `1` no usable star). Verdicts, `score`, transparency,
+session ratios, filter and date are deliberately not stored: they depend on the
+thresholds or on the population, and are derived on every run.
+
 ## `garfield analyze`
 
 Reads the measurement store, applies the gates and writes the report. With `-o`
