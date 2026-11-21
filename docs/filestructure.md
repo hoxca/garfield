@@ -1438,10 +1438,11 @@ flagged the night. Flagging a night therefore never condemns it wholesale.
 record carries the thresholds **and** the population reference statistics they
 were derived from, plus the population (`n`, nights, date range) they describe.
 Each sigma-derived gate takes its offset from the `suggestion:` block of the
-config: `max-fwhm` 4σ, `max-fwhm-sigma` 4σ, `max-ecc` 3σ above, `min-snr` 3σ
-below, `min-score` 4σ below, `min-stars` 1.85σ below, `max-halo-ratio` 4σ and
-`max-structure` 4σ (the last two then divided by the session p25). The FWHM pair
-inherits `thresholds.max-fwhm-sigma` when omitted; `--keep` searches the shared
+config: `max-fwhm` 4σ (also the width written for the suggested
+`max-fwhm-sigma` rule), `max-ecc` 3σ above, `min-snr` 3σ below, `min-score` 4σ
+below, `min-stars` 1.85σ below, `max-halo-ratio` 4σ and `max-structure` 4σ (the
+last two then divided by the session p25). The FWHM band inherits
+`thresholds.max-fwhm-sigma` when omitted; `--keep` searches the shared
 band of the five band-driven gates and leaves the fixed offsets alone. The
 clamps still apply: `max-ecc` is capped at the configured value, `min-snr` and
 `min-stars` have floors, and `min-score` is never negative. `sun-below` is copied

@@ -9,7 +9,7 @@ import (
 // gate is using its own field rather than the shared band.
 func allFactors(sigma float64) suggestionFactors {
 	return suggestionFactors{
-		MaxFWHM: sigma, MaxFWHMSigma: sigma, MaxEcc: sigma,
+		MaxFWHM: sigma, MaxEcc: sigma,
 		MinSNR: sigma, MinScore: sigma, MinStars: sigma,
 		MaxHaloRatio: sigma, MaxStructure: sigma,
 	}
@@ -55,7 +55,7 @@ func TestSuggestionFactorsAreUsedPerGate(t *testing.T) {
 		t.Errorf("max-structure = %v, want %v (2 sigma)", s.Thresholds.MaxStructure, want)
 	}
 	if s.Thresholds.MaxFWHMSigma != 2 {
-		t.Errorf("max-fwhm-sigma = %v, want 2", s.Thresholds.MaxFWHMSigma)
+		t.Errorf("max-fwhm-sigma = %v, want the same 2 the max-fwhm gate used", s.Thresholds.MaxFWHMSigma)
 	}
 }
 
@@ -63,8 +63,8 @@ func TestSuggestionFactorsInheritTheAnalysisBand(t *testing.T) {
 	opts := defaultOpts()
 	opts.maxFWHMSigma = 3.0
 	f := opts.resolveSuggestionFactors()
-	if f.MaxFWHM != 3.0 || f.MaxFWHMSigma != 3.0 {
-		t.Errorf("FWHM pair = %v/%v, want the analysis band 3.0", f.MaxFWHM, f.MaxFWHMSigma)
+	if f.MaxFWHM != 3.0 {
+		t.Errorf("FWHM band = %v, want the analysis band 3.0", f.MaxFWHM)
 	}
 	if f.MaxEcc != defaultSuggestionFactors.MaxEcc || f.MinStars != defaultSuggestionFactors.MinStars {
 		t.Errorf("fixed factors = %+v, want the compiled defaults", f)
@@ -72,8 +72,8 @@ func TestSuggestionFactorsInheritTheAnalysisBand(t *testing.T) {
 
 	opts.suggestion.MaxFWHM = 5
 	f = opts.resolveSuggestionFactors()
-	if f.MaxFWHM != 5 || f.MaxFWHMSigma != 3.0 {
-		t.Errorf("FWHM pair = %v/%v, want 5.0 and the inherited 3.0", f.MaxFWHM, f.MaxFWHMSigma)
+	if f.MaxFWHM != 5 {
+		t.Errorf("FWHM band = %v, want the configured 5.0 to win over the inherited 3.0", f.MaxFWHM)
 	}
 }
 
@@ -127,9 +127,7 @@ suggestion:
 	if f.MaxFWHM != 2.5 || f.MaxEcc != 2.0 || f.MinSNR != 2.5 || f.MinStars != 1.0 {
 		t.Errorf("factors = %+v, want the configured values", f)
 	}
-	if f.MaxFWHMSigma != 0 {
-		t.Errorf("max-fwhm-sigma = %v, want 0 so the analysis band is inherited", f.MaxFWHMSigma)
-	}
+
 	if f.MinScore != defaultSuggestionFactors.MinScore {
 		t.Errorf("min-score = %v, want the compiled default", f.MinScore)
 	}

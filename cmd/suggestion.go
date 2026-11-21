@@ -9,12 +9,13 @@ import (
 
 // suggestionFactors are the robust-sigma offsets --suggest uses, one per gate.
 //
-// A zero FWHM value means "inherit thresholds.max-fwhm-sigma", the band the
-// FWHM and stack rules already use, so a configuration that only sets the
-// threshold keeps the old coupling unless it opts into a separate factor.
+// MaxFWHM is both the offset for the suggested max-fwhm gate and the width
+// written for the suggested max-fwhm-sigma rule: the two describe one rule, so
+// a separate width could only disagree with the gate it came from. A zero value
+// means "inherit thresholds.max-fwhm-sigma", the band the FWHM rule already
+// uses, so a configuration that only sets the threshold keeps the coupling.
 type suggestionFactors struct {
 	MaxFWHM      float64
-	MaxFWHMSigma float64
 	MaxEcc       float64
 	MinSNR       float64
 	MinScore     float64
@@ -24,7 +25,7 @@ type suggestionFactors struct {
 }
 
 // defaultSuggestionFactors are the values shipped in conf/garfield.yaml. The
-// FWHM pair stays zero so it inherits the analysis band; everything else is the
+// FWHM band stays zero so it inherits the analysis one; everything else is the
 // offset the suggestion has always used.
 var defaultSuggestionFactors = suggestionFactors{
 	MaxEcc:       3.0,
@@ -37,7 +38,7 @@ var defaultSuggestionFactors = suggestionFactors{
 
 // resolveSuggestionFactors fills the unset offsets. A zero field is "not
 // configured": the fixed gates fall back to their compiled values, and the FWHM
-// pair falls back to the run's max-fwhm-sigma, which is the band that rule uses.
+// band falls back to the run's max-fwhm-sigma, which is the band that rule uses.
 func (o analyzeOptions) resolveSuggestionFactors() suggestionFactors {
 	f := o.suggestion
 	def := defaultSuggestionFactors
@@ -67,9 +68,6 @@ func (o analyzeOptions) resolveSuggestionFactors() suggestionFactors {
 	if f.MaxFWHM <= 0 {
 		f.MaxFWHM = band
 	}
-	if f.MaxFWHMSigma <= 0 {
-		f.MaxFWHMSigma = band
-	}
 	return f
 }
 
@@ -78,12 +76,11 @@ func (o analyzeOptions) resolveSuggestionFactors() suggestionFactors {
 var suggestionConfigKeys = []struct {
 	key string
 	set func(*suggestionFactors, float64)
-	// inherit marks the two keys where zero means "use thresholds.max-fwhm-sigma"
-	// rather than an invalid zero-width band.
+	// inherit marks keys where zero means "use thresholds.max-fwhm-sigma" rather
+	// than an invalid zero-width band.
 	inherit bool
 }{
 	{"max-fwhm", func(f *suggestionFactors, v float64) { f.MaxFWHM = v }, true},
-	{"max-fwhm-sigma", func(f *suggestionFactors, v float64) { f.MaxFWHMSigma = v }, true},
 	{"max-ecc", func(f *suggestionFactors, v float64) { f.MaxEcc = v }, false},
 	{"min-snr", func(f *suggestionFactors, v float64) { f.MinSNR = v }, false},
 	{"min-score", func(f *suggestionFactors, v float64) { f.MinScore = v }, false},
@@ -94,7 +91,7 @@ var suggestionConfigKeys = []struct {
 
 // suggestionFactorsFromConfig reads the suggestion section and overlays it on
 // the compiled defaults. A sigma offset must be a positive finite number; the
-// FWHM pair may be zero to inherit the analysis band.
+// FWHM band may be zero to inherit the analysis one.
 func suggestionFactorsFromConfig(v *viper.Viper) (suggestionFactors, error) {
 	f := defaultSuggestionFactors
 	for _, entry := range suggestionConfigKeys {

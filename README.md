@@ -92,11 +92,10 @@ thresholds:
   sun-below: 15.0      # reject frames taken with the Sun less than this far below the horizon; 0 disables
   moffat: true         # Moffat PSF fit (slower, FWHM matches PixInsight); false = Gaussian
 
-# Sigma offsets analyze --suggest uses, per gate. FWHM pair inherits
-# thresholds.max-fwhm-sigma when omitted or 0.
+# Sigma offsets analyze --suggest uses, per gate. max-fwhm also sets the
+# width written for the suggested max-fwhm-sigma rule.
 suggestion:
   max-fwhm: 4.0
-  max-fwhm-sigma: 4.0
   max-ecc: 3.0
   min-snr: 3.0
   min-score: 4.0
@@ -606,7 +605,7 @@ Each sigma-derived gate takes its offset from the `suggestion:` block of
 | Suggested gate | Config parameter | Default | Direction | Clamp |
 |---|---|---|---|---|
 | `max-fwhm` | `suggestion.max-fwhm` | **4.0** | median + offset·σ | none |
-| `max-fwhm-sigma` | `suggestion.max-fwhm-sigma` | **4.0** | written as the rule width | none |
+| `max-fwhm-sigma` | `suggestion.max-fwhm` | **4.0** | same band, written as the rule width | none |
 | `max-ecc` | `suggestion.max-ecc` | **3.0** | median + offset·σ | `thresholds.max-ecc` (0.64), physical 0.8 |
 | `min-snr` | `suggestion.min-snr` | **3.0** | median − offset·σ | floor 3 |
 | `min-score` | `suggestion.min-score` | **4.0** | median − offset·σ | floor 0 |
@@ -616,7 +615,10 @@ Each sigma-derived gate takes its offset from the `suggestion:` block of
 | `min-transparency` | `thresholds.min-transparency` | **0.75** | copied, not derived | — |
 | `sun-below` | `thresholds.sun-below` | **15.0** | copied, not derived | — |
 
-`suggestion.max-fwhm` and `suggestion.max-fwhm-sigma` inherit
+`suggestion.max-fwhm` is one number serving both rows: the offset the suggested
+`max-fwhm` gate is derived from, and the width written for the suggested
+`max-fwhm-sigma` rule. A separate width could only disagree with the gate that
+came from it, so there is no `suggestion.max-fwhm-sigma` key. It inherits
 `thresholds.max-fwhm-sigma` when omitted or set to `0`, so tuning that band still
 moves the suggestion. The factors are config-only: there are no `--suggest-*`
 flags.

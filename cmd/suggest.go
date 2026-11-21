@@ -187,11 +187,11 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 		return goodApproved, allApproved
 	}
 
-	// Each gate has its own sigma offset in the suggestion section. The FWHM pair
-	// inherits the analysis band when unset, so a config that only tunes
-	// max-fwhm-sigma keeps the old coupling.
+	// Each gate has its own sigma offset in the suggestion section. The FWHM band
+	// inherits the analysis one when unset, so a config that only tunes
+	// max-fwhm-sigma keeps the coupling.
 	factors := opts.resolveSuggestionFactors()
-	band := factors.MaxFWHMSigma
+	band := factors.MaxFWHM
 
 	// An explicit --max-fwhm-sigma pins the whole band group, as it always has;
 	// --keep then has nothing to search.
@@ -244,7 +244,8 @@ func suggestForFilter(results []ImageResult, prof sessionProfiles, filter string
 // the commands take, applying the clamps that keep a suggestion from certifying
 // what it should not. When overrideBand is set (--keep or an explicit
 // --max-fwhm-sigma), the five band-driven gates share that band; eccentricity,
-// SNR and stars keep their configured offsets.
+// SNR and stars keep their configured offsets. The FWHM band is also written as
+// the suggested max-fwhm-sigma, so the rule and the gate it derives agree.
 func thresholdsFromRefs(refs map[string]stackRef, factors suggestionFactors, band float64, overrideBand bool) suggeststore.Thresholds {
 	fwhm := refs["fwhm"]
 	ecc := refs["ecc"]
@@ -258,9 +259,8 @@ func thresholdsFromRefs(refs map[string]stackRef, factors suggestionFactors, ban
 	scoreOffset := factors.MinScore
 	haloOffset := factors.MaxHaloRatio
 	structOffset := factors.MaxStructure
-	sigma := factors.MaxFWHMSigma
 	if overrideBand {
-		fwhmOffset, scoreOffset, haloOffset, structOffset, sigma = band, band, band, band, band
+		fwhmOffset, scoreOffset, haloOffset, structOffset = band, band, band, band
 	}
 
 	t := suggeststore.Thresholds{
@@ -269,7 +269,7 @@ func thresholdsFromRefs(refs map[string]stackRef, factors suggestionFactors, ban
 		MinSNR:       roundTo(math.Max(snr.Median-factors.MinSNR*snr.Sigma, minSNRFloor), 2),
 		MinScore:     roundTo(math.Max(score.Median-scoreOffset*score.Sigma, minScoreFloor), 2),
 		MinStars:     int(math.Max(minStarsFloor, stars.Median-factors.MinStars*stars.Sigma)),
-		MaxFWHMSigma: sigma,
+		MaxFWHMSigma: fwhmOffset,
 	}
 	if halo.P25 > 0 {
 		t.MaxHaloRatio = roundTo((halo.Median+haloOffset*halo.Sigma)/halo.P25, 2)

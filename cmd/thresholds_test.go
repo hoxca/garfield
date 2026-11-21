@@ -34,7 +34,6 @@ func TestCompiledDefaultsMatchShippedConfig(t *testing.T) {
 		{"thresholds.min-transparency", defaultThresholds.minTransparency},
 		{"thresholds.sun-below", defaultThresholds.sunBelow},
 		{"suggestion.max-fwhm", defaultThresholds.maxFWHMSigma},
-		{"suggestion.max-fwhm-sigma", defaultThresholds.maxFWHMSigma},
 		{"suggestion.max-ecc", defaultSuggestionFactors.MaxEcc},
 		{"suggestion.min-snr", defaultSuggestionFactors.MinSNR},
 		{"suggestion.min-score", defaultSuggestionFactors.MinScore},

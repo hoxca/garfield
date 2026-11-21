@@ -79,13 +79,14 @@ thresholds:
 
 # Sigma offsets used by analyze --suggest. Each value is how many robust sigmas
 # the suggested threshold sits from the good stack's median (above it for a
-# maximum gate, below it for a minimum). The FWHM pair inherits
-# thresholds.max-fwhm-sigma when omitted or left at 0, so tuning that band keeps
-# moving the suggestion. min-transparency and sun-below are not listed: they are
-# copied from the thresholds block, not derived from a sigma.
+# maximum gate, below it for a minimum). max-fwhm is also the width written for
+# the suggested max-fwhm-sigma rule: the two describe one rule, so there is no
+# separate key for it. It inherits thresholds.max-fwhm-sigma when omitted or left
+# at 0, so tuning that band keeps moving the suggestion. min-transparency and
+# sun-below are not listed: they are copied from the thresholds block, not
+# derived from a sigma.
 suggestion:
   max-fwhm: 4.0
-  max-fwhm-sigma: 4.0
   max-ecc: 3.0
   min-snr: 3.0
   min-score: 4.0
